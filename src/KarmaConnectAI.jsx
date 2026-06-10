@@ -1,11 +1,12 @@
 import { useState, useEffect } from "react";
 
 const CSS = `
+html,body,#root{margin:0;padding:0;background:#040a24;min-height:100%}
 .kc *{box-sizing:border-box;margin:0;padding:0}
 .kc{
   --bg:#040a24; --bg2:#071855; --bg3:#0c2150;
   --panel:rgba(255,255,255,.04); --panel2:rgba(255,255,255,.07);
-  --border:rgba(255,255,255,.09); --border2:rgba(255,255,255,.17);
+  --border:rgba(74,134,200,.14); --border2:rgba(74,134,200,.26);
   --text:#eef2fb; --muted:#9aa7c4; --faint:#65769e;
   --navy:#071855; --blue:#16385A; --yellow:#FFCF00;
   --steel:#4a86c8; --ice:#cfe0f6;
@@ -175,8 +176,56 @@ const CSS = `
 @media(max-width:920px){
   .kc .side{display:none}
   .kc .main{padding:22px 18px 60px}
-  .kc .fgrid,.kc .grid2,.kc .iprofile,.kc .senders,.kc .fitgrid{grid-template-columns:1fr}
+  .kc .fgrid,.kc .grid2,.kc .iprofile,.kc .senders,.kc .fitgrid,.kc .rpa-grid{grid-template-columns:1fr}
 }
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
+.kc .rpa-grid{display:grid; grid-template-columns:1fr 1fr; gap:16px}
+.kc .rpa-block{background:var(--panel); border:1px solid var(--border); border-radius:16px; padding:18px; animation:fade .5s ease both}
+.kc .rpa-block.full{grid-column:1/-1}
+.kc .rpa-block.green{border-color:rgba(82,211,158,.25); background:rgba(82,211,158,.04)}
+.kc .rpa-block.yellow{border-color:rgba(255,207,0,.25); background:rgba(255,207,0,.03)}
+.kc .rpa-block.red{border-color:rgba(255,90,90,.22); background:rgba(255,90,90,.04)}
+.kc .rpa-block h4{font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--ice); font-weight:700; margin-bottom:12px; display:flex; align-items:center; gap:8px}
+.kc .rpa-block h4 span{font-size:10px; background:rgba(255,255,255,.07); border:1px solid var(--border); color:var(--faint); padding:2px 8px; border-radius:20px; letter-spacing:.1em}
+.kc .rpa-val{font-size:14px; color:#e0e8f5; line-height:1.65}
+.kc .rpa-list{list-style:none; display:flex; flex-direction:column; gap:8px}
+.kc .rpa-list li{font-size:13px; color:#d3ddee; line-height:1.5; padding-left:18px; position:relative}
+.kc .rpa-list li:before{content:""; position:absolute; left:2px; top:8px; width:5px; height:5px; border-radius:2px; background:var(--yellow)}
+.kc .rpa-list li.green:before{background:#52d39e}
+.kc .rpa-list li.red:before{background:#ff8a8a}
+.kc .rpa-kv{display:flex; flex-direction:column; gap:7px}
+.kc .rpa-row{display:flex; gap:10px; font-size:13px; line-height:1.5; align-items:baseline}
+.kc .rpa-row .rk{color:var(--faint); font-weight:600; min-width:130px; flex:0 0 130px; font-size:11.5px; letter-spacing:.03em}
+.kc .rpa-row .rv{color:#e0e8f5}
+.kc .rpa-row .rv.unverified{color:var(--faint); font-style:italic}
+.kc .score-ring-wrap{display:flex; gap:18px; flex-wrap:wrap; margin-bottom:4px}
+.kc .score-ring{display:flex; flex-direction:column; align-items:center; gap:6px}
+.kc .score-ring .sr-val{font-family:'Lora',serif; font-size:26px; font-weight:700; color:var(--text); line-height:1}
+.kc .score-ring .sr-lbl{font-size:10px; color:var(--faint); text-transform:uppercase; letter-spacing:.1em; font-weight:700; text-align:center}
+.kc .score-ring .sr-bar{width:64px; height:5px; border-radius:5px; background:rgba(255,255,255,.08); overflow:hidden}
+.kc .score-ring .sr-bar i{display:block; height:100%; border-radius:5px; transition:width 1s cubic-bezier(.22,1,.36,1)}
+.kc .signal-badge{display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-weight:700; padding:4px 11px; border-radius:20px; border:1px solid}
+.kc .signal-badge.high{color:#52d39e; border-color:rgba(82,211,158,.35); background:rgba(82,211,158,.08)}
+.kc .signal-badge.medium{color:var(--yellow); border-color:rgba(255,207,0,.35); background:rgba(255,207,0,.08)}
+.kc .signal-badge.low{color:var(--faint); border-color:var(--border); background:var(--panel)}
+.kc .rpa-phase{display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--border); font-size:13px}
+.kc .rpa-phase:last-child{border-bottom:none}
+.kc .rpa-phase .ph-num{width:26px; height:26px; border-radius:8px; background:var(--panel2); border:1px solid var(--border2); display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:800; color:var(--ice); flex:0 0 26px}
+.kc .rpa-phase .ph-num.act{background:rgba(74,134,200,.25); border-color:var(--steel); color:var(--text); animation:pulse 1.2s ease infinite}
+.kc .rpa-phase .ph-num.done{background:rgba(82,211,158,.18); border-color:rgba(82,211,158,.4); color:#52d39e}
+.kc .rpa-phase .ph-lbl{font-weight:600; color:var(--muted)}
+.kc .rpa-phase .ph-lbl.act{color:var(--text)}
+.kc .rpa-phase .ph-lbl.done{color:var(--muted)}
+.kc .rpa-phase .ph-status{margin-left:auto; font-size:11px; color:var(--faint); font-weight:600}
+.kc .rpa-phase .ph-status.act{color:var(--steel)}
+.kc .rpa-phase .ph-status.done{color:#52d39e}
+.kc .conf-badge{font-size:11px; font-weight:700; padding:2px 9px; border-radius:20px; border:1px solid}
+.kc .conf-badge.high{color:#52d39e; border-color:rgba(82,211,158,.35); background:rgba(82,211,158,.08)}
+.kc .conf-badge.medium{color:var(--yellow); border-color:rgba(255,207,0,.35); background:rgba(255,207,0,.08)}
+.kc .conf-badge.low{color:#ff8a8a; border-color:rgba(255,90,90,.3); background:rgba(255,90,90,.06)}
+.kc .push-banner{background:rgba(82,211,158,.07); border:1px solid rgba(82,211,158,.25); border-radius:14px; padding:14px 18px; display:flex; align-items:center; gap:14px; margin-bottom:20px}
+.kc .push-banner svg{color:#52d39e; flex:0 0 20px}
+.kc .push-banner p{font-size:13px; color:#e0e8f5; line-height:1.55}
 `;
 
 function KarmaMark({ color = "#fff", w = 24 }) {
@@ -241,28 +290,30 @@ const SENDERS = [
 ];
 const senderOffer = (s) => s.head + "\n\n" + KS_COMPANY;
 
-// OpenAI models. Change OPENAI_MODEL to gpt-4o-mini for a cheaper/faster run.
-// The search model is only used for Auto-research (web_search). If your account
-// has no access to it, only that one feature degrades; everything else still works.
-const OPENAI_MODEL = "gpt-4o";
-const OPENAI_SEARCH_MODEL = "gpt-4o-search-preview";
+// Claude model. claude-opus-4-8 is the most capable model. For lower cost/faster
+// runs, change to claude-sonnet-4-6 (or claude-haiku-4-5) — same API, just the string.
+const CLAUDE_MODEL = "claude-opus-4-8";
 
-// Core OpenAI Chat Completions call. Returns the joined assistant text.
-async function openaiChat(system, user, { maxTokens = 1000, useSearch = false } = {}) {
-  const apiKey = import.meta.env.VITE_OPENAI_API_KEY;
-  if (!apiKey) throw new Error("Missing API key. Add VITE_OPENAI_API_KEY to your .env file.");
+// Core Anthropic Messages API call (raw HTTP, direct from the browser). Returns joined text.
+async function anthropicMsg(system, user, { maxTokens = 1000, useSearch = false } = {}) {
+  const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error("Missing API key. Add VITE_ANTHROPIC_API_KEY to your .env file.");
   const body = {
-    model: useSearch ? OPENAI_SEARCH_MODEL : OPENAI_MODEL,
+    model: CLAUDE_MODEL,
     max_tokens: maxTokens,
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: user },
-    ],
+    system,
+    messages: [{ role: "user", content: user }],
   };
-  if (useSearch) body.web_search_options = {};
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+  // Anthropic server-side web search tool. max_uses caps cost per request.
+  if (useSearch) body.tools = [{ type: "web_search_20250305", name: "web_search", max_uses: useSearch === "deep" ? 8 : 5 }];
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -271,12 +322,13 @@ async function openaiChat(system, user, { maxTokens = 1000, useSearch = false } 
     throw new Error(errMsg + " Please try again.");
   }
   const data = await res.json();
-  return (data.choices || []).map((c) => (c && c.message && c.message.content) || "").join("\n");
+  // Join all text blocks (search runs add non-text blocks we ignore).
+  return (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
 }
 
 // Back-compat wrapper so existing call sites keep their (system, prompt, useSearch, maxTokens) shape.
 async function callClaude(system, prompt, useSearch = false, maxTokens = 1000) {
-  return openaiChat(system, prompt, { maxTokens, useSearch });
+  return anthropicMsg(system, prompt, { maxTokens, useSearch });
 }
 
 function extractObjects(text) {
@@ -380,6 +432,98 @@ function cleanMessages(parsed) {
   if (Array.isArray(parsed)) return parsed.map(cleanItem);
   return cleanItem(parsed);
 }
+
+const RPA_SYSTEM = `SYSTEM ROLE: KARMA CONNECT AUTONOMOUS LEAD INTELLIGENCE AGENT
+
+MISSION: Transform prospect data into a deeply enriched, structured, relationship-ready intelligence record. Operate as a multi-stage autonomous research pipeline. Gather, validate, enrich, cross-reference, and synthesize all available professional, company, market, relationship, and contextual intelligence into a single highly structured CRM-ready record.
+
+CRITICAL RULES:
+- Never fabricate or hallucinate any data point.
+- Unknown or unverifiable values must be the string "NOT VERIFIED".
+- Return ONLY a single valid JSON object. No markdown. No code fences. No preamble. Start with { end with }.
+- Every string value must be properly JSON-escaped. No unescaped quotes or newlines inside strings.
+- Confidence scores are integers 0-100. Lead scores are integers 0-100.
+- Arrays may be empty [] but never omitted.
+
+Think and operate like: a senior sales intelligence analyst, a market research consultant, a CRM enrichment platform, a relationship intelligence engine, a business analyst. Prioritize accuracy over completeness.`;
+
+const RPA_PHASES = [
+  "Phase 1 — Profile Discovery",
+  "Phase 2 — Company Intelligence",
+  "Phase 3 — Deep Web Research",
+  "Phase 4 — Buying Signal Detection",
+  "Phase 5 — Relationship Intelligence",
+  "Phase 6 — Psychographic Analysis",
+  "Phase 7 — AI Sales Intelligence",
+  "Phase 8 — Contact Enrichment",
+  "Phase 9 — Autonomous Reasoning",
+  "Phase 10 — Structuring Output",
+];
+
+function buildRPAContext(prospect, liUrl, coUrl, pastedText) {
+  const L = (k, v) => (v && String(v).trim() ? k + ": " + String(v).trim() + "\n" : "");
+  let s = "KNOWN PROSPECT DATA (use as seed, enrich beyond this via web research):\n";
+  s += L("LinkedIn URL", liUrl); s += L("Company URL", coUrl);
+  s += L("First name", prospect.firstName); s += L("Last name", prospect.lastName);
+  s += L("Title", prospect.title); s += L("Company", prospect.company);
+  s += L("Industry", prospect.industry); s += L("Location", prospect.location);
+  s += L("Headline", prospect.headline); s += L("About", prospect.about);
+  s += L("Experience", prospect.experience); s += L("Website", prospect.website);
+  s += L("Company description", prospect.companyDesc); s += L("News signals", prospect.news);
+  s += L("Notes", prospect.notes); s += L("Research", prospect.research);
+  if (pastedText && pastedText.trim()) {
+    s += "\nRAW LINKEDIN PAGE TEXT (pasted by the user from their own authenticated session — treat as primary, high-trust source; strip the UI noise and use the real profile content):\n" + pastedText.slice(0, 12000) + "\n";
+  }
+  return s;
+}
+
+// Multi-pass agentic research. Each pass does focused web search and returns a plain-text dossier.
+const RPA_PASS = {
+  person: (ctx) => ctx + `
+
+PASS 1 of 4 — PERSON & PROFILE DISCOVERY.
+Using web search (and any pasted LinkedIn text above), gather everything VERIFIABLE about this specific person: full name, current title and company, location, industry, professional headline, about/bio, full career history (each role: title, company, dates, duration, what they did), education (school, degree, major, year, activities), skills, certifications, languages, awards, publications, volunteer work, and any recent public posts or activity. Prefer primary sources (company site, their own posts, reputable directories). Add a short source note after facts. Mark anything you cannot confirm as UNVERIFIED. Output a thorough plain-text dossier. Do NOT output JSON in this pass.`,
+  company: (ctx, prior) => ctx + `
+
+PRIOR FINDINGS (person):
+${prior}
+
+PASS 2 of 4 — COMPANY INTELLIGENCE.
+Using web search and the company website, find: legal name, website, HQ and other offices, industry and sub-industry, employee count, estimated revenue, growth rate, founding date, ownership type, products and services, ideal customer profile, market segment, pricing model, geographic markets, tech stack, and what the company actually does day to day. Cite sources briefly. Mark anything unverifiable as UNVERIFIED. Output a plain-text dossier. No JSON.`,
+  signals: (ctx, prior) => ctx + `
+
+PRIOR FINDINGS:
+${prior}
+
+PASS 3 of 4 — RECENT NEWS & BUYING SIGNALS.
+Using web search, find the most RECENT (ideally last 12-18 months) news, press, hiring activity, expansion, funding, leadership changes, seasonal/storm activity, reviews, and any indicators of operational or back-office pressure relevant to a remote staffing and back-office offering. List concrete, dated signals with sources. Classify each as a HIGH, MEDIUM, or LOW buying-intent signal. If little is found, say so plainly. Output plain-text. No JSON.`,
+};
+
+// Final pass: verify every claim against the gathered dossier, score, and structure to schema.
+const RPA_SYNTH = (ctx, dossier) => `FINAL PASS — VERIFY, SCORE, AND STRUCTURE.
+
+You have completed multi-pass web research. The full dossier is included below. Cross-check every claim:
+- Only populate a field if the dossier actually supports it. If it was marked UNVERIFIED or never found, set that field to the string "NOT VERIFIED".
+- In reasoning.uncertainFields, list EVERY field you could not verify.
+- In reasoning.contradictionsDetected, note any conflicting sources (or "none").
+- In reasoning.confidenceExplanation, give a short per-section confidence read (profile / company / signals).
+- Set scores.dataConfidence (0-100) to reflect how much was genuinely verified, not how much was guessed.
+Never invent data to fill a gap. A blank "NOT VERIFIED" is the correct answer when sources are missing.
+
+` + RPA_PROMPT(ctx + "\n\nFULL RESEARCH DOSSIER (from the passes above):\n" + dossier);
+
+const ENRICH_PASSES = [
+  "Researching the person",
+  "Researching the company",
+  "Scanning recent news & buying signals",
+  "Cross-checking & confidence scoring",
+  "Structuring the final record",
+];
+
+const RPA_PROMPT = (ctx) => ctx + `
+
+TASK: Run the full 10-phase Karma Connect lead intelligence pipeline on this prospect using web search to discover and validate everything possible. Return ONLY this exact JSON (no markdown, no fences, start with {):
+{"profile":{"firstName":"","lastName":"","fullName":"","preferredName":"","title":"","seniorityLevel":"","functionalRole":"","department":"","company":"","companyDomain":"","industry":"","subIndustry":"","location":"","timeZone":"","headline":"","about":"","careerProgressionMap":"","promotionHistory":"","careerVelocity":"","leadershipTrajectory":"","skills":[],"certifications":[],"education":[],"languages":[],"awards":[],"publications":[],"volunteerWork":[]},"company":{"name":"","legalName":"","website":"","headquarters":"","globalOffices":[],"industry":"","subIndustry":"","employeeCount":"","estimatedRevenue":"","growthRate":"","foundingDate":"","ownershipType":"","products":[],"services":[],"icp":"","marketSegment":"","pricingModel":"","geographicMarkets":[],"techStack":{"crm":"","marketing":"","sales":"","analytics":"","ai":"","cloud":""},"recentSignals":[]},"executiveSummary":"","buyingSignals":{"highSignals":[],"mediumSignals":[],"lowSignals":[],"signalStrengthScore":0,"confidenceScore":0,"recencyScore":0},"relationshipIntelligence":{"personalInterests":[],"thoughtLeadershipThemes":[],"industryFocusAreas":[],"publiclyDiscussedChallenges":[],"professionalPassions":[],"sharedInterests":[],"conversationStarters":[],"networkingOpportunities":[]},"psychographic":{"communicationStyle":"","decisionStyle":"","leadershipStyle":"","innovationOrientation":"","riskAppetite":"","businessPriorities":[],"influenceLevel":"","personaProfile":""},"salesIntelligence":{"likelyPainPoints":[],"strategicObjectives":[],"operationalChallenges":[],"growthChallenges":[],"technologyChallenges":[],"hiringChallenges":[],"opportunityAssessment":"","salesRelevanceScore":0,"engagementProbabilityScore":0,"relationshipPotentialScore":0},"contactEnrichment":{"companyWebsite":"","corporateContact":"","emailPattern":"","linkedinUrl":"","otherSocials":[],"professionalCommunities":[],"confidenceLevels":{"email":"","phone":"","social":""}},"recentNews":[],"mutualInterestReport":"","scores":{"leadQuality":0,"relationshipPotential":0,"buyingIntent":0,"influenceLevel":0,"dataConfidence":0},"reasoning":{"validationNotes":"","contradictionsDetected":"","uncertainFields":[],"confidenceExplanation":""},"additionalResearch":""}`;
 
 function buildContext(p, offer, analysis, org) {
   const L = (k, v) => (v && String(v).trim() ? k + ": " + String(v).trim() + "\n" : "");
@@ -496,6 +640,7 @@ const Ic = {
   rel: <svg className="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>,
   meet: <svg className="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>,
   fup: <svg className="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 12a9 9 0 1 0 9-9 9.7 9.7 0 0 0-6.7 2.7L3 8"/><path d="M3 3v5h5"/></svg>,
+  rpa: <svg className="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/><circle cx="12" cy="10" r="3"/><path d="M6 10h.01M18 10h.01"/></svg>,
 };
 const CopyIc = <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>;
 const RegenIc = <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 12a9 9 0 1 0 9-9 9.7 9.7 0 0 0-6.7 2.7L3 8"/><path d="M3 3v5h5"/></svg>;
@@ -552,6 +697,7 @@ export default function KarmaConnectAI() {
   const [enriching, setEnriching] = useState(false);
   const [enrichMsg, setEnrichMsg] = useState("");
   const [enrichErr, setEnrichErr] = useState("");
+  const [enrichPass, setEnrichPass] = useState(0);
   const [rawPaste, setRawPaste] = useState("");
   const [parsing, setParsing] = useState(false);
   const [parseMsg, setParseMsg] = useState("");
@@ -575,25 +721,145 @@ export default function KarmaConnectAI() {
   const favKey = (kind, i, msg) => kind + ":" + i + ":" + (msg || "").slice(0, 24);
   function toggleFav(kind, i, msg) { const k = favKey(kind, i, msg); setFavs((f) => ({ ...f, [k]: !f[k] })); }
 
+  // Auto-research runs a multi-pass agentic pipeline (person -> company -> signals -> verify/structure),
+  // fuses any pasted LinkedIn text in, fills EVERY empty field, and adds a full intelligence report.
   async function enrich() {
-    setEnriching(true); setEnrichMsg(""); setEnrichErr("");
+    if (!liUrl && !coUrl && !rawPaste.trim() && !prospect.firstName.trim() && !prospect.company.trim()) {
+      setEnrichErr("Add a LinkedIn URL, a company URL, pasted LinkedIn text, or at least a name/company first.");
+      return;
+    }
+    setEnriching(true); setEnrichMsg(""); setEnrichErr(""); setEnrichPass(0);
     try {
-      const txt = await callClaude(
-        "You are a precise B2B research assistant. You only state facts you can verify from web search, you never fabricate names, titles, or figures, and you leave fields blank when unsure.",
-        pEnrich(liUrl, coUrl), true
-      );
-      const parsed = safeJSON(txt); const d = Array.isArray(parsed) ? (parsed[0] || {}) : parsed;
-      setProspect((p) => {
-        const next = { ...p };
-        ["firstName","lastName","title","company","industry","location","headline","about","experience","website","companyDesc","news"]
-          .forEach((k) => { if (!String(next[k] || "").trim() && d[k]) next[k] = d[k]; });
-        if (d.research) next.research = (next.research ? next.research + "\n\n" : "") + "Auto-research: " + d.research;
-        if (!String(next.website || "").trim() && coUrl) next.website = coUrl;
+      const seed = buildRPAContext(prospect, liUrl, coUrl, rawPaste);
+      // Pass 1 — person dossier (web search)
+      const personDossier = await anthropicMsg(RPA_SYSTEM, RPA_PASS.person(seed), { maxTokens: 2500, useSearch: true });
+      setEnrichPass(1);
+      // Pass 2 — company dossier (web search), informed by the person findings
+      const companyDossier = await anthropicMsg(RPA_SYSTEM, RPA_PASS.company(seed, personDossier), { maxTokens: 2500, useSearch: true });
+      setEnrichPass(2);
+      // Pass 3 — recent news & buying signals (web search)
+      const signalsDossier = await anthropicMsg(RPA_SYSTEM, RPA_PASS.signals(seed, personDossier + "\n\n" + companyDossier), { maxTokens: 2000, useSearch: true });
+      setEnrichPass(3);
+      // Pass 4 — verify every claim, score, and structure to the schema
+      const dossier = `PERSON DOSSIER:\n${personDossier}\n\nCOMPANY DOSSIER:\n${companyDossier}\n\nNEWS & SIGNALS DOSSIER:\n${signalsDossier}`;
+      const txt = await anthropicMsg(RPA_SYSTEM, RPA_SYNTH(seed, dossier), { maxTokens: 6000 });
+      setEnrichPass(4);
+      if (!txt || !txt.trim()) throw new Error("Empty response from research. Please try again.");
+      const d = safeJSON(txt);
+      const p = d.profile || {}, c = d.company || {}, si = d.salesIntelligence || {}, ri = d.relationshipIntelligence || {};
+      const ps = d.psychographic || {}, ce = d.contactEnrichment || {}, bs = d.buyingSignals || {}, sc = d.scores || {}, rs = d.reasoning || {};
+      const nv = (v) => (v == null || v === "NOT VERIFIED" ? "" : String(v).trim());
+      const joinArr = (a, sep = "; ") => (Array.isArray(a) ? a.map(nv).filter(Boolean).join(sep) : "");
+
+      // Build a comprehensive intelligence report so nothing the pipeline found is dropped.
+      const dump = [];
+      const add = (title, body) => { if (body) dump.push(title + "\n" + body); };
+      add("EXECUTIVE SUMMARY", nv(d.executiveSummary));
+      add("LEAD SCORES (0-100)", [
+        sc.leadQuality != null ? "Lead quality " + sc.leadQuality : "",
+        sc.relationshipPotential != null ? "Relationship " + sc.relationshipPotential : "",
+        sc.buyingIntent != null ? "Buying intent " + sc.buyingIntent : "",
+        sc.influenceLevel != null ? "Influence " + sc.influenceLevel : "",
+        sc.dataConfidence != null ? "Data confidence " + sc.dataConfidence : "",
+      ].filter(Boolean).join(" · "));
+      add("BUYING SIGNALS", [
+        joinArr(bs.highSignals) ? "High: " + joinArr(bs.highSignals) : "",
+        joinArr(bs.mediumSignals) ? "Medium: " + joinArr(bs.mediumSignals) : "",
+        joinArr(bs.lowSignals) ? "Low: " + joinArr(bs.lowSignals) : "",
+      ].filter(Boolean).join("\n"));
+      add("PSYCHOGRAPHIC PROFILE", [
+        ["Communication", ps.communicationStyle], ["Decision", ps.decisionStyle], ["Leadership", ps.leadershipStyle],
+        ["Innovation", ps.innovationOrientation], ["Risk appetite", ps.riskAppetite], ["Influence level", ps.influenceLevel],
+        ["Persona", ps.personaProfile],
+      ].map(([k, v]) => (nv(v) ? k + ": " + nv(v) : "")).filter(Boolean).join("\n"));
+      add("CAREER", [
+        nv(p.careerProgressionMap) ? "Progression: " + nv(p.careerProgressionMap) : "",
+        nv(p.promotionHistory) ? "Promotions: " + nv(p.promotionHistory) : "",
+        nv(p.careerVelocity) ? "Velocity: " + nv(p.careerVelocity) : "",
+        nv(p.leadershipTrajectory) ? "Trajectory: " + nv(p.leadershipTrajectory) : "",
+      ].filter(Boolean).join("\n"));
+      add("PROFILE EXTRAS", [
+        joinArr(p.skills, ", ") ? "Skills: " + joinArr(p.skills, ", ") : "",
+        joinArr(p.certifications, ", ") ? "Certifications: " + joinArr(p.certifications, ", ") : "",
+        joinArr(p.education, "; ") ? "Education: " + joinArr(p.education, "; ") : "",
+        joinArr(p.languages, ", ") ? "Languages: " + joinArr(p.languages, ", ") : "",
+        joinArr(p.awards, "; ") ? "Awards: " + joinArr(p.awards, "; ") : "",
+        joinArr(p.publications, "; ") ? "Publications: " + joinArr(p.publications, "; ") : "",
+        joinArr(p.volunteerWork, "; ") ? "Volunteering: " + joinArr(p.volunteerWork, "; ") : "",
+      ].filter(Boolean).join("\n"));
+      add("COMPANY DETAIL", [
+        nv(c.legalName) ? "Legal name: " + nv(c.legalName) : "",
+        nv(c.headquarters) ? "HQ: " + nv(c.headquarters) : "",
+        joinArr(c.globalOffices, ", ") ? "Offices: " + joinArr(c.globalOffices, ", ") : "",
+        nv(c.employeeCount) ? "Employees: " + nv(c.employeeCount) : "",
+        nv(c.estimatedRevenue) ? "Revenue est.: " + nv(c.estimatedRevenue) : "",
+        nv(c.growthRate) ? "Growth: " + nv(c.growthRate) : "",
+        nv(c.foundingDate) ? "Founded: " + nv(c.foundingDate) : "",
+        nv(c.ownershipType) ? "Ownership: " + nv(c.ownershipType) : "",
+        joinArr(c.products, ", ") ? "Products: " + joinArr(c.products, ", ") : "",
+        joinArr(c.services, ", ") ? "Services: " + joinArr(c.services, ", ") : "",
+        joinArr(c.geographicMarkets, ", ") ? "Markets: " + joinArr(c.geographicMarkets, ", ") : "",
+        nv(c.pricingModel) ? "Pricing: " + nv(c.pricingModel) : "",
+      ].filter(Boolean).join("\n"));
+      if (c.techStack) add("TECH STACK", Object.entries(c.techStack).map(([k, v]) => (nv(v) ? k + ": " + nv(v) : "")).filter(Boolean).join("\n"));
+      add("SALES INTELLIGENCE", [
+        joinArr(si.growthChallenges) ? "Growth challenges: " + joinArr(si.growthChallenges) : "",
+        joinArr(si.technologyChallenges) ? "Tech challenges: " + joinArr(si.technologyChallenges) : "",
+        nv(si.opportunityAssessment) ? "Opportunity: " + nv(si.opportunityAssessment) : "",
+      ].filter(Boolean).join("\n"));
+      add("RELATIONSHIP INTELLIGENCE", [
+        joinArr(ri.thoughtLeadershipThemes, ", ") ? "Thought leadership: " + joinArr(ri.thoughtLeadershipThemes, ", ") : "",
+        joinArr(ri.industryFocusAreas, ", ") ? "Industry focus: " + joinArr(ri.industryFocusAreas, ", ") : "",
+        joinArr(ri.publiclyDiscussedChallenges) ? "Public challenges: " + joinArr(ri.publiclyDiscussedChallenges) : "",
+        joinArr(ri.professionalPassions, ", ") ? "Passions: " + joinArr(ri.professionalPassions, ", ") : "",
+        joinArr(ri.networkingOpportunities) ? "Networking: " + joinArr(ri.networkingOpportunities) : "",
+      ].filter(Boolean).join("\n"));
+      add("MUTUAL INTEREST REPORT", nv(d.mutualInterestReport));
+      add("CONTACT ENRICHMENT", [
+        nv(ce.emailPattern) ? "Email pattern: " + nv(ce.emailPattern) : "",
+        nv(ce.corporateContact) ? "Corporate contact: " + nv(ce.corporateContact) : "",
+        nv(ce.linkedinUrl) ? "LinkedIn: " + nv(ce.linkedinUrl) : "",
+        joinArr(ce.otherSocials, ", ") ? "Other socials: " + joinArr(ce.otherSocials, ", ") : "",
+        joinArr(ce.professionalCommunities, ", ") ? "Communities: " + joinArr(ce.professionalCommunities, ", ") : "",
+      ].filter(Boolean).join("\n"));
+      add("ADDITIONAL RESEARCH", nv(d.additionalResearch));
+      add("VALIDATION & REASONING", [
+        nv(rs.validationNotes) ? "Validation: " + nv(rs.validationNotes) : "",
+        nv(rs.contradictionsDetected) ? "Contradictions: " + nv(rs.contradictionsDetected) : "",
+        nv(rs.confidenceExplanation) ? "Confidence: " + nv(rs.confidenceExplanation) : "",
+        joinArr(rs.uncertainFields, ", ") ? "Uncertain fields: " + joinArr(rs.uncertainFields, ", ") : "",
+      ].filter(Boolean).join("\n"));
+      const report = dump.join("\n\n");
+
+      setProspect((prev) => {
+        const next = { ...prev };
+        const fill = (k, val) => { if (val && !String(next[k] || "").trim()) next[k] = val; };
+        fill("firstName", nv(p.firstName));
+        fill("lastName", nv(p.lastName));
+        fill("title", nv(p.title));
+        fill("company", nv(p.company) || nv(c.name));
+        fill("industry", nv(p.industry) || nv(c.industry));
+        fill("location", nv(p.location));
+        fill("headline", nv(p.headline));
+        fill("about", nv(p.about));
+        fill("experience", nv(p.careerProgressionMap) || nv(p.promotionHistory));
+        fill("website", nv(c.website) || nv(ce.companyWebsite) || coUrl);
+        fill("companyDesc", [nv(c.icp), nv(c.marketSegment), joinArr(c.services, ", ")].filter(Boolean).join(" | "));
+        fill("news", joinArr((d.recentNews || []).slice(0, 3), " | ") || joinArr((c.recentSignals || []).slice(0, 3), " | "));
+        fill("pain", joinArr(si.likelyPainPoints));
+        fill("growth", joinArr(si.strategicObjectives));
+        fill("staffing", joinArr(si.hiringChallenges));
+        fill("ops", joinArr(si.operationalChallenges));
+        fill("mutual", joinArr(ri.sharedInterests, ", "));
+        fill("notes", joinArr((ri.conversationStarters || []).slice(0, 4), " | "));
+        if (report) next.research = (next.research ? next.research + "\n\n" : "") + report;
         return next;
       });
-      const n = (d.found || []).length;
-      setEnrichMsg(`Filled the empty fields I could verify (${d.confidence || "low"} confidence)${n ? ", " + n + " facts found" : ""}. Review below and add anything from their LinkedIn About that search couldn't reach.`);
-    } catch (e) { setEnrichErr((e && e.message) || "Couldn't complete research — you can still fill the form manually."); }
+      setEnrichPass(5);
+      const conf = sc.dataConfidence != null ? sc.dataConfidence + "/100 verified" : "";
+      const unsure = Array.isArray(rs.uncertainFields) ? rs.uncertainFields.filter(Boolean).length : 0;
+      setEnrichMsg(`Multi-pass research complete${conf ? " (" + conf + ")" : ""}. Filled every empty field, fused any pasted LinkedIn text, and added a full verified intelligence report under Additional research.${unsure ? " " + unsure + " field(s) could not be verified and are flagged there." : ""} Review below, then Run AI Analysis.`);
+    } catch (e) { setEnrichErr((e && e.message) || "Couldn't complete research, you can still fill the form manually."); }
     setEnriching(false);
   }
 
@@ -617,7 +883,7 @@ RAW PASTE:
 ${rawPaste.slice(0, 18000)}`;
 
     try {
-      const txt = await openaiChat(systemPrompt, userPrompt, { maxTokens: 4000 });
+      const txt = await anthropicMsg(systemPrompt, userPrompt, { maxTokens: 4000 });
 
       let d;
       try {
@@ -680,7 +946,7 @@ ${rawPaste.slice(0, 18000)}`;
     const userPrompt = pAnalysis(buildContext(prospect, offer, null, ""));
 
     const attempt = async () => {
-      const txt = await openaiChat(systemPrompt, userPrompt, { maxTokens: 2500 });
+      const txt = await anthropicMsg(systemPrompt, userPrompt, { maxTokens: 2500 });
       if (!txt || !txt.trim()) throw new Error("Empty response from AI. Please try again.");
       return cleanMessages(safeJSON(txt));
     };
@@ -843,19 +1109,37 @@ ${rawPaste.slice(0, 18000)}`;
               <div className="head"><div className="eyebrow">Prospect Intelligence Hub</div><h2>Tell the AI about your prospect</h2><p>Paste a LinkedIn or company URL to auto-research, or enter details by hand. The richer the input, the more the outreach reads as personally written. Then run analysis to unlock the engines.</p></div>
               <div className="fa">
                 <div className="panel" style={{ borderColor: "var(--border2)" }}>
-                  <div className="sect-title">Auto-research · paste URLs, AI fills the form</div>
+                  <div className="sect-title">Deep auto-research · paste URLs, AI runs a full intelligence pipeline and fills every field</div>
                   <div className="fgrid">
                     <div className="f"><label>LinkedIn profile URL</label><input value={liUrl} placeholder="https://www.linkedin.com/in/…" onChange={(e) => setLiUrl(e.target.value)} /></div>
                     <div className="f"><label>Company website URL</label><input value={coUrl} placeholder="https://company.com" onChange={(e) => setCoUrl(e.target.value)} /></div>
                   </div>
                   <div className="toprow" style={{ marginTop: 14 }}>
-                    <button className="btn primary" onClick={enrich} disabled={enriching || (!liUrl && !coUrl)}>{enriching ? "Researching…" : "Auto-research & fill ↓"}</button>
-                    <span style={{ color: "var(--muted)", fontSize: 12.5 }}>Fills empty fields only — never overwrites what you typed.</span>
+                    <button className="btn primary" onClick={enrich} disabled={enriching || (!liUrl && !coUrl && !rawPaste.trim())}>{enriching ? "Researching…" : "Deep research & fill all fields ↓"}</button>
+                    <span style={{ color: "var(--muted)", fontSize: 12.5 }}>Runs a 4-pass agentic pipeline (person, company, signals, verify), fuses any pasted LinkedIn text below, fills every empty field, and flags anything unverified. Never overwrites what you typed.</span>
                   </div>
-                  {enriching && <div className="panel" style={{ marginTop: 14 }}><Loader stages={STAGES_ENRICH} /></div>}
+                  {enriching && (
+                    <div className="panel" style={{ marginTop: 14 }}>
+                      {ENRICH_PASSES.map((ph, i) => {
+                        const isDone = enrichPass > i;
+                        const isAct = enrichPass === i;
+                        return (
+                          <div key={i} className="rpa-phase">
+                            <span className={"ph-num" + (isDone ? " done" : isAct ? " act" : "")}>
+                              {isDone
+                                ? <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5"><path d="M5 13l4 4L19 7"/></svg>
+                                : i + 1}
+                            </span>
+                            <span className={"ph-lbl" + (isDone ? " done" : isAct ? " act" : "")}>{ph}</span>
+                            <span className={"ph-status" + (isDone ? " done" : isAct ? " act" : "")}>{isDone ? "Complete" : isAct ? "Running…" : "Pending"}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                   {enrichMsg && <div className="reason" style={{ marginTop: 12 }}><b>Done</b> · {enrichMsg}</div>}
                   {enrichErr && <div className="err" style={{ marginTop: 12 }}>⚠ {enrichErr}</div>}
-                  <div className="hint" style={{ marginTop: 10 }}>⚠ LinkedIn blocks automated reading, so profile depth depends on what's public elsewhere. Use the deep paste panel below for full profile depth.</div>
+                  <div className="hint" style={{ marginTop: 10 }}>⚠ This can't log into LinkedIn, so for full profile depth paste the LinkedIn page text into the gold panel below before running, it gets fused into the research as a primary source.</div>
                 </div>
 
                 <div className="panel" style={{ borderColor: "rgba(255,207,0,.22)", background: "rgba(255,207,0,.03)" }}>
