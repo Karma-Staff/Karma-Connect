@@ -32,7 +32,7 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
   backdrop-filter:blur(22px) saturate(1.4); -webkit-backdrop-filter:blur(22px) saturate(1.4);
   box-shadow:inset -1px 0 0 rgba(255,255,255,.04);
   padding:22px 16px; display:flex; flex-direction:column; gap:5px;
-  position:sticky; top:0; height:100vh; overflow-y:auto;}
+  position:fixed; top:0; left:0; z-index:5; height:100vh; overflow-y:auto;}
 .kc .brand{display:flex; align-items:center; gap:12px; padding:6px 8px 20px}
 .kc .mark{width:44px; height:44px; border-radius:12px; background:linear-gradient(150deg,#071855,#16385A);
   display:flex; align-items:center; justify-content:center; flex:0 0 44px;
@@ -62,7 +62,7 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
 .kc .dot{display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--yellow);
   box-shadow:0 0 8px var(--yellow); margin-right:7px; vertical-align:middle}
 
-.kc .main{flex:1; min-width:0; padding:30px 38px 80px; max-width:1180px}
+.kc .main{flex:1; min-width:0; margin-left:266px; padding:30px 38px 80px; max-width:1180px}
 .kc .head{margin-bottom:24px}
 .kc .eyebrow{font-size:11px; letter-spacing:.2em; text-transform:uppercase; color:var(--yellow); font-weight:700; margin-bottom:9px}
 .kc .head h2{font-family:'Lora',serif; font-size:28px; font-weight:700; letter-spacing:-.01em}
@@ -212,7 +212,7 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
 @keyframes fade{from{opacity:0; transform:translateY(10px)}to{opacity:1; transform:none}}
 @media(max-width:920px){
   .kc .side{display:none}
-  .kc .main{padding:22px 18px 60px}
+  .kc .main{margin-left:0; padding:22px 18px 60px}
   .kc .fgrid,.kc .grid2,.kc .iprofile,.kc .senders,.kc .fitgrid,.kc .rpa-grid{grid-template-columns:1fr}
 }
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
