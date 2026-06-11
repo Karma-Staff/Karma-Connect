@@ -1,6 +1,7 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import KarmaConnectAI from './KarmaConnectAI.jsx'
+import { AuthGate } from './components/AuthGate.jsx'
 
 // Catches any render-time error so the user sees a recovery screen, not a blank page.
 class ErrorBoundary extends React.Component {
@@ -51,7 +52,9 @@ class ErrorBoundary extends React.Component {
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <ErrorBoundary>
-      <KarmaConnectAI />
+      <AuthGate>
+        <KarmaConnectAI />
+      </AuthGate>
     </ErrorBoundary>
   </React.StrictMode>
 )
