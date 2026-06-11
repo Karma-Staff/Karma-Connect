@@ -74,7 +74,6 @@ function I({ d, c }) { return <svg viewBox="0 0 24 24" fill="none" stroke="curre
 const MailIc = <I c={<><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 7l9 6 9-6" /></>} />;
 const LockIc = <I c={<><rect x="4" y="11" width="16" height="9" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></>} />;
 const UserIc = <I c={<><circle cx="12" cy="8" r="3.5" /><path d="M5 20a7 7 0 0 1 14 0" /></>} />;
-const KeyIc = <I c={<><circle cx="8" cy="15" r="4" /><path d="M11 12l8-8M17 6l2 2M15 8l2 2" /></>} />;
 const EyeIc = <I c={<><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" /><circle cx="12" cy="12" r="3" /></>} />;
 const EyeOffIc = <I c={<><path d="M3 3l18 18" /><path d="M10.6 10.6a3 3 0 0 0 4.2 4.2" /><path d="M9.9 5.2A10.4 10.4 0 0 1 12 5c6.5 0 10 7 10 7a17.8 17.8 0 0 1-3.3 4.1M6.6 6.6A17.6 17.6 0 0 0 2 12s3.5 7 10 7a10.3 10.3 0 0 0 3.4-.6" /></>} />;
 const CheckIc = <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5"><path d="M5 13l4 4L19 7" /></svg>;
@@ -107,7 +106,6 @@ export function AuthGate({ children }) {
   const [password2, setPassword2] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
-  const [invite, setInvite] = useState("");
   const [remember, setRemember] = useState(true);
   const [showPw, setShowPw] = useState(false);
   const [notice, setNotice] = useState("");
@@ -175,7 +173,7 @@ export function AuthGate({ children }) {
       if (mode === "signup") {
         const { data, error } = await supabase.auth.signUp({
           email: addr, password,
-          options: { emailRedirectTo: window.location.origin, data: { first_name: firstName.trim(), last_name: lastName.trim(), invite_code: invite.trim() } },
+          options: { emailRedirectTo: window.location.origin, data: { first_name: firstName.trim(), last_name: lastName.trim() } },
         });
         if (error) throw error;
         if (!data.session) setNotice("Account created. Check your email to confirm, then sign in.");
@@ -245,12 +243,6 @@ export function AuthGate({ children }) {
               <>
                 <label>Confirm password</label>
                 <div className="field"><span className="ic">{LockIc}</span><input type={showPw ? "text" : "password"} autoComplete="new-password" value={password2} onChange={(e) => setPassword2(e.target.value)} placeholder="Re-enter your password" /></div>
-              </>
-            )}
-            {supabaseConfigured && mode === "signup" && (
-              <>
-                <label>Invitation code <span style={{ color: "#5f72a0", fontWeight: 500 }}>(optional)</span></label>
-                <div className="field"><span className="ic">{KeyIc}</span><input value={invite} onChange={(e) => setInvite(e.target.value)} placeholder="Enter your invite code" /></div>
               </>
             )}
 
