@@ -19,7 +19,7 @@ class ErrorBoundary extends React.Component {
     if (this.state.error) {
       return (
         <div style={{
-          minHeight: '100vh', background: '#040a24', color: '#eef2fb',
+          minHeight: '100vh', background: '#081224', color: '#eef2fb',
           fontFamily: 'Manrope, system-ui, sans-serif', display: 'flex',
           alignItems: 'center', justifyContent: 'center', padding: 24, textAlign: 'center',
         }}>

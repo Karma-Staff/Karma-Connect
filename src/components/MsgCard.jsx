@@ -25,7 +25,7 @@ export function MsgCard({ item, idx, kind, charLimit, favOn, onCopy, onRegen, on
       <div className="mact">
         <button className="iconbtn" onClick={() => onCopy(item.message)}>{CopyIc} Copy</button>
         <button className="iconbtn" onClick={onRegen} disabled={regening}>{RegenIc} {regening ? "…" : "Regenerate"}</button>
-        <button className={"iconbtn fav" + (favOn ? " on" : "")} onClick={onFav} style={{ marginLeft: "auto" }}>{StarIc(favOn)}</button>
+        <button className={"iconbtn fav" + (favOn ? " on" : "")} onClick={onFav} aria-label={favOn ? "Remove from favorites" : "Add to favorites"} aria-pressed={favOn} style={{ marginLeft: "auto" }}>{StarIc(favOn)}</button>
       </div>
     </div>
   );

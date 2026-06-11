@@ -439,6 +439,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
         <main className="main">
           {toast && <div style={{ position: "fixed", top: 22, left: "50%", transform: "translateX(-50%)", zIndex: 50, background: "var(--bg3)", border: "1px solid var(--border2)", padding: "10px 18px", borderRadius: 12, fontSize: 13, fontWeight: 600 }}>{toast}</div>}
 
+          <div key={view} className="viewfade">
           {view === "hub" && (
             <div>
               <div className="hero">
@@ -694,7 +695,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
                         {st.reasoning && <div className="reason"><b>AI Coach</b> · {st.reasoning}</div>}
                         <div className="mact">
                           <button className="iconbtn" onClick={() => copy(st.message)}>{CopyIc} Copy</button>
-                          <button className={"iconbtn fav" + (favs[favKey(kind, i, st.message)] ? " on" : "")} onClick={() => toggleFav(kind, i, st.message)} style={{ marginLeft: "auto" }}>{StarIc(!!favs[favKey(kind, i, st.message)])}</button>
+                          <button className={"iconbtn fav" + (favs[favKey(kind, i, st.message)] ? " on" : "")} onClick={() => toggleFav(kind, i, st.message)} aria-label={favs[favKey(kind, i, st.message)] ? "Remove from favorites" : "Add to favorites"} aria-pressed={!!favs[favKey(kind, i, st.message)]} style={{ marginLeft: "auto" }}>{StarIc(!!favs[favKey(kind, i, st.message)])}</button>
                         </div>
                       </div>
                     </div>
@@ -742,6 +743,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
               )}
             </div>
           )}
+          </div>
         </main>
       </div>
     </div>

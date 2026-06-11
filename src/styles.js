@@ -1,9 +1,9 @@
 // All app styling, injected once via a <style> tag in the root component.
 export const CSS = `
-html,body,#root{margin:0;padding:0;background:#040a24;min-height:100%}
+html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
 .kc *{box-sizing:border-box;margin:0;padding:0}
 .kc{
-  --bg:#040a24; --bg2:#071855; --bg3:#0c2150;
+  --bg:#081224; --bg2:#071855; --bg3:#0c2150;
   --panel:rgba(255,255,255,.04); --panel2:rgba(255,255,255,.07);
   --border:rgba(74,134,200,.14); --border2:rgba(74,134,200,.26);
   --text:#eef2fb; --muted:#9aa7c4; --faint:#65769e;
@@ -303,4 +303,19 @@ html,body,#root{margin:0;padding:0;background:#040a24;min-height:100%}
 @keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
 
 @media(max-width:920px){ .kc .insightgrid{grid-template-columns:1fr} }
+
+/* ── Phase 3: transitions, accessibility, micro-polish (no token cost) ── */
+@keyframes fadeup{from{opacity:0; transform:translateY(10px)}to{opacity:1; transform:none}}
+.kc .viewfade{animation:fadeup .34s cubic-bezier(.22,1,.36,1) both}
+.kc button:focus-visible,.kc input:focus-visible,.kc textarea:focus-visible{outline:2px solid var(--ai2); outline-offset:2px; border-radius:10px}
+.kc .nav:focus-visible{outline-offset:-2px}
+.kc .seg button{transition:all .18s ease}
+.kc .seg button:hover:not(.on){color:var(--text); background:rgba(255,255,255,.05)}
+.kc .seg button.on{box-shadow:inset 0 1px 0 rgba(255,255,255,.16); background:linear-gradient(135deg, rgba(255,255,255,.10), rgba(255,255,255,0) 70%), var(--panel2)}
+.kc .iconbtn:focus-visible{outline:2px solid var(--ai2); outline-offset:2px}
+.kc .empty .eic{transition:transform .3s ease, box-shadow .3s ease}
+.kc .empty:hover .eic{transform:translateY(-3px) scale(1.04); box-shadow:0 16px 34px -18px rgba(124,92,255,.6)}
+@media(prefers-reduced-motion:reduce){
+  .kc *,.kc *:before,.kc *:after{animation-duration:.01ms !important; animation-iteration-count:1 !important; transition-duration:.01ms !important}
+}
 `;

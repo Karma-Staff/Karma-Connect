@@ -101,7 +101,7 @@ export function AuthGate({ children }) {
     setBusy(false);
   }
 
-  const wrap = { minHeight: "100vh", background: "#040a24", color: "#eef2fb", fontFamily: "Manrope, system-ui, sans-serif", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 };
+  const wrap = { minHeight: "100vh", background: "#081224", color: "#eef2fb", fontFamily: "Manrope, system-ui, sans-serif", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 };
   const card = { width: "100%", maxWidth: 392, background: "rgba(255,255,255,.04)", border: "1px solid rgba(74,134,200,.26)", borderRadius: 18, padding: 30, backdropFilter: "blur(18px) saturate(1.4)", WebkitBackdropFilter: "blur(18px) saturate(1.4)", boxShadow: "0 24px 60px -34px rgba(0,0,0,.85), inset 0 1px 0 rgba(255,255,255,.06)" };
   const input = { width: "100%", background: "rgba(0,0,0,.3)", border: "1px solid rgba(74,134,200,.26)", borderRadius: 11, padding: "12px 13px", color: "#eef2fb", fontSize: 14, outline: "none", marginBottom: 12 };
   const btn = { width: "100%", background: "#FFCF00", color: "#071855", border: "none", borderRadius: 12, padding: "13px 22px", fontWeight: 700, fontSize: 14, cursor: busy ? "default" : "pointer", opacity: busy ? 0.6 : 1 };
