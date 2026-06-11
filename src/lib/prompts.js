@@ -69,8 +69,19 @@ const MEET_LEN = {
   executive: "EXECUTIVE body — 2-3 sentences. Peer-to-peer, time-respecting, outcome-focused.",
 };
 
-export function pMeeting(base, n, len, avoid) {
-  return base + `\nTASK: Rapport is established. Write ${n} DISTINCT MEETING REQUEST messages. Body length: ${MEET_LEN[len]}
+export function pMeeting(base, n, len, avoid, reply) {
+  const replyBlock = reply && reply.trim() ? `
+
+THE PROSPECT JUST REPLIED TO YOU. Their exact message:
+"""
+${reply.trim()}
+"""
+FIRST, silently read their reply and gauge its tone and intent (e.g. warm, curious, skeptical, busy, positive, hesitant, asking a question, raising an objection). THEN write meeting requests that:
+- Directly respond to what they actually said. Acknowledge their specific point in your own words before moving to the ask. Never ignore their message or send a generic cold ask.
+- Match their tone and energy. If they were warm, be warm; if brief and busy, be short and respectful; if skeptical, be low-pressure and reassuring; if they asked something, answer it briefly first.
+- Still lead naturally to a short call using the format below.
+` : "";
+  return base + replyBlock + `\nTASK: Rapport is established. Write ${n} DISTINCT MEETING REQUEST messages. Body length: ${MEET_LEN[len]}
 
 MANDATORY FORMAT — every message MUST follow this exact structure, no exceptions:
 Hi [prospect first name],

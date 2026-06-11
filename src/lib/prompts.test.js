@@ -43,6 +43,19 @@ describe("pMeeting", () => {
     expect(p).toMatch(/IICRC certified|vendor member of RIA/);
     expect(p).toContain("www.karmastaff.com");
   });
+
+  it("stays unchanged when no reply is provided (guardrail)", () => {
+    expect(pMeeting("BASE", 10, "standard", [])).not.toContain("THE PROSPECT JUST REPLIED");
+    expect(pMeeting("BASE", 10, "standard", [], "")).not.toContain("THE PROSPECT JUST REPLIED");
+    expect(pMeeting("BASE", 10, "standard", [], "   ")).not.toContain("THE PROSPECT JUST REPLIED");
+  });
+
+  it("injects the reply and tone-matching instructions when a reply is given", () => {
+    const p = pMeeting("BASE", 10, "standard", [], "Sounds interesting, what does it cost?");
+    expect(p).toContain("THE PROSPECT JUST REPLIED");
+    expect(p).toContain("Sounds interesting, what does it cost?");
+    expect(p).toMatch(/tone and energy|gauge its tone/i);
+  });
 });
 
 describe("companyResearchPrompt", () => {

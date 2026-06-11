@@ -53,15 +53,16 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   const [regen, setRegen] = useState({});
   const [favs, setFavs] = useState(saved.favs || {});
   const [meetLen, setMeetLen] = useState(saved.meetLen || "standard");
+  const [prospectReply, setProspectReply] = useState(saved.prospectReply || "");
   const [toast, setToast] = useState("");
   const [history, setHistory] = useState(() => listHistory(userEmail));
 
   // Persist work to localStorage so a refresh never loses (or re-bills) it.
   useEffect(() => {
     try {
-      localStorage.setItem(STATE_KEY, JSON.stringify({ view, prospect, sender, offer, coUrl, analysis, results, favs, meetLen }));
+      localStorage.setItem(STATE_KEY, JSON.stringify({ view, prospect, sender, offer, coUrl, analysis, results, favs, meetLen, prospectReply }));
     } catch (e) {}
-  }, [view, prospect, sender, offer, coUrl, analysis, results, favs, meetLen, STATE_KEY]);
+  }, [view, prospect, sender, offer, coUrl, analysis, results, favs, meetLen, prospectReply, STATE_KEY]);
 
   function pickSender(id) { const s = SENDERS.find((x) => x.id === id) || SENDERS[0]; setSender(id); setOffer(senderOffer(s)); }
   const set = (k, v) => setProspect((p) => ({ ...p, [k]: v }));
@@ -75,7 +76,7 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
     setProspect({ ...EMPTY_PROSPECT });
     setAnalysis(null);
     setResults({ connection: [], relationship: [], meeting_short: [], meeting_standard: [], meeting_executive: [], followup: [] });
-    setFavs({}); setCoUrl(""); setRawPaste(""); setView("hub");
+    setFavs({}); setCoUrl(""); setRawPaste(""); setProspectReply(""); setView("hub");
     setEnrichMsg(""); setEnrichErr(""); setParseMsg(""); setParseErr("");
     showToast("Cleared. Ready for a new prospect.");
   }
@@ -88,7 +89,7 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
     const entry = {
       id: "h" + Date.now(),
       label, sub, savedAt: new Date().toISOString(),
-      snapshot: { prospect, sender, offer, coUrl, analysis, results, favs, meetLen },
+      snapshot: { prospect, sender, offer, coUrl, analysis, results, favs, meetLen, prospectReply },
     };
     const next = [entry, ...history].slice(0, 100);
     setHistory(next); writeHistory(userEmail, next);
@@ -104,6 +105,7 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
     setResults(s.results || { connection: [], relationship: [], meeting_short: [], meeting_standard: [], meeting_executive: [], followup: [] });
     setFavs(s.favs || {});
     setMeetLen(s.meetLen || "standard");
+    setProspectReply(s.prospectReply || "");
     setView(s.analysis ? "intel" : "hub");
     showToast("Loaded " + (entry.label || "prospect"));
   }
@@ -257,7 +259,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
     const base = buildContext(prospect, offer, analysis, "");
     if (kind === "connection") return pConnection(base, n, avoid);
     if (kind === "relationship") return pRelationship(base, n, avoid);
-    if (kind.indexOf("meeting_") === 0) return pMeeting(base, n, kind.split("_")[1], avoid);
+    if (kind.indexOf("meeting_") === 0) return pMeeting(base, n, kind.split("_")[1], avoid, prospectReply);
     return "";
   }
   async function generate(kind) {
@@ -559,6 +561,18 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
             <div>
               <div className="head"><div className="eyebrow">Section 03 · Once rapport is built</div><h2>Meeting request generator</h2><p>Value-focused, non-salesy meeting requests that make the ask an easy yes. Choose a length, then generate 10 angles.</p></div>
               <ProspectStrip />
+              <div className="panel" style={{ marginBottom: 20, borderColor: prospectReply.trim() ? "rgba(82,211,158,.3)" : "var(--border)" }}>
+                <div className="sect-title">Their reply (optional) · paste what the prospect said and the messages will respond to it</div>
+                <div className="f full">
+                  <textarea
+                    value={prospectReply}
+                    placeholder={"Paste the prospect's reply here.\nThe AI reads their tone (warm, curious, skeptical, busy…) and writes meeting asks that respond to what they actually said and match their energy. Leave blank for a standard meeting request."}
+                    onChange={(e) => setProspectReply(e.target.value)}
+                    style={{ minHeight: 90 }}
+                  />
+                </div>
+                {prospectReply.trim() && <div className="hint" style={{ color: "#52d39e" }}>✓ Reply-aware mode on, the meeting requests below will respond to their message and match its tone.</div>}
+              </div>
               <div className="toprow">
                 <div className="seg">{[["short", "Short"], ["standard", "Standard"], ["executive", "Executive"]].map(([v, l]) => <button key={v} className={meetLen === v ? "on" : ""} onClick={() => setMeetLen(v)}>{l}</button>)}</div>
                 <button className="btn primary" onClick={() => generate("meeting_" + meetLen)} disabled={loading["meeting_" + meetLen]}>{loading["meeting_" + meetLen] ? "Generating…" : (results["meeting_" + meetLen].length ? "Regenerate" : "Generate 10")}</button>
