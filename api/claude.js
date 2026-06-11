@@ -29,6 +29,8 @@ module.exports = async (req, res) => {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   const secret = process.env.SUPABASE_JWT_SECRET;
   const domain = (process.env.ALLOWED_EMAIL_DOMAIN || "").toLowerCase();
+  // Optional exact-email allowlist (comma-separated). Takes precedence over the domain check.
+  const allowEmails = (process.env.ALLOWED_EMAILS || "").toLowerCase().split(",").map((s) => s.trim()).filter(Boolean);
   if (!apiKey || !secret) {
     res.status(500).json({ error: { message: "Server not configured (missing ANTHROPIC_API_KEY or SUPABASE_JWT_SECRET)." } });
     return;
@@ -43,7 +45,10 @@ module.exports = async (req, res) => {
     return;
   }
   const email = (claims.email || "").toLowerCase();
-  if (domain && !email.endsWith("@" + domain)) {
+  const allowed = allowEmails.length
+    ? allowEmails.includes(email)
+    : (!domain || email.endsWith("@" + domain));
+  if (!allowed) {
     res.status(403).json({ error: { message: "This account is not allowed to use Karma Connect." } });
     return;
   }
