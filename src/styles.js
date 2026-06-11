@@ -318,4 +318,33 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
 @media(prefers-reduced-motion:reduce){
   .kc *,.kc *:before,.kc *:after{animation-duration:.01ms !important; animation-iteration-count:1 !important; transition-duration:.01ms !important}
 }
+
+/* ── Phase 4: premium micro-polish (no token cost) ── */
+.kc *::-webkit-scrollbar{width:10px; height:10px}
+.kc *::-webkit-scrollbar-track{background:transparent}
+.kc *::-webkit-scrollbar-thumb{background:rgba(74,134,200,.32); border-radius:10px; border:2px solid transparent; background-clip:padding-box}
+.kc *::-webkit-scrollbar-thumb:hover{background:rgba(124,92,255,.45); background-clip:padding-box}
+
+.kc .kctoast{position:fixed; top:22px; left:50%; z-index:50; color:var(--text); font-size:13px; font-weight:600;
+  padding:11px 20px; border-radius:14px; border:1px solid var(--border2);
+  background:linear-gradient(135deg, rgba(255,255,255,.10), rgba(255,255,255,0) 70%), var(--bg3);
+  backdrop-filter:blur(16px) saturate(1.5); -webkit-backdrop-filter:blur(16px) saturate(1.5);
+  box-shadow:0 18px 44px -20px rgba(0,0,0,.8), inset 0 1px 0 rgba(255,255,255,.16); animation:toastin .3s cubic-bezier(.22,1,.36,1) both}
+@keyframes toastin{from{opacity:0; transform:translate(-50%,-12px)}to{opacity:1; transform:translate(-50%,0)}}
+
+.kc .grid2 .mcard:nth-child(2){animation-delay:.05s}
+.kc .grid2 .mcard:nth-child(3){animation-delay:.10s}
+.kc .grid2 .mcard:nth-child(4){animation-delay:.15s}
+.kc .grid2 .mcard:nth-child(5){animation-delay:.20s}
+.kc .grid2 .mcard:nth-child(6){animation-delay:.25s}
+.kc .iprofile .iblock:nth-child(2){animation-delay:.05s}
+.kc .iprofile .iblock:nth-child(3){animation-delay:.10s}
+.kc .iprofile .iblock:nth-child(4){animation-delay:.15s}
+.kc .iprofile .iblock:nth-child(5){animation-delay:.20s}
+
+.kc .heroglow .pdot{animation:twinkle 3s ease-in-out infinite}
+.kc .heroglow .pdot:nth-child(5){animation-delay:.6s}
+.kc .heroglow .pdot:nth-child(6){animation-delay:1.1s}
+.kc .heroglow .pdot:nth-child(7){animation-delay:1.6s}
+@keyframes twinkle{0%,100%{opacity:.45; transform:scale(.85)}50%{opacity:1; transform:scale(1.15)}}
 `;

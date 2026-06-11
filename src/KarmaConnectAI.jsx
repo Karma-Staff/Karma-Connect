@@ -437,7 +437,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
         </aside>
 
         <main className="main">
-          {toast && <div style={{ position: "fixed", top: 22, left: "50%", transform: "translateX(-50%)", zIndex: 50, background: "var(--bg3)", border: "1px solid var(--border2)", padding: "10px 18px", borderRadius: 12, fontSize: 13, fontWeight: 600 }}>{toast}</div>}
+          {toast && <div className="kctoast">{toast}</div>}
 
           <div key={view} className="viewfade">
           {view === "hub" && (
@@ -458,6 +458,8 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
                   <span className="pdot" style={{ top: 2, left: "46%" }} />
                   <span className="pdot" style={{ bottom: 6, right: 12, background: "var(--amber)", boxShadow: "0 0 10px var(--amber)" }} />
                   <span className="pdot" style={{ top: "52%", left: -2 }} />
+                  <span className="pdot" style={{ top: 18, right: 0 }} />
+                  <span className="pdot" style={{ bottom: 22, left: 8, background: "var(--amber)", boxShadow: "0 0 9px var(--amber)" }} />
                 </div>
               </div>
 
