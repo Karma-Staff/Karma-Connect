@@ -1,8 +1,17 @@
 #!/bin/bash
-# Karma Connect AI — local dev launcher
-# Uses the Node runtime downloaded into .tools so you don't need a system Node install.
+# Karma Connect AI — local dev launcher.
+# Prefers a system Node.js install (any OS); falls back to the bundled runtime in .tools.
 cd "$(dirname "$0")"
-export PATH="$(pwd)/.tools/node-v20.18.1-darwin-arm64/bin:$PATH"
+
+if ! command -v node >/dev/null 2>&1; then
+  BUNDLED="$(pwd)/.tools/node-v20.18.1-darwin-arm64/bin"
+  if [ -x "$BUNDLED/node" ]; then
+    export PATH="$BUNDLED:$PATH"
+  else
+    echo "Node.js not found. Install the LTS from https://nodejs.org and run this again."
+    exit 1
+  fi
+fi
 
 if [ ! -d node_modules ]; then
   echo "Installing dependencies..."

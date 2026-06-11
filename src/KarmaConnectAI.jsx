@@ -303,7 +303,9 @@ async function anthropicMsg(system, user, { maxTokens = 1000, useSearch = false 
   const body = {
     model: CLAUDE_MODEL,
     max_tokens: maxTokens,
-    system,
+    // Cache the (large, identical-every-call) system prompt. Cached input tokens cost
+    // ~10% of fresh ones, so repeated calls in a prospect run get much cheaper.
+    system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
     messages: [{ role: "user", content: user }],
   };
   // Anthropic server-side web search tool. max_uses caps searches (the main token cost).
@@ -433,6 +435,24 @@ function cleanMessages(parsed) {
   };
   if (Array.isArray(parsed)) return parsed.map(cleanItem);
   return cleanItem(parsed);
+}
+
+// Pre-trim a raw LinkedIn page paste: drop obvious UI/nav chrome and collapse blank runs
+// so we ship fewer junk tokens to the model. Conservative — keeps all real profile text.
+function stripLinkedInNoise(raw) {
+  if (!raw) return "";
+  const noise = /^(Skip to (main|search)|Keyboard shortcuts|Close jump menu|Search\b|Home$|My Network|Jobs$|Messaging|Notifications$|Try Premium|Try for free|Promoted|Ad$|People also viewed|People you may know|Others named|Show (all|more)|See (all|more|profile)|Follow$|Following$|\+ Follow|Connect$|Message$|More$|Pending$|Status is (online|offline|reachable)|new feed update|Activate to view larger image|Loading|Report this|Save$|Saved$|Like$|Comment$|Repost$|Send$|·|•|\d+(st|nd|rd|th)\s*degree connection)/i;
+  const out = [];
+  let blanks = 0;
+  for (const ln of raw.split(/\r?\n/)) {
+    const t = ln.trim();
+    if (!t) { if (++blanks > 1) continue; out.push(""); continue; }
+    blanks = 0;
+    if (noise.test(t)) continue;
+    if (t.length <= 2) continue; // stray icons / counters
+    out.push(t);
+  }
+  return out.join("\n");
 }
 
 // Lightweight COMPANY-only research (one web-search call). The person comes from the
@@ -613,15 +633,20 @@ export default function KarmaConnectAI() {
     document.head.appendChild(l);
   }, []);
 
-  const [view, setView] = useState("hub");
-  const [prospect, setProspect] = useState({
+  // Restore saved work once (survives refresh, avoids re-billing). See save effect below.
+  const [saved] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("kc_state_v1") || "{}") || {}; } catch (e) { return {}; }
+  });
+  const EMPTY_PROSPECT = {
     firstName: "", lastName: "", company: "", title: "", industry: "Property Restoration", location: "",
     headline: "", about: "", experience: "", website: "", companyDesc: "", news: "",
     notes: "", mutual: "", research: "", pain: "", growth: "", staffing: "", ops: "",
-  });
-  const [sender, setSender] = useState("nordon");
-  const [offer, setOffer] = useState(senderOffer(SENDERS[0]));
-  const [coUrl, setCoUrl] = useState("");
+  };
+  const [view, setView] = useState(saved.view || "hub");
+  const [prospect, setProspect] = useState({ ...EMPTY_PROSPECT, ...(saved.prospect || {}) });
+  const [sender, setSender] = useState(saved.sender || "nordon");
+  const [offer, setOffer] = useState(saved.offer || senderOffer(SENDERS[0]));
+  const [coUrl, setCoUrl] = useState(saved.coUrl || "");
   const [enriching, setEnriching] = useState(false);
   const [enrichMsg, setEnrichMsg] = useState("");
   const [enrichErr, setEnrichErr] = useState("");
@@ -629,14 +654,21 @@ export default function KarmaConnectAI() {
   const [parsing, setParsing] = useState(false);
   const [parseMsg, setParseMsg] = useState("");
   const [parseErr, setParseErr] = useState("");
-  const [analysis, setAnalysis] = useState(null);
-  const [results, setResults] = useState({ connection: [], relationship: [], meeting_short: [], meeting_standard: [], meeting_executive: [], followup: [] });
+  const [analysis, setAnalysis] = useState(saved.analysis || null);
+  const [results, setResults] = useState(saved.results || { connection: [], relationship: [], meeting_short: [], meeting_standard: [], meeting_executive: [], followup: [] });
   const [loading, setLoading] = useState({});
   const [errors, setErrors] = useState({});
   const [regen, setRegen] = useState({});
-  const [favs, setFavs] = useState({});
-  const [meetLen, setMeetLen] = useState("standard");
+  const [favs, setFavs] = useState(saved.favs || {});
+  const [meetLen, setMeetLen] = useState(saved.meetLen || "standard");
   const [toast, setToast] = useState("");
+
+  // Persist work to localStorage so a refresh never loses (or re-bills) it.
+  useEffect(() => {
+    try {
+      localStorage.setItem("kc_state_v1", JSON.stringify({ view, prospect, sender, offer, coUrl, analysis, results, favs, meetLen }));
+    } catch (e) {}
+  }, [view, prospect, sender, offer, coUrl, analysis, results, favs, meetLen]);
 
   function pickSender(id) { const s = SENDERS.find((x) => x.id === id) || SENDERS[0]; setSender(id); setOffer(senderOffer(s)); }
   const set = (k, v) => setProspect((p) => ({ ...p, [k]: v }));
@@ -645,6 +677,15 @@ export default function KarmaConnectAI() {
   const initials = ((prospect.firstName[0] || "") + (prospect.lastName[0] || prospect.company[0] || "")).toUpperCase() || "·";
   function showToast(t) { setToast(t); setTimeout(() => setToast(""), 1600); }
   function copy(text) { navigator.clipboard && navigator.clipboard.writeText(text); showToast("Copied to clipboard"); }
+  function resetAll() {
+    if (!window.confirm("Clear this prospect and all generated messages? This cannot be undone.")) return;
+    setProspect({ ...EMPTY_PROSPECT });
+    setAnalysis(null);
+    setResults({ connection: [], relationship: [], meeting_short: [], meeting_standard: [], meeting_executive: [], followup: [] });
+    setFavs({}); setCoUrl(""); setRawPaste(""); setView("hub");
+    setEnrichMsg(""); setEnrichErr(""); setParseMsg(""); setParseErr("");
+    showToast("Cleared. Ready for a new prospect.");
+  }
   const favKey = (kind, i, msg) => kind + ":" + i + ":" + (msg || "").slice(0, 24);
   function toggleFav(kind, i, msg) { const k = favKey(kind, i, msg); setFavs((f) => ({ ...f, [k]: !f[k] })); }
 
@@ -699,7 +740,7 @@ CRITICAL RULES:
 firstName, lastName, title, company, industry, location, headline, about, experience, education, skills, certifications, recommendations, recentPosts, mutualConnections, companyDesc, news, website, volunteering, languages, extraNotes, fieldsFound (array of field names you found data for), quality (high/medium/low string), qualityNote (one sentence string).
 
 RAW PASTE:
-${rawPaste.slice(0, 18000)}`;
+${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
 
     try {
       const txt = await anthropicMsg(systemPrompt, userPrompt, { maxTokens: 4000 });
@@ -798,17 +839,21 @@ ${rawPaste.slice(0, 18000)}`;
     setLoading((l) => ({ ...l, [kind]: true })); setErrors((e) => ({ ...e, [kind]: null })); setResults((r) => ({ ...r, [kind]: [] }));
     try {
       if (kind === "followup") {
-        const txt = await callClaude(SYSTEM, pFollowup(buildContext(prospect, offer, analysis, "")));
+        const txt = await callClaude(SYSTEM, pFollowup(buildContext(prospect, offer, analysis, "")), false, 2800);
         let arr = safeJSON(txt); if (!Array.isArray(arr)) arr = [arr]; arr = cleanMessages(arr); setResults((r) => ({ ...r, followup: arr }));
       } else {
         const target = TARGET[kind] || 10;
-        const chunk = kind.indexOf("meeting_") === 0 ? 3 : kind === "relationship" ? 4 : 5;
+        const isMeeting = kind.indexOf("meeting_") === 0;
+        // Right-sized output cap to fit all `target` items in ONE call.
+        const cap = isMeeting ? 4800 : kind === "relationship" ? 3600 : 3000;
         let acc = [], guard = 0;
-        while (acc.length < target && guard < 8) {
+        // Ask for ALL remaining items in a single call (collapses the old 2-4 call loop).
+        // The loop only repeats if the model returned fewer than requested.
+        while (acc.length < target && guard < 4) {
           guard++;
-          const n = Math.min(chunk, target - acc.length);
+          const n = target - acc.length;
           const avoid = acc.map((x) => x.angle).filter(Boolean);
-          const txt = await callClaude(SYSTEM, builderFor(kind, n, avoid));
+          const txt = await callClaude(SYSTEM, builderFor(kind, n, avoid), false, cap);
           let arr = safeJSON(txt); if (!Array.isArray(arr)) arr = [arr];
           arr = arr.filter((x) => x && x.message);
           arr = cleanMessages(arr);
@@ -925,7 +970,10 @@ ${rawPaste.slice(0, 18000)}`;
 
           {view === "hub" && (
             <div>
-              <div className="head"><div className="eyebrow">Prospect Intelligence Hub</div><h2>Tell the AI about your prospect</h2><p>Paste a LinkedIn or company URL to auto-research, or enter details by hand. The richer the input, the more the outreach reads as personally written. Then run analysis to unlock the engines.</p></div>
+              <div className="head" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
+                <div><div className="eyebrow">Prospect Intelligence Hub</div><h2>Tell the AI about your prospect</h2><p>Research the company website, paste the prospect's LinkedIn page, or enter details by hand. The richer the input, the more the outreach reads as personally written. Then run analysis to unlock the engines. Your work is saved automatically and survives a refresh.</p></div>
+                <button className="btn ghost sm" onClick={resetAll} style={{ flex: "0 0 auto", whiteSpace: "nowrap" }}>New prospect</button>
+              </div>
               <div className="fa">
                 <div className="panel" style={{ borderColor: "var(--border2)" }}>
                   <div className="sect-title">Company research · enter the company website, AI fills the company fields</div>
