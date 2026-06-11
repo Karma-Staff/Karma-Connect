@@ -19,7 +19,10 @@ database is a later step.
    - **Project URL** → this is `VITE_SUPABASE_URL`
    - **anon public** key → `VITE_SUPABASE_ANON_KEY`
    - **JWT Secret** (further down) → `SUPABASE_JWT_SECRET`
-3. Open **Authentication → Providers → Email** and make sure **Email** is enabled (it is by default). Magic-link login works out of the box.
+3. Open **Authentication → Providers → Email** and make sure **Email** is enabled (it is by default).
+   Teammates sign in with **email + password** (they set their own password via "Create account").
+   - For instant access, turn **off** "Confirm email" (Authentication → Providers → Email) so a new password works immediately.
+   - Leave it **on** if you want each person to click a one-time confirmation link before their first login.
 4. Open **Authentication → URL Configuration**:
    - Set **Site URL** to your future Vercel URL (you'll get it in step 2, e.g. `https://karma-connect.vercel.app`). You can come back and set this after the first deploy.
    - Add that same URL under **Redirect URLs**.
@@ -39,9 +42,11 @@ database is a later step.
    |---|---|---|
    | `ANTHROPIC_API_KEY` | your `sk-ant-…` key | **server-side**, no VITE_ prefix |
    | `SUPABASE_JWT_SECRET` | from Supabase step 1.2 | verifies logins server-side |
-   | `ALLOWED_EMAIL_DOMAIN` | `karmastaff.com` | only this domain may call the AI |
+   | `ALLOWED_EMAILS` | `tenzinwoesel@karmastaff.com` | exact allowlist (comma-separated). Add teammates here. Overrides the domain check. |
+   | `ALLOWED_EMAIL_DOMAIN` | `karmastaff.com` | fallback if `ALLOWED_EMAILS` is left blank |
    | `VITE_SUPABASE_URL` | from Supabase | sent to the browser (safe) |
    | `VITE_SUPABASE_ANON_KEY` | from Supabase | sent to the browser (safe) |
+   | `VITE_ALLOWED_EMAILS` | `tenzinwoesel@karmastaff.com` | client-side allowlist (same list); add teammates here too |
    | `VITE_ALLOWED_EMAIL_DOMAIN` | `karmastaff.com` | login-screen hint only |
 
 3. Click **Deploy**. You'll get a URL like `https://karma-connect.vercel.app`.

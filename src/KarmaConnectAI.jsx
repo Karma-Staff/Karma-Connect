@@ -13,8 +13,11 @@ import {
 import { KarmaMark, Ic, CopyIc, StarIc } from "./components/icons.jsx";
 import { Loader } from "./components/Loader.jsx";
 import { MsgCard } from "./components/MsgCard.jsx";
+import { listHistory, writeHistory } from "./lib/history.js";
 
-export default function KarmaConnectAI() {
+export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
+  // Working draft is namespaced per account so different logins don't clobber each other.
+  const STATE_KEY = "kc_state_v1_" + (userEmail || "anon").toLowerCase();
   useEffect(() => {
     if (document.getElementById("kc-fonts")) return;
     const l = document.createElement("link"); l.id = "kc-fonts"; l.rel = "stylesheet";
@@ -24,7 +27,7 @@ export default function KarmaConnectAI() {
 
   // Restore saved work once (survives refresh, avoids re-billing). See save effect below.
   const [saved] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("kc_state_v1") || "{}") || {}; } catch (e) { return {}; }
+    try { return JSON.parse(localStorage.getItem(STATE_KEY) || "{}") || {}; } catch (e) { return {}; }
   });
   const EMPTY_PROSPECT = {
     firstName: "", lastName: "", company: "", title: "", industry: "Property Restoration", location: "",
@@ -51,13 +54,14 @@ export default function KarmaConnectAI() {
   const [favs, setFavs] = useState(saved.favs || {});
   const [meetLen, setMeetLen] = useState(saved.meetLen || "standard");
   const [toast, setToast] = useState("");
+  const [history, setHistory] = useState(() => listHistory(userEmail));
 
   // Persist work to localStorage so a refresh never loses (or re-bills) it.
   useEffect(() => {
     try {
-      localStorage.setItem("kc_state_v1", JSON.stringify({ view, prospect, sender, offer, coUrl, analysis, results, favs, meetLen }));
+      localStorage.setItem(STATE_KEY, JSON.stringify({ view, prospect, sender, offer, coUrl, analysis, results, favs, meetLen }));
     } catch (e) {}
-  }, [view, prospect, sender, offer, coUrl, analysis, results, favs, meetLen]);
+  }, [view, prospect, sender, offer, coUrl, analysis, results, favs, meetLen, STATE_KEY]);
 
   function pickSender(id) { const s = SENDERS.find((x) => x.id === id) || SENDERS[0]; setSender(id); setOffer(senderOffer(s)); }
   const set = (k, v) => setProspect((p) => ({ ...p, [k]: v }));
@@ -74,6 +78,38 @@ export default function KarmaConnectAI() {
     setFavs({}); setCoUrl(""); setRawPaste(""); setView("hub");
     setEnrichMsg(""); setEnrichErr(""); setParseMsg(""); setParseErr("");
     showToast("Cleared. Ready for a new prospect.");
+  }
+
+  // ---- Per-account prospect history ----
+  function saveToHistory() {
+    if (!prospect.firstName.trim() && !prospect.company.trim()) { showToast("Add a name or company first."); return; }
+    const label = [prospect.firstName, prospect.lastName].filter(Boolean).join(" ") || prospect.company || "Untitled";
+    const sub = [prospect.title, prospect.company].filter(Boolean).join(" · ");
+    const entry = {
+      id: "h" + Date.now(),
+      label, sub, savedAt: new Date().toISOString(),
+      snapshot: { prospect, sender, offer, coUrl, analysis, results, favs, meetLen },
+    };
+    const next = [entry, ...history].slice(0, 100);
+    setHistory(next); writeHistory(userEmail, next);
+    showToast("Saved to history");
+  }
+  function loadFromHistory(entry) {
+    const s = entry.snapshot || {};
+    setProspect({ ...EMPTY_PROSPECT, ...(s.prospect || {}) });
+    setSender(s.sender || "nordon");
+    setOffer(s.offer || senderOffer(SENDERS[0]));
+    setCoUrl(s.coUrl || "");
+    setAnalysis(s.analysis || null);
+    setResults(s.results || { connection: [], relationship: [], meeting_short: [], meeting_standard: [], meeting_executive: [], followup: [] });
+    setFavs(s.favs || {});
+    setMeetLen(s.meetLen || "standard");
+    setView(s.analysis ? "intel" : "hub");
+    showToast("Loaded " + (entry.label || "prospect"));
+  }
+  function deleteFromHistory(id) {
+    const next = history.filter((h) => h.id !== id);
+    setHistory(next); writeHistory(userEmail, next);
   }
   const favKey = (kind, i, msg) => kind + ":" + i + ":" + (msg || "").slice(0, 24);
   function toggleFav(kind, i, msg) { const k = favKey(kind, i, msg); setFavs((f) => ({ ...f, [k]: !f[k] })); }
@@ -274,6 +310,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
     { id: "relationship", label: "Relationship Builder", ic: Ic.rel, gate: true, count: results.relationship.length },
     { id: "meeting", label: "Meeting Requests", ic: Ic.meet, gate: true },
     { id: "followup", label: "Follow-up Engine", ic: Ic.fup, gate: true, count: results.followup.length },
+    { id: "history", label: "History", ic: Ic.hist, count: history.length },
   ];
 
   function ProspectStrip() {
@@ -350,7 +387,12 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
           <div className="sidefoot">
             <div><span className="dot" />{analysis ? "Profile active" : "Awaiting analysis"}</div>
             <div style={{ marginTop: 6, opacity: .85 }}>Sending as <b style={{ color: "var(--ice)" }}>{(SENDERS.find((s) => s.id === sender) || SENDERS[0]).name}</b></div>
-            <div style={{ marginTop: 6, opacity: .7 }}>Brand DNA · live generation</div>
+            {userEmail && (
+              <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--border)" }}>
+                <div style={{ opacity: .85, wordBreak: "break-all" }}>Signed in as <b style={{ color: "var(--ice)" }}>{userEmail}</b></div>
+                {onSignOut && <button className="btn ghost sm" style={{ marginTop: 8, padding: "6px 12px" }} onClick={onSignOut}>Sign out</button>}
+              </div>
+            )}
           </div>
         </aside>
 
@@ -361,7 +403,10 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
             <div>
               <div className="head" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
                 <div><div className="eyebrow">Prospect Intelligence Hub</div><h2>Tell the AI about your prospect</h2><p>Research the company website, paste the prospect's LinkedIn page, or enter details by hand. The richer the input, the more the outreach reads as personally written. Then run analysis to unlock the engines. Your work is saved automatically and survives a refresh.</p></div>
-                <button className="btn ghost sm" onClick={resetAll} style={{ flex: "0 0 auto", whiteSpace: "nowrap" }}>New prospect</button>
+                <div style={{ display: "flex", gap: 8, flex: "0 0 auto" }}>
+                  <button className="btn ghost sm" onClick={saveToHistory} style={{ whiteSpace: "nowrap" }}>Save to history</button>
+                  <button className="btn ghost sm" onClick={resetAll} style={{ whiteSpace: "nowrap" }}>New prospect</button>
+                </div>
               </div>
               <div className="fa">
                 <div className="panel" style={{ borderColor: "var(--border2)" }}>
@@ -558,6 +603,45 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
                       </div>
                     </div>
                   ); })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {view === "history" && (
+            <div>
+              <div className="head"><div className="eyebrow">Saved prospects</div><h2>History</h2><p>Every prospect you save lands here, tied to your account. Open one to restore the full prospect, analysis, and generated messages, or remove it.</p></div>
+              {history.length === 0 ? (
+                <div className="empty">
+                  <div className="eic">{Ic.hist}</div>
+                  <h3>No saved prospects yet</h3>
+                  <p>In the Prospect Hub, click <b>Save to history</b> to keep a prospect and everything generated for them. They'll show up here.</p>
+                  <button className="btn primary" onClick={() => setView("hub")}>Go to Prospect Hub</button>
+                </div>
+              ) : (
+                <div className="grid2">
+                  {history.map((h) => (
+                    <div className="mcard" key={h.id}>
+                      <div className="mctop">
+                        <span className="av" style={{ width: 30, height: 30, borderRadius: 8, background: "var(--grad)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 12, color: "#fff", fontFamily: "'Lora',serif" }}>
+                          {((h.label || "?")[0] || "?").toUpperCase()}
+                        </span>
+                        <div>
+                          <div className="pn" style={{ fontSize: 14, fontWeight: 700 }}>{h.label}</div>
+                          {h.sub && <div className="pr" style={{ fontSize: 11.5, color: "var(--muted)" }}>{h.sub}</div>}
+                        </div>
+                      </div>
+                      <div style={{ fontSize: 11.5, color: "var(--faint)", display: "flex", gap: 12, flexWrap: "wrap" }}>
+                        <span>Saved {new Date(h.savedAt).toLocaleDateString()} {new Date(h.savedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                        {h.snapshot?.analysis && <span style={{ color: "#52d39e" }}>Analysis ✓</span>}
+                        {(() => { const r = h.snapshot?.results || {}; const n = Object.values(r).reduce((a, x) => a + (Array.isArray(x) ? x.length : 0), 0); return n ? <span>{n} messages</span> : null; })()}
+                      </div>
+                      <div className="mact">
+                        <button className="iconbtn" onClick={() => loadFromHistory(h)}>Open</button>
+                        <button className="iconbtn" onClick={() => { if (window.confirm("Remove " + (h.label || "this prospect") + " from history?")) deleteFromHistory(h.id); }} style={{ marginLeft: "auto" }}>Delete</button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
