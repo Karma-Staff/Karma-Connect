@@ -55,6 +55,7 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   const [meetLen, setMeetLen] = useState(saved.meetLen || "standard");
   const [prospectReply, setProspectReply] = useState(saved.prospectReply || "");
   const [toast, setToast] = useState("");
+  const [confirmState, setConfirmState] = useState(null); // { title, message, confirmLabel, danger, onConfirm }
   const [history, setHistory] = useState([]);
   const [historyPage, setHistoryPage] = useState(0);
   const [historyMore, setHistoryMore] = useState(false);
@@ -86,6 +87,14 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [analysis, results, favs, prospect, sender, offer, meetLen, prospectReply]);
 
+  // Close the confirm modal on Escape.
+  useEffect(() => {
+    if (!confirmState) return;
+    const onKey = (e) => { if (e.key === "Escape") setConfirmState(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [confirmState]);
+
   function pickSender(id) { const s = SENDERS.find((x) => x.id === id) || SENDERS[0]; setSender(id); setOffer(senderOffer(s)); }
   const set = (k, v) => setProspect((p) => ({ ...p, [k]: v }));
   const ready = prospect.firstName.trim() && (prospect.company.trim() || prospect.title.trim());
@@ -93,8 +102,8 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   const initials = ((prospect.firstName[0] || "") + (prospect.lastName[0] || prospect.company[0] || "")).toUpperCase() || "·";
   function showToast(t) { setToast(t); setTimeout(() => setToast(""), 1600); }
   function copy(text) { navigator.clipboard && navigator.clipboard.writeText(text); showToast("Copied to clipboard"); }
-  function resetAll() {
-    if (!window.confirm("Clear this prospect and all generated messages? This cannot be undone.")) return;
+  function askConfirm(opts) { setConfirmState(opts); }
+  function doReset() {
     setProspect({ ...EMPTY_PROSPECT });
     setAnalysis(null);
     setResults({ connection: [], relationship: [], meeting_short: [], meeting_standard: [], meeting_executive: [], followup: [] });
@@ -102,6 +111,9 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
     setEnrichMsg(""); setEnrichErr(""); setParseMsg(""); setParseErr("");
     setCurrentEntryId(null);
     showToast("Cleared. Ready for a new prospect.");
+  }
+  function resetAll() {
+    askConfirm({ title: "Start a new prospect?", message: "This clears the current prospect and everything generated for them. It can't be undone.", confirmLabel: "Clear & start new", danger: true, onConfirm: doReset });
   }
 
   // ---- Per-account prospect history (auto-saved after analysis) ----
@@ -467,6 +479,21 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
 
         <main className="main">
           {toast && <div className="kctoast">{toast}</div>}
+          {confirmState && (
+            <div className="modal-ov" onClick={() => setConfirmState(null)}>
+              <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+                <h3>
+                  {confirmState.danger && <span className="mi" style={{ background: "rgba(226,74,74,.16)", color: "#ff9a9a", border: "1px solid rgba(226,74,74,.3)" }}>!</span>}
+                  {confirmState.title}
+                </h3>
+                <p>{confirmState.message}</p>
+                <div className="mrow">
+                  <button className="btn ghost sm" onClick={() => setConfirmState(null)}>Cancel</button>
+                  <button className={"btn sm " + (confirmState.danger ? "danger" : "primary")} autoFocus onClick={() => { const fn = confirmState.onConfirm; setConfirmState(null); if (fn) fn(); }}>{confirmState.confirmLabel || "Confirm"}</button>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div key={view} className="viewfade">
           {view === "hub" && (
@@ -765,7 +792,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
                       </div>
                       <div className="mact">
                         <button className="iconbtn" onClick={() => loadFromHistory(h)}>Open</button>
-                        <button className="iconbtn" onClick={() => { if (window.confirm("Remove " + (h.label || "this prospect") + " from history?")) deleteFromHistory(h.id); }} style={{ marginLeft: "auto" }}>Delete</button>
+                        <button className="iconbtn" onClick={() => askConfirm({ title: "Remove from history?", message: "Remove " + (h.label || "this prospect") + " and everything saved for them. This can't be undone.", confirmLabel: "Delete", danger: true, onConfirm: () => deleteFromHistory(h.id) })} style={{ marginLeft: "auto" }}>Delete</button>
                       </div>
                     </div>
                   ))}

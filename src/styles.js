@@ -347,4 +347,18 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
 .kc .heroglow .pdot:nth-child(6){animation-delay:1.1s}
 .kc .heroglow .pdot:nth-child(7){animation-delay:1.6s}
 @keyframes twinkle{0%,100%{opacity:.45; transform:scale(.85)}50%{opacity:1; transform:scale(1.15)}}
+
+/* ── In-app confirm modal (replaces native window.confirm) ── */
+.kc .modal-ov{position:fixed; inset:0; z-index:80; display:flex; align-items:center; justify-content:center; padding:24px;
+  background:rgba(3,7,18,.6); backdrop-filter:blur(7px) saturate(1.2); -webkit-backdrop-filter:blur(7px) saturate(1.2); animation:fade .18s ease both}
+.kc .modal{width:100%; max-width:430px; border-radius:18px; padding:24px 24px 20px;
+  background:linear-gradient(150deg, rgba(255,255,255,.10), rgba(255,255,255,.02) 50%, rgba(255,255,255,0) 100%), var(--panel);
+  border:1px solid var(--border2); backdrop-filter:blur(26px) saturate(1.5); -webkit-backdrop-filter:blur(26px) saturate(1.5);
+  box-shadow:0 44px 96px -44px rgba(0,0,0,.92), inset 0 1px 0 rgba(255,255,255,.16); animation:fade .25s cubic-bezier(.22,1,.36,1) both}
+.kc .modal h3{font-family:'Lora',serif; font-size:18px; font-weight:700; margin-bottom:10px; display:flex; align-items:center; gap:11px}
+.kc .modal .mi{width:34px; height:34px; flex:0 0 34px; border-radius:11px; display:flex; align-items:center; justify-content:center; font-weight:800; font-family:'Lora',serif; font-size:18px}
+.kc .modal p{color:var(--muted); font-size:13.5px; line-height:1.6; margin-bottom:22px}
+.kc .modal .mrow{display:flex; gap:10px; justify-content:flex-end}
+.kc .btn.danger{background:linear-gradient(135deg,#ff8a8a,#e24a4a); color:#fff; box-shadow:0 14px 32px -14px rgba(226,74,74,.6), inset 0 1px 0 rgba(255,255,255,.32)}
+.kc .btn.danger:hover{transform:translateY(-2px); box-shadow:0 22px 44px -12px rgba(226,74,74,.85), inset 0 1px 0 rgba(255,255,255,.42)}
 `;
