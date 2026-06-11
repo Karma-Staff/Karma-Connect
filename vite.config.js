@@ -1,33 +1,31 @@
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
+import proxyCore from './api/_proxy.cjs'
 
-// Local-dev version of the /api/claude proxy. Mirrors api/claude.js but skips the Supabase
-// auth check (localhost only) so `npm run dev` works without Vercel/Supabase set up.
-// Reads ANTHROPIC_API_KEY from .env at the SERVER level — it never reaches the browser.
+// Local-dev version of /api/claude. Uses the SAME shared core as the Vercel function
+// (api/claude.js) so they can't drift. Auth is skipped on localhost (requireAuth: false);
+// rate-limit / usage / cache stay no-ops unless their env vars are set.
 function devClaudeProxy(env) {
   return {
     name: 'dev-claude-proxy',
     configureServer(server) {
+      // Make .env values available to the shared core (process.env) in dev.
+      for (const [k, v] of Object.entries(env)) { if (process.env[k] === undefined) process.env[k] = v }
       server.middlewares.use('/api/claude', (req, res) => {
-        if (req.method !== 'POST') { res.statusCode = 405; res.end(JSON.stringify({ error: { message: 'Method not allowed.' } })); return }
-        const apiKey = env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY
-        if (!apiKey) { res.statusCode = 500; res.end(JSON.stringify({ error: { message: 'Missing ANTHROPIC_API_KEY in .env (server-side, no VITE_ prefix). Add it and restart.' } })); return }
-        let body = ''
-        req.on('data', (c) => { body += c })
+        let bodyString = ''
+        req.on('data', (c) => { bodyString += c })
         req.on('end', async () => {
           try {
-            const r = await fetch('https://api.anthropic.com/v1/messages', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-              body,
-            })
-            const text = await r.text()
-            res.statusCode = r.status
-            res.setHeader('Content-Type', 'application/json')
-            res.end(text)
+            const out = await proxyCore.handleClaude(
+              { method: req.method, authHeader: req.headers.authorization || '', bodyString },
+              { requireAuth: false },
+            )
+            res.statusCode = out.status
+            for (const [k, v] of Object.entries(out.headers || {})) res.setHeader(k, v)
+            res.end(out.body)
           } catch (e) {
             res.statusCode = 502
-            res.end(JSON.stringify({ error: { message: 'Upstream request failed: ' + String(e) } }))
+            res.end(JSON.stringify({ error: { message: 'Proxy error: ' + String(e) } }))
           }
         })
       })
@@ -36,8 +34,8 @@ function devClaudeProxy(env) {
 }
 
 export default defineConfig(({ mode }) => {
-  // Load ALL env vars (empty prefix), so the server-only ANTHROPIC_API_KEY is available
-  // here in Node without being exposed to the client bundle.
+  // Load ALL env vars (empty prefix) so server-only keys reach the shared core without
+  // being exposed to the client bundle.
   const env = loadEnv(mode, process.cwd(), '')
   return {
     plugins: [react(), devClaudeProxy(env)],
