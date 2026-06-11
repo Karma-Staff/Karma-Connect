@@ -13,7 +13,7 @@ import {
 import { KarmaMark, Ic, CopyIc, StarIc } from "./components/icons.jsx";
 import { Loader } from "./components/Loader.jsx";
 import { MsgCard } from "./components/MsgCard.jsx";
-import { listHistory, writeHistory } from "./lib/history.js";
+import { listHistory, writeHistory, deleteHistory, HISTORY_PAGE_SIZE } from "./lib/history.js";
 
 export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   // Working draft is namespaced per account so different logins don't clobber each other.
@@ -55,7 +55,19 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   const [meetLen, setMeetLen] = useState(saved.meetLen || "standard");
   const [prospectReply, setProspectReply] = useState(saved.prospectReply || "");
   const [toast, setToast] = useState("");
-  const [history, setHistory] = useState(() => listHistory(userEmail));
+  const [history, setHistory] = useState([]);
+  const [historyPage, setHistoryPage] = useState(0);
+  const [historyMore, setHistoryMore] = useState(false);
+
+  // Load saved prospects (Supabase when signed in, else localStorage). Async + paginated.
+  useEffect(() => {
+    let alive = true;
+    listHistory(userEmail, 0).then((rows) => {
+      if (!alive) return;
+      setHistory(rows); setHistoryPage(0); setHistoryMore(rows.length >= HISTORY_PAGE_SIZE);
+    });
+    return () => { alive = false; };
+  }, [userEmail]);
 
   // Persist work to localStorage so a refresh never loses (or re-bills) it.
   useEffect(() => {
@@ -86,14 +98,21 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
     if (!prospect.firstName.trim() && !prospect.company.trim()) { showToast("Add a name or company first."); return; }
     const label = [prospect.firstName, prospect.lastName].filter(Boolean).join(" ") || prospect.company || "Untitled";
     const sub = [prospect.title, prospect.company].filter(Boolean).join(" · ");
+    const id = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : "h" + Date.now();
     const entry = {
-      id: "h" + Date.now(),
-      label, sub, savedAt: new Date().toISOString(),
+      id, label, sub, savedAt: new Date().toISOString(),
       snapshot: { prospect, sender, offer, coUrl, analysis, results, favs, meetLen, prospectReply },
     };
-    const next = [entry, ...history].slice(0, 100);
-    setHistory(next); writeHistory(userEmail, next);
+    setHistory([entry, ...history]);
+    writeHistory(userEmail, [entry]);
     showToast("Saved to history");
+  }
+  function loadMoreHistory() {
+    const next = historyPage + 1;
+    listHistory(userEmail, next).then((rows) => {
+      if (rows.length) { setHistory((cur) => [...cur, ...rows]); setHistoryPage(next); }
+      setHistoryMore(rows.length >= HISTORY_PAGE_SIZE);
+    });
   }
   function loadFromHistory(entry) {
     const s = entry.snapshot || {};
@@ -110,8 +129,8 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
     showToast("Loaded " + (entry.label || "prospect"));
   }
   function deleteFromHistory(id) {
-    const next = history.filter((h) => h.id !== id);
-    setHistory(next); writeHistory(userEmail, next);
+    setHistory(history.filter((h) => h.id !== id));
+    deleteHistory(userEmail, id);
   }
   const favKey = (kind, i, msg) => kind + ":" + i + ":" + (msg || "").slice(0, 24);
   function toggleFav(kind, i, msg) { const k = favKey(kind, i, msg); setFavs((f) => ({ ...f, [k]: !f[k] })); }
@@ -741,6 +760,11 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
                       </div>
                     </div>
                   ))}
+                </div>
+              )}
+              {history.length > 0 && historyMore && (
+                <div className="toprow" style={{ justifyContent: "center", marginTop: 18 }}>
+                  <button className="btn ghost sm" onClick={loadMoreHistory}>Load older</button>
                 </div>
               )}
             </div>
