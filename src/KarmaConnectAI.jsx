@@ -366,6 +366,20 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
 
   const fitRows = analysis && analysis.fit ? [["ICP Fit", analysis.fit.icp], ["Qualification", analysis.fit.qualification], ["Buying readiness", analysis.fit.readiness]] : [];
 
+  // Prospect completion + research coverage + AI confidence (derived from current data).
+  const COMPLETION_FIELDS = ["firstName", "lastName", "title", "company", "industry", "location", "headline", "about", "experience", "website", "companyDesc", "news"];
+  const completion = Math.round((100 * COMPLETION_FIELDS.filter((k) => String(prospect[k] || "").trim()).length) / COMPLETION_FIELDS.length);
+  const coverage = [
+    ["LinkedIn", !!(prospect.about || prospect.experience || prospect.headline)],
+    ["Website", !!String(prospect.website || "").trim()],
+    ["Company", !!String(prospect.companyDesc || prospect.company || "").trim()],
+    ["News", !!String(prospect.news || "").trim()],
+    ["Role", !!(String(prospect.title || "").trim() && String(prospect.firstName || "").trim())],
+  ];
+  const aiConfidence = analysis && analysis.fit
+    ? Math.round(((analysis.fit.icp?.score || 0) + (analysis.fit.qualification?.score || 0) + (analysis.fit.readiness?.score || 0)) / 3)
+    : null;
+
   return (
     <div className="kc">
       <style>{CSS}</style>
@@ -390,9 +404,14 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
             <div><span className="dot" />{analysis ? "Profile active" : "Awaiting analysis"}</div>
             <div style={{ marginTop: 6, opacity: .85 }}>Sending as <b style={{ color: "var(--ice)" }}>{(SENDERS.find((s) => s.id === sender) || SENDERS[0]).name}</b></div>
             {userEmail && (
-              <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--border)" }}>
-                <div style={{ opacity: .85, wordBreak: "break-all" }}>Signed in as <b style={{ color: "var(--ice)" }}>{userEmail}</b></div>
-                {onSignOut && <button className="btn ghost sm" style={{ marginTop: 8, padding: "6px 12px" }} onClick={onSignOut}>Sign out</button>}
+              <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ width: 34, height: 34, flex: "0 0 34px", borderRadius: "50%", background: "var(--grad)", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Lora',serif", fontWeight: 800, fontSize: 15, color: "#fff", boxShadow: "inset 0 1px 0 rgba(255,255,255,.3), 0 4px 12px -6px rgba(0,0,0,.6)" }}>
+                  {(userEmail[0] || "?").toUpperCase()}
+                </span>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontSize: 12, color: "var(--ice)", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={userEmail}>{userEmail}</div>
+                  {onSignOut && <button onClick={onSignOut} style={{ background: "none", border: "none", color: "var(--faint)", cursor: "pointer", fontSize: 11, fontWeight: 600, padding: 0, marginTop: 1 }}>Sign out</button>}
+                </div>
               </div>
             )}
           </div>
@@ -403,16 +422,45 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
 
           {view === "hub" && (
             <div>
-              <div className="head" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
-                <div><div className="eyebrow">Prospect Intelligence Hub</div><h2>Tell the AI about your prospect</h2><p>Research the company website, paste the prospect's LinkedIn page, or enter details by hand. The richer the input, the more the outreach reads as personally written. Then run analysis to unlock the engines. Your work is saved automatically and survives a refresh.</p></div>
-                <div style={{ display: "flex", gap: 8, flex: "0 0 auto" }}>
-                  <button className="btn ghost sm" onClick={saveToHistory} style={{ whiteSpace: "nowrap" }}>Save to history</button>
-                  <button className="btn ghost sm" onClick={resetAll} style={{ whiteSpace: "nowrap" }}>New prospect</button>
+              <div className="hero">
+                <div style={{ position: "relative", zIndex: 1, minWidth: 0 }}>
+                  <div className="eyebrow">Prospect Intelligence Hub</div>
+                  <h1>Tell AI about your prospect</h1>
+                  <p>Paste a LinkedIn profile, a company website, or both. Karma Connect builds a complete prospect profile and generates personalized outreach. Your work saves automatically.</p>
+                  <div className="actions">
+                    <button className="btn ai sm" onClick={runAnalysis} disabled={!ready || loading.analysis}>{loading.analysis ? "Analyzing…" : "Run AI Analysis →"}</button>
+                    <button className="btn ghost sm" onClick={saveToHistory}>Save to history</button>
+                    <button className="btn ghost sm" onClick={resetAll}>New prospect</button>
+                  </div>
+                </div>
+                <div className="heroglow">
+                  <div className="ring1" /><div className="ring2" /><div className="orb" />
+                  <span className="pdot" style={{ top: 2, left: "46%" }} />
+                  <span className="pdot" style={{ bottom: 6, right: 12, background: "var(--amber)", boxShadow: "0 0 10px var(--amber)" }} />
+                  <span className="pdot" style={{ top: "52%", left: -2 }} />
                 </div>
               </div>
+
+              <div className="scorestrip">
+                <div className="scorecard">
+                  <div className="progring" style={{ "--p": completion, "--c": "var(--amber)" }}><span>{completion}%</span></div>
+                  <div><div className="scl">Prospect completion</div><div className="scv">{completion >= 80 ? "Ready to generate" : completion >= 40 ? "Getting there" : "Add more detail"}</div></div>
+                </div>
+                <div className="scorecard">
+                  <div className="progring" style={{ "--p": aiConfidence || 0, "--c": "var(--ai)" }}><span>{aiConfidence != null ? aiConfidence + "%" : "—"}</span></div>
+                  <div><div className="scl">AI confidence</div><div className="scv">{aiConfidence != null ? "From analysis" : "Run analysis"}</div></div>
+                </div>
+                <div className="scorecard">
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="scl" style={{ marginBottom: 9 }}>Research coverage</div>
+                    <div className="cov">{coverage.map(([l, on], i) => <span key={i} className={"covchip" + (on ? " on" : "")}><span className="cdot" />{l}</span>)}</div>
+                  </div>
+                </div>
+              </div>
+
               <div className="fa">
-                <div className="panel" style={{ borderColor: "var(--border2)" }}>
-                  <div className="sect-title">Company research · enter the company website, AI fills the company fields</div>
+                <div className="panel step" style={{ borderColor: "var(--border2)" }}>
+                  <div className="stepbadge"><span className="sn">1</span><span><span className="stt">Company Intelligence</span><span className="stsub">Auto-fill from the website</span></span></div>
                   <div className="fgrid">
                     <div className="f"><label>Company website URL</label><input value={coUrl} placeholder="https://company.com" onChange={(e) => setCoUrl(e.target.value)} /></div>
                   </div>
@@ -426,8 +474,8 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
                   <div className="hint" style={{ marginTop: 10 }}>⚠ For the person's profile (name, title, about, experience), use the Deep LinkedIn paste panel below, that's the most complete and lowest-cost way to import a profile.</div>
                 </div>
 
-                <div className="panel" style={{ borderColor: "rgba(255,207,0,.22)", background: "rgba(255,207,0,.03)" }}>
-                  <div className="sect-title" style={{ color: "var(--yellow)" }}>Deep LinkedIn paste · the most complete way to import a profile</div>
+                <div className="panel step" style={{ borderColor: "rgba(255,207,0,.22)", background: "rgba(255,207,0,.03)" }}>
+                  <div className="stepbadge"><span className="sn">2</span><span><span className="stt">LinkedIn Intelligence</span><span className="stsub">The most complete way to import a profile</span></span></div>
                   <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 14, lineHeight: 1.65 }}>
                     Open the LinkedIn profile in your browser while logged in. Press <b style={{ color: "var(--text)" }}>Ctrl+A</b> (select all) then <b style={{ color: "var(--text)" }}>Ctrl+C</b> (copy). Paste everything below. The AI will extract every field including full About, all Experience entries, Education, Skills, Certifications, recent posts, recommendations, and mutual connections.
                   </div>
@@ -506,10 +554,17 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
                   </div>
                 </div>
 
-                {!ready && <div className="hint">⚠ Add at least a first name and a company or title to continue.</div>}
-                <div className="toprow">
-                  <button className="btn primary" disabled={!ready || loading.analysis} onClick={runAnalysis}>{loading.analysis ? "Analyzing…" : "Run AI Analysis →"}</button>
-                  <span style={{ color: "var(--muted)", fontSize: 13 }}>Builds an intelligence profile + fit scores, then unlocks all message engines.</span>
+                <div className="panel step ai">
+                  <div className="stepbadge ai"><span className="sn">3</span><span><span className="stt">AI Enrichment</span><span className="stsub">Build the intelligence profile + fit scores</span></span></div>
+                  <div style={{ color: "var(--muted)", fontSize: 13.5, lineHeight: 1.6 }}>Karma Connect reads everything above and builds a full intelligence profile and fit scoring, then unlocks every outreach engine.</div>
+                  <div className="sources">
+                    {["Website", "LinkedIn", "Company news", "Public signals", "Your notes"].map((s) => <span key={s} className="srcchip"><span className="sdot" />{s}</span>)}
+                  </div>
+                  {!ready && <div className="hint" style={{ marginBottom: 8 }}>⚠ Add at least a first name and a company or title to continue.</div>}
+                  <div className="toprow" style={{ marginBottom: 0, marginTop: 4 }}>
+                    <button className="btn ai" disabled={!ready || loading.analysis} onClick={runAnalysis}>{loading.analysis ? "Analyzing…" : "Run AI Analysis →"}</button>
+                    {aiConfidence != null && <span style={{ color: "var(--muted)", fontSize: 13 }}>Last run: {aiConfidence}% confidence, re-run after adding more.</span>}
+                  </div>
                 </div>
               </div>
             </div>
