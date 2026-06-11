@@ -8,7 +8,9 @@ function b64url(s) {
 }
 
 // Verify a Supabase access token (HS256 JWT signed with the project's JWT secret).
-function verifySupabaseJWT(token, secret) {
+// Hardened: checks signature, expiry, audience ("authenticated"), and — when SUPABASE_URL
+// is configured — the issuer matches this project's auth endpoint.
+function verifySupabaseJWT(token, secret, expectedIss) {
   const parts = (token || "").split(".");
   if (parts.length !== 3) return null;
   const [h, p, sig] = parts;
@@ -18,6 +20,10 @@ function verifySupabaseJWT(token, secret) {
   let payload;
   try { payload = JSON.parse(b64url(p).toString("utf8")); } catch (e) { return null; }
   if (payload.exp && Date.now() / 1000 > payload.exp) return null;
+  // Audience: Supabase user tokens carry aud "authenticated".
+  if (payload.aud && payload.aud !== "authenticated") return null;
+  // Issuer: bind the token to this exact Supabase project when we know its URL.
+  if (expectedIss && payload.iss && payload.iss !== expectedIss) return null;
   return payload;
 }
 
@@ -36,10 +42,12 @@ module.exports = async (req, res) => {
     return;
   }
 
-  // Auth: require a valid Supabase login token.
+  // Auth: require a valid Supabase login token. Bind to this project's issuer when known.
+  const supabaseUrl = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
+  const expectedIss = supabaseUrl ? supabaseUrl + "/auth/v1" : "";
   const authHeader = req.headers.authorization || "";
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
-  const claims = token ? verifySupabaseJWT(token, secret) : null;
+  const claims = token ? verifySupabaseJWT(token, secret, expectedIss) : null;
   if (!claims) {
     res.status(401).json({ error: { message: "Please sign in again." } });
     return;
