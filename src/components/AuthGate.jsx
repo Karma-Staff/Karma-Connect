@@ -1,6 +1,7 @@
 import { useState, useEffect, cloneElement } from "react";
 import { supabase, supabaseConfigured } from "../lib/supabase.js";
 import { ALLOWED_EMAILS, isAllowedEmail } from "../lib/access.js";
+import { hasPassword, setPassword as setLocalPw, verifyPassword, clearPassword } from "../lib/localpass.js";
 import { KarmaMark } from "./icons.jsx";
 
 const LS_KEY = "kc_email";
@@ -18,6 +19,7 @@ export function AuthGate({ children }) {
   const [mode, setMode] = useState("signin"); // signin | signup (Supabase mode)
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [password2, setPassword2] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -48,6 +50,16 @@ export function AuthGate({ children }) {
 
   const onlyOne = ALLOWED_EMAILS.length === 1 ? ALLOWED_EMAILS[0] : "";
   const deniedSession = supabaseConfigured && session && !isAllowedEmail(sessionEmail);
+  // In local mode, an allowlisted email with no stored password is creating one.
+  const typedAddr = email.trim().toLowerCase();
+  const softCreating = !supabaseConfigured && isAllowedEmail(typedAddr) && !hasPassword(typedAddr);
+
+  function softReset() {
+    if (!typedAddr) { setErr("Enter your email first."); return; }
+    if (!window.confirm("Reset the password for " + typedAddr + "? You'll set a new one.")) return;
+    clearPassword(typedAddr);
+    setPassword(""); setPassword2(""); setErr(""); setNotice("Password cleared. Set a new one below.");
+  }
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -56,11 +68,28 @@ export function AuthGate({ children }) {
     if (!addr) { setErr("Enter your email."); return; }
     if (!isAllowedEmail(addr)) { setErr("That email isn't on the access list."); return; }
 
+    // ----- Local (no Supabase) password gate -----
     if (!supabaseConfigured) {
-      try { localStorage.setItem(LS_KEY, addr); } catch (e2) {}
-      setLocalEmail(addr);
+      setBusy(true);
+      try {
+        if (!hasPassword(addr)) {
+          if (!password || password.length < 6) { setErr("Choose a password of at least 6 characters."); setBusy(false); return; }
+          if (password !== password2) { setErr("The two passwords don't match."); setBusy(false); return; }
+          await setLocalPw(addr, password);
+        } else {
+          const ok = await verifyPassword(addr, password);
+          if (!ok) { setErr("Wrong password."); setBusy(false); return; }
+        }
+        try { localStorage.setItem(LS_KEY, addr); } catch (e2) {}
+        setLocalEmail(addr);
+      } catch (e4) {
+        setErr("Could not process the password. Try again.");
+      }
+      setBusy(false);
       return;
     }
+
+    // ----- Supabase password auth -----
     if (!password || password.length < 8) { setErr("Use a password of at least 8 characters."); return; }
     setBusy(true);
     try {
@@ -110,24 +139,31 @@ export function AuthGate({ children }) {
           <form onSubmit={handleSubmit}>
             <p style={{ color: "#9aa7c4", fontSize: 13.5, lineHeight: 1.6, marginBottom: 16 }}>
               {!supabaseConfigured
-                ? "This workspace is private. Enter your approved email to continue."
+                ? (softCreating ? "First time on this device, set a password for your email." : "This workspace is private. Sign in to continue.")
                 : mode === "signup"
                   ? "Create your account with an approved email and a password."
                   : "Sign in to your Karma Connect account."}
             </p>
             <input style={input} type="email" autoComplete="email" placeholder={onlyOne || "you@karmastaff.com"} value={email} onChange={(e) => setEmail(e.target.value)} />
-            {supabaseConfigured && (
-              <input style={input} type="password" autoComplete={mode === "signup" ? "new-password" : "current-password"} placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} />
+            <input style={input} type="password" autoComplete={(supabaseConfigured ? mode === "signup" : softCreating) ? "new-password" : "current-password"} placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} />
+            {((!supabaseConfigured && softCreating) || (supabaseConfigured && mode === "signup")) && (
+              <input style={input} type="password" autoComplete="new-password" placeholder="Confirm password" value={password2} onChange={(e) => setPassword2(e.target.value)} />
             )}
             <button style={btn} type="submit" disabled={busy}>
-              {busy ? "Working…" : !supabaseConfigured ? "Enter" : mode === "signup" ? "Create account" : "Sign in"}
+              {busy ? "Working…"
+                : !supabaseConfigured ? (softCreating ? "Set password & enter" : "Sign in")
+                : mode === "signup" ? "Create account" : "Sign in"}
             </button>
             {err && <p style={{ color: "#ffb3b3", fontSize: 12.5, marginTop: 12 }}>{err}</p>}
             {notice && <p style={{ color: "#cfe0f6", fontSize: 12.5, marginTop: 12 }}>{notice}</p>}
-            {supabaseConfigured && (
+            {supabaseConfigured ? (
               <button type="button" style={link} onClick={() => { setMode(mode === "signup" ? "signin" : "signup"); setErr(""); setNotice(""); }}>
                 {mode === "signup" ? "Already have an account? Sign in" : "First time? Create a password"}
               </button>
+            ) : (
+              !softCreating && isAllowedEmail(typedAddr) && (
+                <button type="button" style={link} onClick={softReset}>Forgot password? Reset it</button>
+              )
             )}
           </form>
         )}
