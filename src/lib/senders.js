@@ -1,0 +1,15 @@
+// The four Karma Staff senders. Each carries a first-person identity, angle, calendar link, and email.
+import { KS_COMPANY } from "./brand.js";
+
+export const SENDERS = [
+  { id: "nordon", name: "Nordon Chophel", role: "Co-founder", tag: "Operations · Restoration", calendar: "https://ln.run/XznAZ", email: "tnordon@karmastaff.com",
+    head: `SENDER IDENTITY (write in this person's first-person voice):\nNordon Chophel — Co-founder, Karma Staff. Background: MBA, IICRC certified, hands-on experience at a PuroClean franchise; stays close to the day-to-day with the crews.\nANGLE THIS SENDER LEANS INTO: operational pressure — juggling crews, estimates, scheduling, follow-ups and admin; keeping operations running smoothly without added overhead.\nCALENDAR LINK: https://ln.run/XznAZ\nEMAIL: tnordon@karmastaff.com\nSIGN-OFF NAME: Nordon` },
+  { id: "ogyen", name: "Ogyen", role: "CFO", tag: "Finance · Bookkeeping", calendar: "https://ziply.pk/Karmastaff", email: "ogyen@karmastaff.com",
+    head: `SENDER IDENTITY (write in this person's first-person voice):\nOgyen — CFO, Karma Staff. 15+ years in finance leadership, including time as a Senior Manager at Deloitte.\nANGLE THIS SENDER LEANS INTO: financial clarity — clean books, accurate job costing, faster billing, healthier cash flow. Core services to name: estimating support, bookkeeping, customer success support.\nCALENDAR LINK: https://ziply.pk/Karmastaff\nEMAIL: ogyen@karmastaff.com\nSIGN-OFF NAME: Ogyen` },
+  { id: "jigme", name: "Tenzin Jigme", role: "Owner", tag: "Owner-to-owner", calendar: "https://calendly.com/tjigme-karmastaff/30min", email: "tjigme@karmastaff.com",
+    head: `SENDER IDENTITY (write in this person's first-person voice):\nTenzin Jigme — small business owner running a few ventures, including Karma Staff. Speaks owner-to-owner, peer-to-peer.\nANGLE THIS SENDER LEANS INTO: genuine peer connection — "see if there's any overlap or ways we might support each other over time." The gap between finishing a job and getting paid is usually just a mountain of admin; bridge it via estimating + bookkeeping so owners stay in the field. Warmest, simplest, most human tone.\nCALENDAR LINK: https://calendly.com/tjigme-karmastaff/30min\nEMAIL: tjigme@karmastaff.com\nSIGN-OFF NAME: Tenzin` },
+  { id: "wangjor", name: "Tenzin Wangjor", role: "Marketing Director", tag: "Estimating · Backend ops", calendar: "https://calendly.com/twangjor-karmastaff/meeting-with-karma-staff", email: "twangjor@karmastaff.com",
+    head: `SENDER IDENTITY (write in this person's first-person voice):\nTenzin Wangjor — with Karma Staff; works with restoration and construction companies.\nANGLE THIS SENDER LEANS INTO: estimating workflow bottlenecks — estimates backing up when the field gets busy; keeping estimating workflows consistent so nothing falls behind and estimates go out on time. Likes to "exchange insights" and be "a helpful resource for your team."\nCALENDAR LINK: https://calendly.com/twangjor-karmastaff/meeting-with-karma-staff\nEMAIL: twangjor@karmastaff.com\nSIGN-OFF NAME: Tenzin` },
+];
+
+export const senderOffer = (s) => s.head + "\n\n" + KS_COMPANY;
