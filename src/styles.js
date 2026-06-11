@@ -28,9 +28,9 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
 .kc .app{position:relative; z-index:1; display:flex; min-height:100vh}
 
 .kc .side{width:266px; flex:0 0 266px; border-right:1px solid var(--border);
-  background:linear-gradient(180deg,rgba(7,24,85,.55),rgba(4,10,36,.6));
-  backdrop-filter:blur(22px) saturate(1.4); -webkit-backdrop-filter:blur(22px) saturate(1.4);
-  box-shadow:inset -1px 0 0 rgba(255,255,255,.04);
+  background:linear-gradient(180deg,rgba(7,24,85,.32),rgba(4,10,36,.34));
+  backdrop-filter:blur(26px) saturate(1.5); -webkit-backdrop-filter:blur(26px) saturate(1.5);
+  box-shadow:inset -1px 0 0 rgba(255,255,255,.05);
   padding:22px 16px; display:flex; flex-direction:column; gap:5px;
   position:fixed; top:0; left:0; z-index:5; height:100vh; overflow-y:auto;}
 .kc .brand{display:flex; align-items:center; gap:12px; padding:6px 8px 20px}
