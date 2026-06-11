@@ -27,7 +27,9 @@ database is a later step.
    - Set **Site URL** to your future Vercel URL (you'll get it in step 2, e.g. `https://karma-connect.vercel.app`). You can come back and set this after the first deploy.
    - Add that same URL under **Redirect URLs**.
 
-> Tip: to keep it strictly team-only, you can later turn off open sign-ups in Supabase and invite teammates, but the `ALLOWED_EMAIL_DOMAIN` check below already blocks anyone outside your domain.
+> Note: sign-up is open by default (anyone can create an account). To restrict it, set
+> `ALLOWED_EMAIL_DOMAIN` or `ALLOWED_EMAILS` in the env table below, and/or turn off open
+> sign-ups in Supabase and invite teammates manually.
 
 ---
 
@@ -42,12 +44,17 @@ database is a later step.
    |---|---|---|
    | `ANTHROPIC_API_KEY` | your `sk-ant-…` key | **server-side**, no VITE_ prefix |
    | `SUPABASE_JWT_SECRET` | from Supabase step 1.2 | verifies logins server-side |
-   | `ALLOWED_EMAILS` | `tenzinwoesel@karmastaff.com` | exact allowlist (comma-separated). Add teammates here. Overrides the domain check. |
-   | `ALLOWED_EMAIL_DOMAIN` | `karmastaff.com` | fallback if `ALLOWED_EMAILS` is left blank |
    | `VITE_SUPABASE_URL` | from Supabase | sent to the browser (safe) |
    | `VITE_SUPABASE_ANON_KEY` | from Supabase | sent to the browser (safe) |
-   | `VITE_ALLOWED_EMAILS` | `tenzinwoesel@karmastaff.com` | client-side allowlist (same list); add teammates here too |
-   | `VITE_ALLOWED_EMAIL_DOMAIN` | `karmastaff.com` | login-screen hint only |
+
+   **Sign-up is open by default** — anyone who creates an account can use the app (and spend your
+   API budget). For a public URL this is a real cost risk. To lock it down, add **one** of these
+   (optional) and only matching accounts are allowed:
+
+   | Name | Value | Notes |
+   |---|---|---|
+   | `ALLOWED_EMAIL_DOMAIN` | `karmastaff.com` | only this email domain may use the app |
+   | `ALLOWED_EMAILS` | `a@karmastaff.com,b@karmastaff.com` | exact list (overrides the domain) |
 
 3. Click **Deploy**. You'll get a URL like `https://karma-connect.vercel.app`.
 4. Go back to **Supabase → Authentication → URL Configuration** and put that URL in
