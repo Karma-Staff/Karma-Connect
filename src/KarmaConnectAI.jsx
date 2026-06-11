@@ -58,6 +58,7 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   const [history, setHistory] = useState([]);
   const [historyPage, setHistoryPage] = useState(0);
   const [historyMore, setHistoryMore] = useState(false);
+  const [currentEntryId, setCurrentEntryId] = useState(saved.currentEntryId || null);
 
   // Load saved prospects (Supabase when signed in, else localStorage). Async + paginated.
   useEffect(() => {
@@ -72,9 +73,18 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   // Persist work to localStorage so a refresh never loses (or re-bills) it.
   useEffect(() => {
     try {
-      localStorage.setItem(STATE_KEY, JSON.stringify({ view, prospect, sender, offer, coUrl, analysis, results, favs, meetLen, prospectReply }));
+      localStorage.setItem(STATE_KEY, JSON.stringify({ view, prospect, sender, offer, coUrl, analysis, results, favs, meetLen, prospectReply, currentEntryId }));
     } catch (e) {}
-  }, [view, prospect, sender, offer, coUrl, analysis, results, favs, meetLen, prospectReply, STATE_KEY]);
+  }, [view, prospect, sender, offer, coUrl, analysis, results, favs, meetLen, prospectReply, currentEntryId, STATE_KEY]);
+
+  // Auto-save the current prospect to history once analysis has run, then keep it in sync
+  // (debounced) as messages are generated/edited. No manual "Save" needed.
+  useEffect(() => {
+    if (!analysis) return;
+    const t = setTimeout(() => autoSaveCurrent(), 900);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [analysis, results, favs, prospect, sender, offer, meetLen, prospectReply]);
 
   function pickSender(id) { const s = SENDERS.find((x) => x.id === id) || SENDERS[0]; setSender(id); setOffer(senderOffer(s)); }
   const set = (k, v) => setProspect((p) => ({ ...p, [k]: v }));
@@ -90,22 +100,21 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
     setResults({ connection: [], relationship: [], meeting_short: [], meeting_standard: [], meeting_executive: [], followup: [] });
     setFavs({}); setCoUrl(""); setRawPaste(""); setProspectReply(""); setView("hub");
     setEnrichMsg(""); setEnrichErr(""); setParseMsg(""); setParseErr("");
+    setCurrentEntryId(null);
     showToast("Cleared. Ready for a new prospect.");
   }
 
-  // ---- Per-account prospect history ----
-  function saveToHistory() {
-    if (!prospect.firstName.trim() && !prospect.company.trim()) { showToast("Add a name or company first."); return; }
+  // ---- Per-account prospect history (auto-saved after analysis) ----
+  function autoSaveCurrent() {
+    if (!analysis) return;
+    if (!prospect.firstName.trim() && !prospect.company.trim()) return;
+    let id = currentEntryId;
+    if (!id) { id = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : "h" + Date.now(); setCurrentEntryId(id); }
     const label = [prospect.firstName, prospect.lastName].filter(Boolean).join(" ") || prospect.company || "Untitled";
     const sub = [prospect.title, prospect.company].filter(Boolean).join(" · ");
-    const id = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : "h" + Date.now();
-    const entry = {
-      id, label, sub, savedAt: new Date().toISOString(),
-      snapshot: { prospect, sender, offer, coUrl, analysis, results, favs, meetLen, prospectReply },
-    };
-    setHistory([entry, ...history]);
+    const entry = { id, label, sub, savedAt: new Date().toISOString(), snapshot: { prospect, sender, offer, coUrl, analysis, results, favs, meetLen, prospectReply } };
+    setHistory((cur) => [entry, ...cur.filter((h) => h.id !== id)]);
     writeHistory(userEmail, [entry]);
-    showToast("Saved to history");
   }
   function loadMoreHistory() {
     const next = historyPage + 1;
@@ -125,6 +134,7 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
     setFavs(s.favs || {});
     setMeetLen(s.meetLen || "standard");
     setProspectReply(s.prospectReply || "");
+    setCurrentEntryId(entry.id);
     setView(s.analysis ? "intel" : "hub");
     showToast("Loaded " + (entry.label || "prospect"));
   }
@@ -468,7 +478,6 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
                   <p>Paste a LinkedIn profile, a company website, or both. Karma Connect builds a complete prospect profile and generates personalized outreach. Your work saves automatically.</p>
                   <div className="actions">
                     <button className="btn ai sm" onClick={runAnalysis} disabled={!ready || loading.analysis}>{loading.analysis ? "Analyzing…" : "Run AI Analysis →"}</button>
-                    <button className="btn ghost sm" onClick={saveToHistory}>Save to history</button>
                     <button className="btn ghost sm" onClick={resetAll}>New prospect</button>
                   </div>
                 </div>
@@ -733,7 +742,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
                 <div className="empty">
                   <div className="eic">{Ic.hist}</div>
                   <h3>No saved prospects yet</h3>
-                  <p>In the Prospect Hub, click <b>Save to history</b> to keep a prospect and everything generated for them. They'll show up here.</p>
+                  <p>Run <b>AI Analysis</b> on a prospect and it's saved here automatically, along with everything you generate for them.</p>
                   <button className="btn primary" onClick={() => setView("hub")}>Go to Prospect Hub</button>
                 </div>
               ) : (
