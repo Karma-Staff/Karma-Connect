@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, Fragment } from "react";
 import { CSS } from "./styles.js";
 import { SYSTEM } from "./lib/brand.js";
 import { SENDERS, senderOffer } from "./lib/senders.js";
@@ -315,6 +315,20 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
     { id: "history", label: "History", ic: Ic.hist, count: history.length },
   ];
 
+  function GenSkeleton() {
+    return (
+      <div className="grid2">
+        {[0, 1, 2, 3].map((i) => (
+          <div className="skcard" key={i}>
+            <div className="sk" style={{ height: 13, width: "38%" }} />
+            <div className="sk" style={{ height: 52 }} />
+            <div className="sk" style={{ height: 9, width: "72%" }} />
+            <div className="sk" style={{ height: 9, width: "54%" }} />
+          </div>
+        ))}
+      </div>
+    );
+  }
   function ProspectStrip() {
     return (
       <div className="pchip">
@@ -346,7 +360,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
           {items.length > 0 && !isLoad && <span style={{ color: "var(--muted)", fontSize: 13 }}>{items.length} crafted for {name}</span>}
         </div>
         {err && <div className="err" style={{ marginBottom: 16 }}>⚠ {err}</div>}
-        {isLoad && items.length === 0 && <div className="panel"><Loader stages={STAGES_GEN} /></div>}
+        {isLoad && items.length === 0 && <GenSkeleton />}
         {!isLoad && items.length === 0 && !err && (
           <div className="empty"><div className="eic">{Ic.conn}</div><h3>No messages yet</h3><p>{blurb}</p><button className="btn primary" onClick={() => generate(kind)}>Generate for {name}</button></div>
         )}
@@ -379,6 +393,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
   const aiConfidence = analysis && analysis.fit
     ? Math.round(((analysis.fit.icp?.score || 0) + (analysis.fit.qualification?.score || 0) + (analysis.fit.readiness?.score || 0)) / 3)
     : null;
+  const insights = analysis ? [...(analysis.hooks || []), ...(analysis.trends || [])].filter(Boolean).slice(0, 6) : [];
 
   return (
     <div className="kc">
@@ -393,11 +408,15 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
           {NAV.map((n) => {
             const locked = n.gate && !analysis && !loading.analysis;
             return (
-              <button key={n.id} className={"nav" + (view === n.id ? " on" : "") + (locked ? " lock" : "")} onClick={() => { if (!locked) setView(n.id); }}>
-                {n.ic}{n.label}
-                {n.count > 0 && <span className="ct">{n.count}</span>}
-                {locked && <span className="ct" style={{ color: "var(--faint)" }}>🔒</span>}
-              </button>
+              <Fragment key={n.id}>
+                {n.id === "connection" && <div className="navlbl" style={{ marginTop: 4 }}>Outreach</div>}
+                {n.id === "history" && <div className="navlbl" style={{ marginTop: 4 }}>Library</div>}
+                <button className={"nav" + (view === n.id ? " on" : "") + (locked ? " lock" : "")} onClick={() => { if (!locked) setView(n.id); }}>
+                  {n.ic}{n.label}
+                  {n.count > 0 && <span className="ct">{n.count}</span>}
+                  {locked && <span className="ct" style={{ color: "var(--faint)" }}>🔒</span>}
+                </button>
+              </Fragment>
             );
           })}
           <div className="sidefoot">
@@ -574,6 +593,14 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
             <div>
               <div className="head"><div className="eyebrow">AI Analysis Engine</div><h2>Intelligence profile</h2><p>What the AI understands about {name} before writing a word. This drives every message.</p></div>
               <ProspectStrip />
+              {analysis && !loading.analysis && insights.length > 0 && (
+                <div className="copilot">
+                  <h4><span className="cdotai" />AI Copilot · Insights found</h4>
+                  <div className="insightgrid">
+                    {insights.map((t, i) => <div className="insight" key={i}><span className="ifire">🔥</span><span>{t}</span></div>)}
+                  </div>
+                </div>
+              )}
               {loading.analysis && <div className="panel"><Loader stages={STAGES_ANALYZE} /></div>}
               {errors.analysis && <div className="err">⚠ {errors.analysis}</div>}
               {analysis && !loading.analysis && (
@@ -633,7 +660,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
                 <button className="btn primary" onClick={() => generate("meeting_" + meetLen)} disabled={loading["meeting_" + meetLen]}>{loading["meeting_" + meetLen] ? "Generating…" : (results["meeting_" + meetLen].length ? "Regenerate" : "Generate 10")}</button>
               </div>
               {errors["meeting_" + meetLen] && <div className="err" style={{ marginBottom: 16 }}>⚠ {errors["meeting_" + meetLen]}</div>}
-              {loading["meeting_" + meetLen] && results["meeting_" + meetLen].length === 0 && <div className="panel"><Loader stages={STAGES_GEN} /></div>}
+              {loading["meeting_" + meetLen] && results["meeting_" + meetLen].length === 0 && <GenSkeleton />}
               {!loading["meeting_" + meetLen] && results["meeting_" + meetLen].length === 0 && !errors["meeting_" + meetLen] && (
                 <div className="empty"><div className="eic">{Ic.meet}</div><h3>No {meetLen} meeting requests yet</h3><p>Generate 10 personalized {meetLen} meeting requests for {name}.</p><button className="btn primary" onClick={() => generate("meeting_" + meetLen)}>Generate for {name}</button></div>
               )}

@@ -282,4 +282,25 @@ html,body,#root{margin:0;padding:0;background:#040a24;min-height:100%}
   .kc .heroglow{display:none}
   .kc .scorestrip{grid-template-columns:1fr}
 }
+
+/* ── AI Copilot insights ── */
+.kc .copilot{margin-bottom:18px;
+  background:linear-gradient(135deg, rgba(124,92,255,.12), rgba(255,255,255,.02) 45%, rgba(255,255,255,0) 78%), var(--panel);
+  border:1px solid rgba(124,92,255,.32); border-radius:18px; padding:18px 20px;
+  backdrop-filter:blur(20px) saturate(1.5); -webkit-backdrop-filter:blur(20px) saturate(1.5);
+  box-shadow:0 24px 60px -40px rgba(124,92,255,.5), inset 0 1px 0 rgba(255,255,255,.14)}
+.kc .copilot h4{display:flex; align-items:center; gap:9px; font-size:12px; letter-spacing:.1em; text-transform:uppercase; color:var(--ai2); font-weight:700; margin-bottom:14px}
+.kc .copilot h4 .cdotai{width:8px; height:8px; border-radius:50%; background:var(--ai); box-shadow:0 0 12px var(--ai); animation:pulse 1.5s ease infinite}
+.kc .insightgrid{display:grid; grid-template-columns:1fr 1fr; gap:10px}
+.kc .insight{display:flex; align-items:flex-start; gap:10px; font-size:13.5px; line-height:1.5; color:#e6e2ff;
+  background:rgba(124,92,255,.07); border:1px solid rgba(124,92,255,.2); border-radius:12px; padding:11px 13px; transition:all .2s}
+.kc .insight:hover{transform:translateY(-2px); border-color:rgba(124,92,255,.4); box-shadow:0 14px 30px -18px rgba(124,92,255,.6)}
+.kc .insight .ifire{flex:0 0 auto; font-size:14px; line-height:1.4}
+
+/* ── Skeleton loading ── */
+.kc .skcard{background:var(--panel); border:1px solid var(--border); border-radius:16px; padding:18px; display:flex; flex-direction:column; gap:12px}
+.kc .sk{border-radius:8px; background:linear-gradient(100deg, rgba(255,255,255,.04) 30%, rgba(124,92,255,.14) 50%, rgba(255,255,255,.04) 70%); background-size:200% 100%; animation:shimmer 1.4s ease infinite}
+@keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+
+@media(max-width:920px){ .kc .insightgrid{grid-template-columns:1fr} }
 `;
