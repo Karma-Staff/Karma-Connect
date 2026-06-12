@@ -62,7 +62,14 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
 .kc .dot{display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--yellow);
   box-shadow:0 0 8px var(--yellow); margin-right:7px; vertical-align:middle}
 
-.kc .main{flex:1; min-width:0; margin-left:266px; padding:30px 38px 80px; max-width:1180px}
+.kc .main{flex:1; min-width:0; margin-left:266px; padding:30px 38px 32px; max-width:1180px;
+  min-height:100vh; display:flex; flex-direction:column}
+.kc .main > .viewfade{flex:1 0 auto}
+.kc .appfoot{margin-top:40px; padding:18px 2px 6px; border-top:1px solid var(--border);
+  display:flex; align-items:center; gap:10px; font-size:11.5px; color:var(--faint); letter-spacing:.03em}
+.kc .appfoot svg{opacity:.55}
+.kc .appfoot b{color:var(--muted); font-weight:600}
+.kc .appfoot .sp{margin-left:auto; opacity:.8}
 .kc .head{margin-bottom:24px}
 .kc .eyebrow{font-size:11px; letter-spacing:.2em; text-transform:uppercase; color:var(--yellow); font-weight:700; margin-bottom:9px}
 .kc .head h2{font-family:'Lora',serif; font-size:28px; font-weight:700; letter-spacing:-.01em}

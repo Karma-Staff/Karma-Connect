@@ -806,6 +806,11 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
             </div>
           )}
           </div>
+          <div className="appfoot">
+            <KarmaMark color="#5f72a0" w={15} />
+            <span>Karma <b>Connect</b> · AI-Powered Prospect Intelligence</span>
+            <span className="sp">{analysis ? "Profile active" : "Awaiting analysis"}</span>
+          </div>
         </main>
       </div>
     </div>
