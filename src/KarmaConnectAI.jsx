@@ -14,6 +14,7 @@ import { KarmaMark, Ic, CopyIc, StarIc } from "./components/icons.jsx";
 import { Loader } from "./components/Loader.jsx";
 import { MsgCard } from "./components/MsgCard.jsx";
 import { listHistory, writeHistory, deleteHistory, HISTORY_PAGE_SIZE } from "./lib/history.js";
+import { scoreFit } from "./lib/scoring.js";
 
 export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   // Working draft is namespaced per account so different logins don't clobber each other.
@@ -53,6 +54,7 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   const [history, setHistory] = useState([]);
   const [historyPage, setHistoryPage] = useState(0);
   const [historyMore, setHistoryMore] = useState(false);
+  const [showRubric, setShowRubric] = useState(false);
   const [currentEntryId, setCurrentEntryId] = useState(saved.currentEntryId || null);
 
   // Load saved prospects (Supabase when signed in, else localStorage). Async + paginated.
@@ -413,9 +415,13 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
     );
   }
 
-  const fitRows = analysis && analysis.fit ? [["ICP Fit", analysis.fit.icp], ["Qualification", analysis.fit.qualification], ["Buying readiness", analysis.fit.readiness]] : [];
+  // Deterministic, explainable fit — computed in code from the prospect's own data (lib/scoring.js).
+  // Same prospect always yields the same number, and every score carries a factor breakdown you can
+  // show a client. Independent of the AI's qualitative read.
+  const fit = scoreFit(prospect);
+  const fitRows = [["ICP Fit", fit.icp], ["Qualification", fit.qualification], ["Buying readiness", fit.readiness]];
 
-  // Prospect completion + research coverage + AI confidence (derived from current data).
+  // Prospect completion + research coverage + opportunity fit (derived from current data).
   const COMPLETION_FIELDS = ["firstName", "lastName", "title", "company", "industry", "location", "headline", "about", "experience", "website", "companyDesc", "news"];
   const completion = Math.round((100 * COMPLETION_FIELDS.filter((k) => String(prospect[k] || "").trim()).length) / COMPLETION_FIELDS.length);
   const coverage = [
@@ -425,9 +431,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
     ["News", !!String(prospect.news || "").trim()],
     ["Role", !!(String(prospect.title || "").trim() && String(prospect.firstName || "").trim())],
   ];
-  const aiConfidence = analysis && analysis.fit
-    ? Math.round(((analysis.fit.icp?.score || 0) + (analysis.fit.qualification?.score || 0) + (analysis.fit.readiness?.score || 0)) / 3)
-    : null;
+  const aiConfidence = fit.overall;
   const insights = analysis ? [...(analysis.hooks || []), ...(analysis.trends || [])].filter(Boolean).slice(0, 6) : [];
 
   return (
@@ -518,8 +522,8 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
                   <div><div className="scl">Prospect completion</div><div className="scv">{completion >= 80 ? "Ready to generate" : completion >= 40 ? "Getting there" : "Add more detail"}</div></div>
                 </div>
                 <div className="scorecard">
-                  <div className="progring" style={{ "--p": aiConfidence || 0, "--c": "var(--ai)" }}><span>{aiConfidence != null ? aiConfidence + "%" : "—"}</span></div>
-                  <div><div className="scl">AI confidence</div><div className="scv">{aiConfidence != null ? "From analysis" : "Run analysis"}</div></div>
+                  <div className="progring" style={{ "--p": aiConfidence || 0, "--c": "var(--ai)" }}><span>{aiConfidence}%</span></div>
+                  <div><div className="scl">Opportunity fit</div><div className="scv">{aiConfidence >= 65 ? "Strong fit" : aiConfidence >= 40 ? "Moderate fit" : "Add more data"}</div></div>
                 </div>
                 <div className="scorecard">
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -634,7 +638,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
                   {!ready && <div className="hint" style={{ marginBottom: 8 }}>⚠ Add at least a first name and a company or title to continue.</div>}
                   <div className="toprow" style={{ marginBottom: 0, marginTop: 4 }}>
                     <button className="btn ai" disabled={!ready || loading.analysis} onClick={runAnalysis}>{loading.analysis ? "Analyzing…" : "Run AI Analysis →"}</button>
-                    {aiConfidence != null && <span style={{ color: "var(--muted)", fontSize: 13 }}>Last run: {aiConfidence}% confidence, re-run after adding more.</span>}
+                    <span style={{ color: "var(--muted)", fontSize: 13 }}>Opportunity fit: {aiConfidence}% — computed from the data above.</span>
                   </div>
                 </div>
               </div>
@@ -660,7 +664,10 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
                   <div className="iblock full"><h4>Who they are</h4><p>{analysis.persona}</p></div>
                   {fitRows.length > 0 && (
                     <div className="iblock full">
-                      <h4>Fit &amp; opportunity scoring</h4>
+                      <div className="fithead">
+                        <h4>Fit &amp; opportunity scoring</h4>
+                        <button className="btn ghost sm" onClick={() => setShowRubric((v) => !v)}>{showRubric ? "Hide the math" : "How these scores are calculated"}</button>
+                      </div>
                       <div className="fitgrid">
                         {fitRows.map(([label, v], i) => v ? (
                           <div className="fitcard" key={i}>
@@ -671,6 +678,22 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
                           </div>
                         ) : null)}
                       </div>
+                      {showRubric && (
+                        <div className="rubric">
+                          <p className="rubric-note">Each score is computed in code from the data you entered — no AI guesswork, so the same prospect always scores the same. Points show exactly what earned the score.</p>
+                          {fitRows.map(([label, v], i) => v ? (
+                            <div className="rubric-dim" key={i}>
+                              <div className="rubric-dh"><span>{label}</span><span className="rubric-tot">{v.score} / 100</span></div>
+                              {v.factors.map((f, k) => (
+                                <div className={"rubric-row" + (f.points > 0 ? "" : " miss")} key={k}>
+                                  <span className="rubric-lbl">{f.points > 0 ? "✓" : "○"} {f.label}</span>
+                                  <span className="rubric-pts">{f.points} / {f.max}</span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : null)}
+                        </div>
+                      )}
                     </div>
                   )}
                   {[["Likely responsibilities", analysis.responsibilities], ["Pain points", analysis.painPoints], ["Goals they're pursuing", analysis.goals], ["Connection angles", analysis.hooks], ["Industry trends", analysis.trends], ["Sector challenges", analysis.challenges]].map(([t, arr], i) =>

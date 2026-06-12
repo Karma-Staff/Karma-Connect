@@ -183,6 +183,19 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
 .kc .fitcard .fv{font-family:'Lora',serif; font-size:22px; font-weight:700; color:var(--text)}
 .kc .fitcard .fc{font-size:10.5px; color:var(--faint); margin-top:8px; text-transform:uppercase; letter-spacing:.06em}
 .kc .fitcard .fw{font-size:12px; color:var(--muted); line-height:1.5; margin-top:8px}
+.kc .fithead{display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:2px}
+.kc .fithead h4{margin:0}
+.kc .rubric{margin-top:16px; border-top:1px solid var(--border); padding-top:14px}
+.kc .rubric-note{font-size:12.5px; color:var(--muted); line-height:1.6; margin:0 0 14px}
+.kc .rubric-dim{background:rgba(0,0,0,.18); border:1px solid var(--border); border-radius:12px; padding:12px 14px; margin-bottom:10px}
+.kc .rubric-dh{display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px}
+.kc .rubric-dh span:first-child{font-size:12px; font-weight:700; color:var(--text); text-transform:uppercase; letter-spacing:.05em}
+.kc .rubric-tot{font-family:'Lora',serif; font-size:15px; font-weight:700; color:var(--amber)}
+.kc .rubric-row{display:flex; justify-content:space-between; gap:12px; align-items:baseline; padding:5px 0; border-top:1px dashed rgba(255,255,255,.05)}
+.kc .rubric-row .rubric-lbl{font-size:12.5px; color:var(--text); line-height:1.45}
+.kc .rubric-row.miss .rubric-lbl{color:var(--faint)}
+.kc .rubric-row .rubric-pts{font-size:12px; font-weight:600; color:var(--muted); white-space:nowrap; font-variant-numeric:tabular-nums}
+.kc .rubric-row.miss .rubric-pts{color:var(--faint)}
 
 .kc .empty{text-align:center; padding:58px 20px; border:1px dashed var(--border2); border-radius:18px; background:rgba(255,255,255,.015)}
 .kc .empty .eic{width:54px; height:54px; border-radius:15px; background:var(--panel2); border:1px solid var(--border2);
