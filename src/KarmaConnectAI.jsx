@@ -18,12 +18,6 @@ import { listHistory, writeHistory, deleteHistory, HISTORY_PAGE_SIZE } from "./l
 export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   // Working draft is namespaced per account so different logins don't clobber each other.
   const STATE_KEY = "kc_state_v1_" + (userEmail || "anon").toLowerCase();
-  useEffect(() => {
-    if (document.getElementById("kc-fonts")) return;
-    const l = document.createElement("link"); l.id = "kc-fonts"; l.rel = "stylesheet";
-    l.href = "https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,500;0,600;0,700;1,500&family=Manrope:wght@400;500;600;700&display=swap";
-    document.head.appendChild(l);
-  }, []);
 
   // Restore saved work once (survives refresh, avoids re-billing). See save effect below.
   const [saved] = useState(() => {

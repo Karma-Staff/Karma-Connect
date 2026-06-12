@@ -113,15 +113,6 @@ export function AuthGate({ children }) {
   const [err, setErr] = useState("");
 
   useEffect(() => {
-    const id = "kc-inter";
-    if (!document.getElementById(id)) {
-      const l = document.createElement("link"); l.id = id; l.rel = "stylesheet";
-      l.href = "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap";
-      document.head.appendChild(l);
-    }
-  }, []);
-
-  useEffect(() => {
     if (!supabase) { setSession(null); return; }
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
     const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
