@@ -3,9 +3,14 @@
 import { getAccessToken } from "./auth.js";
 import { withRetry } from "./backoff.js";
 
-// Claude model. claude-sonnet-4-6 is the speed/intelligence sweet spot (fast + cheaper).
-// For maximum depth on hard prospects, change to claude-opus-4-8 — same API, just the string.
+// Models (hybrid for cost control):
+//  - CLAUDE_MODEL (Sonnet 4.6): quality-critical work — the intelligence profile and all
+//    outreach message generation, where voice and nuance matter.
+//  - CLAUDE_FAST_MODEL (Haiku 4.5): mechanical extraction — LinkedIn paste parsing and
+//    company web research. ~1/3 the price; quality is fine for pulling out facts.
+// For maximum depth on hard prospects, change CLAUDE_MODEL to claude-opus-4-8.
 export const CLAUDE_MODEL = "claude-sonnet-4-6";
+export const CLAUDE_FAST_MODEL = "claude-haiku-4-5";
 
 // ── Serialized queue (concurrency 1) ──
 // A single prospect run makes several AI calls; serialize them so we never fan out in
@@ -18,9 +23,9 @@ function enqueue(task) {
 }
 
 // Core call. Returns the joined text of all text blocks in the response.
-export async function anthropicMsg(system, user, { maxTokens = 1000, useSearch = false } = {}) {
+export async function anthropicMsg(system, user, { maxTokens = 1000, useSearch = false, model = CLAUDE_MODEL } = {}) {
   const body = {
-    model: CLAUDE_MODEL,
+    model,
     max_tokens: maxTokens,
     // Cache the (large, identical-every-call) system prompt. Cached input tokens cost
     // ~10% of fresh ones, so repeated calls in a prospect run get much cheaper.
@@ -50,6 +55,6 @@ export async function anthropicMsg(system, user, { maxTokens = 1000, useSearch =
 }
 
 // Back-compat wrapper so call sites can use the (system, prompt, useSearch, maxTokens) shape.
-export async function callClaude(system, prompt, useSearch = false, maxTokens = 1000) {
-  return anthropicMsg(system, prompt, { maxTokens, useSearch });
+export async function callClaude(system, prompt, useSearch = false, maxTokens = 1000, model = CLAUDE_MODEL) {
+  return anthropicMsg(system, prompt, { maxTokens, useSearch, model });
 }

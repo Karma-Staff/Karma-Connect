@@ -2,7 +2,7 @@ import { useState, useEffect, Fragment } from "react";
 import { CSS } from "./styles.js";
 import { SYSTEM } from "./lib/brand.js";
 import { SENDERS, senderOffer } from "./lib/senders.js";
-import { anthropicMsg, callClaude } from "./lib/claude.js";
+import { anthropicMsg, callClaude, CLAUDE_FAST_MODEL } from "./lib/claude.js";
 import { safeJSON } from "./lib/json.js";
 import { cleanMessages, stripLinkedInNoise } from "./lib/text.js";
 import {
@@ -162,7 +162,7 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
     }
     setEnriching(true); setEnrichMsg(""); setEnrichErr("");
     try {
-      const txt = await anthropicMsg(COMPANY_SYSTEM, companyResearchPrompt(prospect, coUrl), { maxTokens: 900, useSearch: "light" });
+      const txt = await anthropicMsg(COMPANY_SYSTEM, companyResearchPrompt(prospect, coUrl), { maxTokens: 900, useSearch: "light", model: CLAUDE_FAST_MODEL });
       const parsed = safeJSON(txt);
       const d = Array.isArray(parsed) ? (parsed[0] || {}) : parsed;
       const nv = (v) => (v == null || v === "NOT VERIFIED" ? "" : String(v).trim());
@@ -207,7 +207,7 @@ RAW PASTE:
 ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
 
     try {
-      const txt = await anthropicMsg(systemPrompt, userPrompt, { maxTokens: 6000 });
+      const txt = await anthropicMsg(systemPrompt, userPrompt, { maxTokens: 6000, model: CLAUDE_FAST_MODEL });
 
       let d;
       try {
