@@ -1,5 +1,5 @@
 import { useState, useEffect, cloneElement } from "react";
-import { supabase, supabaseConfigured } from "../lib/supabase.js";
+import { signIn, signUp, signOut, currentUser, onAuthChange, refreshUser, authAvailable } from "../lib/auth.js";
 import { hasPassword, setPassword as setLocalPw, verifyPassword, clearPassword } from "../lib/localpass.js";
 import { KarmaMark } from "./icons.jsx";
 
@@ -96,10 +96,13 @@ function Backdrop() {
   );
 }
 
-// Front door. Open sign-up: anyone can create an account. Data stays per-account (RLS / per-email).
+// Front door. Open sign-up: anyone can create an account. Data stays per-account
+// (server-side, scoped by user_id) when a database is configured, or per-browser otherwise.
 export function AuthGate({ children }) {
   const [localEmail, setLocalEmail] = useState(() => { try { return localStorage.getItem(LS_KEY) || ""; } catch (e) { return ""; } });
-  const [session, setSession] = useState(undefined);
+  // authMode: undefined (probing) | "remote" (DB-backed accounts) | "local" (per-browser fallback)
+  const [authMode, setAuthMode] = useState(undefined);
+  const [session, setSession] = useState(() => currentUser()); // the signed-in user object, or null
   const [mode, setMode] = useState("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -113,25 +116,30 @@ export function AuthGate({ children }) {
   const [err, setErr] = useState("");
 
   useEffect(() => {
-    if (!supabase) { setSession(null); return; }
-    supabase.auth.getSession().then(({ data }) => setSession(data.session));
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
-    return () => sub.subscription.unsubscribe();
+    let active = true;
+    const unsub = onAuthChange((u) => { if (active) setSession(u); });
+    authAvailable().then(async (ok) => {
+      if (!active) return;
+      setAuthMode(ok ? "remote" : "local");
+      if (ok) { await refreshUser(); if (active) setSession(currentUser()); }
+    });
+    return () => { active = false; unsub(); };
   }, []);
 
-  const sessionEmail = session?.user?.email;
+  const remote = authMode === "remote";
+  const sessionEmail = session?.email;
   function grant(userEmail, onSignOut) {
     return cloneElement(children, { key: userEmail || "anon", userEmail: userEmail || "", onSignOut });
   }
-  if (supabaseConfigured) {
-    if (session) return grant(sessionEmail, () => supabase.auth.signOut());
-  } else if (localEmail) {
+  if (remote) {
+    if (session) return grant(sessionEmail, () => signOut());
+  } else if (authMode === "local" && localEmail) {
     return grant(localEmail, () => { try { localStorage.removeItem(LS_KEY); } catch (e) {} setLocalEmail(""); });
   }
 
   const typedAddr = email.trim().toLowerCase();
-  const softCreating = !supabaseConfigured && EMAIL_RE.test(typedAddr) && !hasPassword(typedAddr);
-  const creating = supabaseConfigured ? mode === "signup" : softCreating;
+  const softCreating = !remote && EMAIL_RE.test(typedAddr) && !hasPassword(typedAddr);
+  const creating = remote ? mode === "signup" : softCreating;
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -140,7 +148,7 @@ export function AuthGate({ children }) {
     if (!addr) { setErr("Enter your email."); return; }
     if (!EMAIL_RE.test(addr)) { setErr("Enter a valid email address."); return; }
 
-    if (!supabaseConfigured) {
+    if (!remote) {
       setBusy(true);
       try {
         if (!hasPassword(addr)) {
@@ -162,16 +170,11 @@ export function AuthGate({ children }) {
     setBusy(true);
     try {
       if (mode === "signup") {
-        const { data, error } = await supabase.auth.signUp({
-          email: addr, password,
-          options: { emailRedirectTo: window.location.origin, data: { first_name: firstName.trim(), last_name: lastName.trim() } },
-        });
-        if (error) throw error;
-        if (!data.session) setNotice("Account created. Check your email to confirm, then sign in.");
+        await signUp({ email: addr, password, firstName: firstName.trim(), lastName: lastName.trim() });
       } else {
-        const { error } = await supabase.auth.signInWithPassword({ email: addr, password });
-        if (error) throw error;
+        await signIn({ email: addr, password });
       }
+      // onAuthChange updates `session`, which flips the gate to the app.
     } catch (e3) { setErr((e3 && e3.message) || "Could not sign in. Check your details and try again."); }
     setBusy(false);
   }
@@ -179,21 +182,16 @@ export function AuthGate({ children }) {
   async function forgot() {
     setErr(""); setNotice("");
     const addr = email.trim().toLowerCase();
-    if (!supabaseConfigured) {
+    if (!remote) {
       if (!EMAIL_RE.test(addr)) { setErr("Enter your email first."); return; }
       if (!window.confirm("Reset the password for " + addr + "? You'll set a new one.")) return;
       clearPassword(addr); setPassword(""); setPassword2(""); setNotice("Password cleared. Set a new one below.");
       return;
     }
-    if (!EMAIL_RE.test(addr)) { setErr("Enter your email, then tap Forgot password."); return; }
-    try {
-      const { error } = await supabase.auth.resetPasswordForEmail(addr, { redirectTo: window.location.origin });
-      if (error) throw error;
-      setNotice("Password reset link sent. Check your email.");
-    } catch (e) { setErr((e && e.message) || "Could not send the reset email."); }
+    setNotice("Password reset isn't enabled yet — contact your administrator to reset it.");
   }
 
-  if (session === undefined) {
+  if (authMode === undefined) {
     return <div className="kcauth"><style>{AUTH_CSS}</style><p style={{ color: "#9aa7c4" }}>Loading…</p></div>;
   }
 
@@ -213,7 +211,7 @@ export function AuthGate({ children }) {
           <div className="sub">{creating ? "Set up your workspace access to Karma Connect." : "Sign in to continue your prospecting journey."}</div>
 
           <form onSubmit={handleSubmit}>
-            {supabaseConfigured && mode === "signup" && (
+            {remote && mode === "signup" && (
               <div className="row2">
                 <div><label>First name</label><div className="field"><span className="ic">{UserIc}</span><input value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder="Jane" /></div></div>
                 <div><label>Last name</label><div className="field"><span className="ic">{UserIc}</span><input value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder="Doe" /></div></div>
@@ -251,7 +249,7 @@ export function AuthGate({ children }) {
             {notice && <p className="msg ok">{notice}</p>}
           </form>
 
-          {supabaseConfigured && (
+          {remote && (
             <div className="foot">
               {mode === "signup" ? "Already have an account? " : "New here? "}
               <button type="button" className="lk" onClick={() => { setMode(mode === "signup" ? "signin" : "signup"); setErr(""); setNotice(""); }}>

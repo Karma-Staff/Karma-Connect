@@ -1,0 +1,38 @@
+# Render Blueprint — one web service (the Express server, which serves the built SPA and
+# the API) plus a managed Postgres database. Deploy via Render → "New +" → "Blueprint",
+# or create the pieces manually using the values below.
+#
+# After the first deploy, run the schema once from your machine:
+#   DATABASE_URL="<external db url>" npm run db:init
+databases:
+  - name: karma-connect-db
+    plan: free
+    databaseName: karma_connect
+    postgresMajorVersion: "16"
+
+services:
+  - type: web
+    name: karma-connect
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: karma-connect-db
+          property: connectionString
+      - key: AUTH_JWT_SECRET
+        generateValue: true          # Render generates a strong random secret
+      - key: ANTHROPIC_API_KEY
+        sync: false                  # set in the dashboard (secret)
+      - key: NODE_ENV
+        value: production
+      # Optional lock-down + rate-limit / cache — set in the dashboard as needed:
+      # - key: ALLOWED_EMAIL_DOMAIN
+      #   sync: false
+      # - key: UPSTASH_REDIS_REST_URL
+      #   sync: false
+      # - key: UPSTASH_REDIS_REST_TOKEN
+      #   sync: false

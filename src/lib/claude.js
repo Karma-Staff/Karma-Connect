@@ -1,6 +1,6 @@
 // Anthropic client. Calls go through our own /api/claude proxy (Vercel function in prod,
 // Vite dev-middleware locally) so the API key stays server-side, never in the browser bundle.
-import { getAccessToken } from "./supabase.js";
+import { getAccessToken } from "./auth.js";
 import { withRetry } from "./backoff.js";
 
 // Claude model. claude-sonnet-4-6 is the speed/intelligence sweet spot (fast + cheaper).

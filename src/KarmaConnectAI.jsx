@@ -291,7 +291,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
     setLoading((l) => ({ ...l, analysis: false }));
   }
 
-  const TARGET = { connection: 10, relationship: 10, meeting_short: 10, meeting_standard: 10, meeting_executive: 10 };
+  const TARGET = { connection: 5, relationship: 5, meeting_short: 5, meeting_standard: 5, meeting_executive: 5 };
   function builderFor(kind, n, avoid) {
     const base = buildContext(prospect, offer, analysis, "");
     if (kind === "connection") return pConnection(base, n, avoid);
@@ -306,10 +306,11 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
         const txt = await callClaude(SYSTEM, pFollowup(buildContext(prospect, offer, analysis, "")), false, 2800);
         let arr = safeJSON(txt); if (!Array.isArray(arr)) arr = [arr]; arr = cleanMessages(arr); setResults((r) => ({ ...r, followup: arr }));
       } else {
-        const target = TARGET[kind] || 10;
+        const target = TARGET[kind] || 5;
         const isMeeting = kind.indexOf("meeting_") === 0;
-        // Right-sized output cap to fit all `target` items in ONE call.
-        const cap = isMeeting ? 4800 : kind === "relationship" ? 3600 : 3000;
+        // Right-sized output cap to fit all `target` items in ONE call (sized for 5, with margin
+        // so JSON never truncates — a truncated parse would force a costly full retry).
+        const cap = isMeeting ? 2800 : kind === "relationship" ? 2200 : 1800;
         let acc = [], guard = 0;
         // Ask for ALL remaining items in a single call (collapses the old 2-4 call loop).
         // The loop only repeats if the model returned fewer than requested.
@@ -393,7 +394,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
         <div className="head"><div className="eyebrow">{eyebrow}</div><h2>{title}</h2><p>{blurb}</p></div>
         <ProspectStrip />
         <div className="toprow">
-          <button className="btn primary" onClick={() => generate(kind)} disabled={isLoad}>{isLoad ? "Generating…" : items.length ? "Regenerate all" : "Generate 10 variations"}</button>
+          <button className="btn primary" onClick={() => generate(kind)} disabled={isLoad}>{isLoad ? "Generating…" : items.length ? "Regenerate all" : `Generate ${TARGET[kind] || 5} variations`}</button>
           {items.length > 0 && !isLoad && <span style={{ color: "var(--muted)", fontSize: 13 }}>{items.length} crafted for {name}</span>}
         </div>
         {err && <div className="err" style={{ marginBottom: 16 }}>⚠ {err}</div>}

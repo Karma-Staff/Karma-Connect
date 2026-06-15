@@ -3,8 +3,13 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "vite",
+    "dev": "concurrently -k -n SERVER,VITE -c blue,magenta \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:server": "node server.js --dev",
+    "dev:server:watch": "node --watch server.js --dev",
+    "dev:client": "vite",
     "build": "vite build",
+    "start": "node server.js",
+    "db:init": "node scripts/db-init.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -12,13 +17,17 @@
     "format": "prettier --write \"src/**/*.{js,jsx}\""
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.47.10",
+    "bcryptjs": "^3.0.3",
+    "cookie": "^1.1.1",
+    "express": "^5.2.1",
+    "pg": "^8.21.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
     "@vitejs/plugin-react": "^4.3.1",
+    "concurrently": "^10.0.3",
     "eslint": "^9.17.0",
     "eslint-plugin-react": "^7.37.2",
     "eslint-plugin-react-hooks": "^5.1.0",

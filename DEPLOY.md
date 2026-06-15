@@ -1,86 +1,102 @@
-# Deploying Karma Connect for the team (Vercel + Supabase)
+# Deploying Karma Connect (Render + Postgres)
 
-This turns the local single-user tool into a shared team app where:
+This turns the local tool into a shared team app where:
 
 - the **Anthropic API key lives on the server** (never in anyone's browser),
-- every teammate **signs in with their @karmastaff.com email** (magic link), and
-- only your domain can use it (enforced server-side).
+- every teammate **signs in with email + password** (accounts stored in Postgres), and
+- you can optionally restrict access to your email domain (enforced server-side).
 
-You do this once. It needs a free **Supabase** account and a free **Vercel** account.
-Each teammate's prospects still save in their own browser (localStorage) for now — a shared
-database is a later step.
-
----
-
-## 1. Create the Supabase project (login + auth)
-
-1. Go to https://supabase.com → **New project**. Pick a name, set a DB password (you won't need it often), create.
-2. When it's ready, open **Project Settings → API** and copy three values:
-   - **Project URL** → this is `VITE_SUPABASE_URL`
-   - **anon public** key → `VITE_SUPABASE_ANON_KEY`
-   - **JWT Secret** (further down) → `SUPABASE_JWT_SECRET`
-3. Open **Authentication → Providers → Email** and make sure **Email** is enabled (it is by default).
-   Teammates sign in with **email + password** (they set their own password via "Create account").
-   - For instant access, turn **off** "Confirm email" (Authentication → Providers → Email) so a new password works immediately.
-   - Leave it **on** if you want each person to click a one-time confirmation link before their first login.
-4. Open **Authentication → URL Configuration**:
-   - Set **Site URL** to your future Vercel URL (you'll get it in step 2, e.g. `https://karma-connect.vercel.app`). You can come back and set this after the first deploy.
-   - Add that same URL under **Redirect URLs**.
-
-> Note: sign-up is open by default (anyone can create an account). To restrict it, set
-> `ALLOWED_EMAIL_DOMAIN` or `ALLOWED_EMAILS` in the env table below, and/or turn off open
-> sign-ups in Supabase and invite teammates manually.
+The whole app — the built React frontend **and** the API — runs as a single Node web
+service (`server.js`) on Render, backed by a managed Render Postgres database. You do this
+once. It needs a free **Render** account.
 
 ---
 
-## 2. Deploy to Vercel
+## Option A — Blueprint (fastest)
 
-1. Go to https://vercel.com → **Add New → Project** → import the GitHub repo
-   `Takdang-Tenzin-Woesel/Karma-Connect`. Vercel auto-detects Vite.
-2. Before the first deploy, open **Environment Variables** and add all of these
-   (Production + Preview):
+The repo ships a `render.yaml`. In Render: **New + → Blueprint**, point it at this repo, and
+it creates the web service **and** the Postgres database, wiring `DATABASE_URL` and a generated
+`AUTH_JWT_SECRET` automatically. You only need to add `ANTHROPIC_API_KEY` (marked `sync: false`)
+in the dashboard. Then run the schema once (step 4 below).
 
-   | Name | Value | Notes |
-   |---|---|---|
-   | `ANTHROPIC_API_KEY` | your `sk-ant-…` key | **server-side**, no VITE_ prefix |
-   | `SUPABASE_JWT_SECRET` | from Supabase step 1.2 | verifies logins server-side |
-   | `VITE_SUPABASE_URL` | from Supabase | sent to the browser (safe) |
-   | `VITE_SUPABASE_ANON_KEY` | from Supabase | sent to the browser (safe) |
+## Option B — Manual
 
-   **Sign-up is open by default** — anyone who creates an account can use the app (and spend your
-   API budget). For a public URL this is a real cost risk. To lock it down, add **one** of these
-   (optional) and only matching accounts are allowed:
+### 1. Create the database
+Render → **New + → Postgres**. Pick a name/region, **Free** plan, create. When it's ready,
+copy the **Internal Database URL** (for the web service) and the **External Database URL**
+(to run the schema from your laptop).
 
-   | Name | Value | Notes |
-   |---|---|---|
-   | `ALLOWED_EMAIL_DOMAIN` | `karmastaff.com` | only this email domain may use the app |
-   | `ALLOWED_EMAILS` | `a@karmastaff.com,b@karmastaff.com` | exact list (overrides the domain) |
+### 2. Create the web service
+Render → **New + → Web Service** → connect this repo. Settings:
 
-3. Click **Deploy**. You'll get a URL like `https://karma-connect.vercel.app`.
-4. Go back to **Supabase → Authentication → URL Configuration** and put that URL in
-   **Site URL** and **Redirect URLs** (if you hadn't yet). Redeploy isn't needed.
+| Field | Value |
+|---|---|
+| Runtime | Node |
+| Build command | `npm install && npm run build` |
+| Start command | `npm start` |
+| Health check path | `/api/health` |
+
+### 3. Environment variables
+Add these under the web service's **Environment**:
+
+| Name | Value | Notes |
+|---|---|---|
+| `DATABASE_URL` | the **Internal** Database URL | server-side; Render requires SSL (handled automatically) |
+| `AUTH_JWT_SECRET` | a long random string | `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"` — **server-side**, keep secret |
+| `ANTHROPIC_API_KEY` | your `sk-ant-…` key | **server-side**, no VITE_ prefix |
+| `NODE_ENV` | `production` | serves the built SPA + requires login on `/api/claude` |
+
+**Sign-up is open by default** — anyone who creates an account can spend your API budget. For a
+public URL, lock it down with **one** of these (optional):
+
+| Name | Value | Notes |
+|---|---|---|
+| `ALLOWED_EMAIL_DOMAIN` | `karmastaff.com` | only this email domain may register/use the app |
+| `ALLOWED_EMAILS` | `a@karmastaff.com,b@karmastaff.com` | exact list (overrides the domain) |
+
+Optional rate-limit / quota / cache (recommended for production) — create a free Upstash Redis
+and set `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` (tunables in `.env.example`).
+
+### 4. Create the tables (once)
+From your machine, using the **External** Database URL:
+
+```bash
+DATABASE_URL="postgresql://…external…" npm run db:init
+```
+
+This applies `db/schema.sql` (idempotent — safe to re-run). Then **Deploy** the web service.
 
 ---
 
 ## 3. Use it
 
-- Share the Vercel URL with the team.
-- Each person enters their `@karmastaff.com` email, gets a one-tap login link, and they're in.
-- The API key is never exposed; non-team emails are rejected by the server.
+- Share the Render URL with the team.
+- Each person clicks **Create an account**, sets an email + password, and they're in immediately.
+- The API key is never exposed; if you set the allowlist, off-domain emails are rejected server-side.
 
 ---
 
-## Local development (unchanged)
+## Local development
 
-Locally you don't need Supabase. `npm run dev` runs a dev proxy that reads `ANTHROPIC_API_KEY`
-from `.env` (server-side) — no login gate on localhost. To preview the real login flow locally,
-fill the `VITE_SUPABASE_*` values in `.env` too.
+```bash
+cp .env.example .env     # set ANTHROPIC_API_KEY; for real accounts set DATABASE_URL + AUTH_JWT_SECRET
+npm install
+npm run db:init          # only if you set DATABASE_URL (use PGSSL=off for a local Postgres)
+npm run dev              # starts the backend (:8787) AND Vite (:3000); open http://localhost:3000
+```
+
+- `npm run dev` runs **both** the Express backend and the Vite dev server; Vite proxies every
+  `/api/*` call to the backend, so local behaves like production.
+- Without `DATABASE_URL`, there are no real accounts: the app uses a per-browser email+password
+  gate and saves history in `localStorage`. AI still works on localhost without signing in.
 
 ## How the security works
 
-- The browser calls **`/api/claude`** (our own endpoint), never Anthropic directly. The key
-  is only in Vercel's server environment.
-- In production, `/api/claude` (see `api/claude.js`) verifies the caller's Supabase login token
-  and checks the email domain before forwarding. Unauthenticated or off-domain calls are rejected.
-- Locally, the same path is served by a Vite dev middleware (`vite.config.js`) that skips the
-  auth check (localhost only) so development stays frictionless.
+- The browser calls **`/api/claude`** (our own endpoint), never Anthropic directly. The key is
+  only in the server's environment.
+- In production, `server.js` verifies the caller's login JWT (HS256, signed with `AUTH_JWT_SECRET`)
+  and checks the allowlist before forwarding. Unauthenticated or off-domain calls are rejected.
+- There is **no row-level security**: every database query is scoped in `server.js` to the
+  `user_id` taken from the verified token — never from anything the client sends.
+- Locally (`npm run dev`), the `/api/claude` proxy skips the login check (localhost only) so
+  development stays frictionless; the auth and history endpoints still require a token.

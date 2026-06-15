@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
-const { computeCost, COST } = require("./_proxy.cjs");
+const { computeCost, COST, signJWT, verifyJWT, JWT_ISS } = require("./_proxy.cjs");
 
 describe("computeCost", () => {
   it("computes cost from per-1k constants (sonnet)", () => {
@@ -28,5 +28,35 @@ describe("computeCost", () => {
     const r = computeCost({}, "claude-sonnet-4-6");
     expect(r.cost_usd).toBe(0);
     expect(r.total).toBe(0);
+  });
+});
+
+describe("signJWT / verifyJWT", () => {
+  const secret = "test-secret-xyz";
+
+  it("round-trips claims and stamps aud/iss/exp", () => {
+    const token = signJWT({ sub: "u1", email: "a@b.com" }, secret, 60);
+    const claims = verifyJWT(token, secret, JWT_ISS);
+    expect(claims).toBeTruthy();
+    expect(claims.sub).toBe("u1");
+    expect(claims.email).toBe("a@b.com");
+    expect(claims.aud).toBe("authenticated");
+    expect(claims.iss).toBe(JWT_ISS);
+    expect(claims.exp).toBeGreaterThan(claims.iat);
+  });
+
+  it("rejects a token signed with the wrong secret", () => {
+    const token = signJWT({ sub: "u1" }, secret, 60);
+    expect(verifyJWT(token, "other-secret", JWT_ISS)).toBeNull();
+  });
+
+  it("rejects an expired token", () => {
+    const token = signJWT({ sub: "u1" }, secret, -1); // already expired
+    expect(verifyJWT(token, secret, JWT_ISS)).toBeNull();
+  });
+
+  it("rejects a token from a different issuer", () => {
+    const token = signJWT({ sub: "u1" }, secret, 60);
+    expect(verifyJWT(token, secret, "some-other-issuer")).toBeNull();
   });
 });
