@@ -27,7 +27,9 @@ export async function anthropicMsg(system, user, { maxTokens = 1000, useSearch =
     system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
     messages: [{ role: "user", content: user }],
   };
-  if (useSearch) body.tools = [{ type: "web_search_20250305", name: "web_search", max_uses: useSearch === "deep" ? 5 : 3 }];
+  // Web-search budget: "light" = 1 search (cheap), default = 2, "deep" = 4. Fewer searches
+  // means far fewer input tokens, since each search pulls fetched page content into context.
+  if (useSearch) body.tools = [{ type: "web_search_20250305", name: "web_search", max_uses: useSearch === "deep" ? 4 : useSearch === "light" ? 1 : 2 }];
 
   const token = getAccessToken();
   const doFetch = () => fetch("/api/claude", {

@@ -18,9 +18,9 @@ export function companyResearchPrompt(prospect, coUrl) {
   s += L("Company name", prospect.company);
   s += L("Industry (if known)", prospect.industry);
   s += L("Location (if known)", prospect.location);
-  s += `\nUsing at most 2 targeted web searches (the company site first), extract verifiable COMPANY facts only. Return ONLY this JSON:
+  s += `\nUsing ONE targeted web search (the company site first), extract verifiable COMPANY facts only. Return ONLY this JSON:
 {"company":"","website":"","industry":"","location":"","employeeCount":"","companyDesc":"","services":[],"recentNews":[],"summary":""}
-- "companyDesc": 1-2 sentences on what they do. "services": up to 5 short items. "recentNews": up to 3 short, dated signals (hiring, expansion, storm season, etc.).
+- "companyDesc": 1-2 sentences on what they do. "services": up to 4 short items. "recentNews": up to 2 short, dated signals (hiring, expansion, storm season, etc.).
 - "summary": one neutral sentence on what you found. Leave anything unverifiable as "". Start with { end with }.`;
   return s;
 }

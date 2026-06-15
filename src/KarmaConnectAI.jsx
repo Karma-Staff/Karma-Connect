@@ -162,7 +162,7 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
     }
     setEnriching(true); setEnrichMsg(""); setEnrichErr("");
     try {
-      const txt = await anthropicMsg(COMPANY_SYSTEM, companyResearchPrompt(prospect, coUrl), { maxTokens: 1200, useSearch: true });
+      const txt = await anthropicMsg(COMPANY_SYSTEM, companyResearchPrompt(prospect, coUrl), { maxTokens: 900, useSearch: "light" });
       const parsed = safeJSON(txt);
       const d = Array.isArray(parsed) ? (parsed[0] || {}) : parsed;
       const nv = (v) => (v == null || v === "NOT VERIFIED" ? "" : String(v).trim());
@@ -204,10 +204,10 @@ CRITICAL RULES:
 firstName, lastName, title, company, industry, location, headline, about, experience, education, skills, certifications, recommendations, recentPosts, mutualConnections, companyDesc, news, website, volunteering, languages, extraNotes, fieldsFound (array of field names you found data for), quality (high/medium/low string), qualityNote (one sentence string).
 
 RAW PASTE:
-${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
+${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
 
     try {
-      const txt = await anthropicMsg(systemPrompt, userPrompt, { maxTokens: 4000 });
+      const txt = await anthropicMsg(systemPrompt, userPrompt, { maxTokens: 6000 });
 
       let d;
       try {
@@ -291,7 +291,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
     setLoading((l) => ({ ...l, analysis: false }));
   }
 
-  const TARGET = { connection: 5, relationship: 5, meeting_short: 5, meeting_standard: 5, meeting_executive: 5 };
+  const TARGET = { connection: 3, relationship: 3, meeting_short: 3, meeting_standard: 3, meeting_executive: 3 };
   function builderFor(kind, n, avoid) {
     const base = buildContext(prospect, offer, analysis, "");
     if (kind === "connection") return pConnection(base, n, avoid);
@@ -306,7 +306,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 14000)}`;
         const txt = await callClaude(SYSTEM, pFollowup(buildContext(prospect, offer, analysis, "")), false, 2800);
         let arr = safeJSON(txt); if (!Array.isArray(arr)) arr = [arr]; arr = cleanMessages(arr); setResults((r) => ({ ...r, followup: arr }));
       } else {
-        const target = TARGET[kind] || 5;
+        const target = TARGET[kind] || 3;
         const isMeeting = kind.indexOf("meeting_") === 0;
         // Right-sized output cap to fit all `target` items in ONE call (sized for 5, with margin
         // so JSON never truncates — a truncated parse would force a costly full retry).
