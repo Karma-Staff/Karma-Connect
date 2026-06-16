@@ -147,8 +147,8 @@ app.post("/api/auth/signup", async (req, res) => {
     const token = emailVerifyOn ? crypto.randomBytes(32).toString("hex") : null;
     const { rows } = await q(
       `insert into users (email, password_hash, first_name, last_name, email_verified, verify_token, verify_sent_at)
-       values ($1,$2,$3,$4,$5,$6, case when $6 is null then null else now() end) returning *`,
-      [email, hash, firstName, lastName, !emailVerifyOn, token],
+       values ($1,$2,$3,$4,$5,$6,$7) returning *`,
+      [email, hash, firstName, lastName, !emailVerifyOn, token, token ? new Date() : null],
     );
     const user = rows[0];
 
@@ -163,7 +163,7 @@ app.post("/api/auth/signup", async (req, res) => {
       return res.json({ needsVerification: true, email, message: "Account created. Check your email for a confirmation link, then sign in." });
     }
     res.json({ token: tokenFor(user), user: publicUser(user) });
-  } catch (e) { res.status(500).json({ error: { message: "Could not create the account. Try again." } }); }
+  } catch (e) { console.error("signup error:", (e && e.stack) || e); res.status(500).json({ error: { message: "Could not create the account. Try again." } }); }
 });
 
 app.post("/api/auth/signin", async (req, res) => {
