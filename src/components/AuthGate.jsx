@@ -1,5 +1,5 @@
 import { useState, useEffect, cloneElement } from "react";
-import { signIn, signUp, signOut, currentUser, onAuthChange, refreshUser, authAvailable } from "../lib/auth.js";
+import { signIn, signUp, signOut, currentUser, onAuthChange, refreshUser, authAvailable, resendVerification } from "../lib/auth.js";
 import { hasPassword, setPassword as setLocalPw, verifyPassword, clearPassword } from "../lib/localpass.js";
 import { KarmaMark } from "./icons.jsx";
 
@@ -114,6 +114,17 @@ export function AuthGate({ children }) {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [showResend, setShowResend] = useState(false);
+
+  // After the email-confirmation link redirects back with ?verified=1 / ?verified=0.
+  useEffect(() => {
+    let v;
+    try { v = new URLSearchParams(window.location.search).get("verified"); } catch (e) { return; }
+    if (v == null) return;
+    if (v === "1") setNotice("Email confirmed. You can sign in now.");
+    else { setErr("That confirmation link is invalid or has expired. Sign in to get a new one."); setShowResend(true); }
+    try { window.history.replaceState({}, "", window.location.pathname); } catch (e) {}
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -170,12 +181,34 @@ export function AuthGate({ children }) {
     setBusy(true);
     try {
       if (mode === "signup") {
-        await signUp({ email: addr, password, firstName: firstName.trim(), lastName: lastName.trim() });
+        const r = await signUp({ email: addr, password, firstName: firstName.trim(), lastName: lastName.trim() });
+        if (r && r.needsVerification) {
+          // Email confirmation required — don't log in; prompt them to check their inbox.
+          setNotice(r.message || "Account created. Check your email for a confirmation link, then sign in.");
+          setMode("signin"); setPassword(""); setPassword2(""); setShowResend(true);
+        }
+        // else: verification off → signUp logged us in; onAuthChange flips the gate.
       } else {
         await signIn({ email: addr, password });
+        // onAuthChange updates `session`, which flips the gate to the app.
       }
-      // onAuthChange updates `session`, which flips the gate to the app.
-    } catch (e3) { setErr((e3 && e3.message) || "Could not sign in. Check your details and try again."); }
+    } catch (e3) {
+      const msg = (e3 && e3.message) || "Could not sign in. Check your details and try again.";
+      setErr(msg);
+      if (/confirm your email/i.test(msg)) setShowResend(true);
+    }
+    setBusy(false);
+  }
+
+  async function resend() {
+    setErr(""); setNotice("");
+    const addr = email.trim().toLowerCase();
+    if (!EMAIL_RE.test(addr)) { setErr("Enter your email first, then tap Resend."); return; }
+    setBusy(true);
+    try {
+      const r = await resendVerification(addr);
+      setNotice((r && r.message) || "If that account exists and is unconfirmed, a new confirmation email is on its way.");
+    } catch (e) { setErr("Could not resend right now. Try again in a moment."); }
     setBusy(false);
   }
 
@@ -247,6 +280,11 @@ export function AuthGate({ children }) {
             </button>
             {err && <p className="msg err">{err}</p>}
             {notice && <p className="msg ok">{notice}</p>}
+            {showResend && remote && (
+              <p className="msg" style={{ marginTop: 10, color: "#9aa7c4" }}>
+                Didn't get the email? <button type="button" className="lk" onClick={resend} disabled={busy}>Resend confirmation</button>
+              </p>
+            )}
           </form>
 
           {remote && (

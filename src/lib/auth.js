@@ -46,8 +46,15 @@ async function post(path, body) {
 
 export async function signUp({ email, password, firstName, lastName }) {
   const data = await post("/api/auth/signup", { email, password, firstName, lastName });
-  setSession(data);
+  // When email verification is on, the server returns { needsVerification: true } and no
+  // token — don't log in; the caller shows a "check your email" notice instead.
+  if (data.token) setSession(data);
   return data;
+}
+
+// Ask the server to re-send the confirmation email for an unverified account.
+export async function resendVerification(email) {
+  return post("/api/auth/resend", { email });
 }
 
 export async function signIn({ email, password }) {

@@ -23,6 +23,13 @@ create table if not exists users (
 -- Case-insensitive email lookups (we also store email lower-cased, but be safe).
 create unique index if not exists users_email_lower_idx on users (lower(email));
 
+-- Email verification (Resend). Added via ALTER so existing tables upgrade in place.
+-- When email sending isn't configured, the server creates users already-verified.
+alter table users add column if not exists email_verified boolean not null default false;
+alter table users add column if not exists verify_token   text;
+alter table users add column if not exists verify_sent_at timestamptz;
+create index if not exists users_verify_token_idx on users (verify_token);
+
 -- ─────────────────────────────────────────────────────────────────────────────
 -- prospects: a saved prospect snapshot (the app's "History"). `data` holds the full
 -- snapshot (prospect fields, analysis, generated messages, favorites, sender, offer).

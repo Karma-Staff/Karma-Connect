@@ -12,6 +12,7 @@
 // to localhost without a login, matching the old Vite dev middleware).
 const fs = require("node:fs");
 const path = require("node:path");
+const crypto = require("node:crypto");
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const { Pool } = require("pg");
@@ -62,6 +63,42 @@ function emailAllowed(email) {
   return !domain || e.endsWith("@" + domain);
 }
 
+// ── Email verification via Resend (optional, env-gated) ──
+// If RESEND_API_KEY is set, new signups must confirm their email before they can sign in.
+// If it's not configured (e.g. local dev), users are created already-verified (no friction).
+const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
+const RESEND_FROM = process.env.RESEND_FROM || "Karma Connect <noreply@karmastaff.com>";
+const emailVerifyOn = !!RESEND_API_KEY;
+const VERIFY_TTL_HOURS = 24;
+
+// Public base URL for links in emails. Prefer APP_URL; otherwise derive from the request
+// (honours Render's x-forwarded-proto so links are https in production).
+function baseUrl(req) {
+  if (process.env.APP_URL) return process.env.APP_URL.replace(/\/$/, "");
+  const proto = String(req.headers["x-forwarded-proto"] || (req.secure ? "https" : "http")).split(",")[0];
+  return proto + "://" + req.headers.host;
+}
+
+async function sendVerificationEmail(email, firstName, link) {
+  const hi = firstName ? "Hi " + firstName + "," : "Hi,";
+  const html = `<div style="font-family:Inter,Segoe UI,Arial,sans-serif;max-width:480px;margin:0 auto;color:#0b2545">
+    <h2 style="color:#0b2545">Confirm your email</h2>
+    <p>${hi}</p>
+    <p>Thanks for creating a Karma Connect account. Please confirm this email address to activate your login.</p>
+    <p style="margin:28px 0">
+      <a href="${link}" style="background:#E7B74B;color:#071226;text-decoration:none;font-weight:700;padding:12px 22px;border-radius:10px;display:inline-block">Confirm my email</a>
+    </p>
+    <p style="font-size:12px;color:#667">Or paste this link into your browser:<br><a href="${link}">${link}</a></p>
+    <p style="font-size:12px;color:#667">This link expires in ${VERIFY_TTL_HOURS} hours. If you didn't create this account, you can ignore this email.</p>
+  </div>`;
+  const r = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { Authorization: "Bearer " + RESEND_API_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({ from: RESEND_FROM, to: [email], subject: "Confirm your email for Karma Connect", html }),
+  });
+  if (!r.ok) { const t = await r.text().catch(() => ""); throw new Error("Resend " + r.status + ": " + t); }
+}
+
 const app = express();
 app.disable("x-powered-by");
 
@@ -105,11 +142,26 @@ app.post("/api/auth/signup", async (req, res) => {
     if (exists.rowCount) return res.status(409).json({ error: { message: "An account with that email already exists. Sign in instead." } });
 
     const hash = await bcrypt.hash(password, 12);
+    // When email verification is on, create the user unverified with a one-time token.
+    // When it's off (no Resend key), create them already-verified and log them straight in.
+    const token = emailVerifyOn ? crypto.randomBytes(32).toString("hex") : null;
     const { rows } = await q(
-      "insert into users (email, password_hash, first_name, last_name) values ($1,$2,$3,$4) returning *",
-      [email, hash, firstName, lastName],
+      `insert into users (email, password_hash, first_name, last_name, email_verified, verify_token, verify_sent_at)
+       values ($1,$2,$3,$4,$5,$6, case when $6 is null then null else now() end) returning *`,
+      [email, hash, firstName, lastName, !emailVerifyOn, token],
     );
     const user = rows[0];
+
+    if (emailVerifyOn) {
+      try {
+        await sendVerificationEmail(email, firstName, baseUrl(req) + "/api/auth/verify?token=" + token);
+      } catch (e) {
+        // Don't leave a stuck account if the email fails — remove it so they can retry.
+        await q("delete from users where id = $1", [user.id]).catch(() => {});
+        return res.status(502).json({ error: { message: "Could not send the confirmation email. Please try again in a moment." } });
+      }
+      return res.json({ needsVerification: true, email, message: "Account created. Check your email for a confirmation link, then sign in." });
+    }
     res.json({ token: tokenFor(user), user: publicUser(user) });
   } catch (e) { res.status(500).json({ error: { message: "Could not create the account. Try again." } }); }
 });
@@ -127,8 +179,46 @@ app.post("/api/auth/signin", async (req, res) => {
     // Compare even when the user is missing (timing-safe-ish: avoid leaking which emails exist).
     const ok = user ? await bcrypt.compare(password, user.password_hash) : await bcrypt.compare(password, "$2a$12$0000000000000000000000000000000000000000000000000000");
     if (!user || !ok) return res.status(401).json({ error: { message: "Wrong email or password." } });
+    if (emailVerifyOn && !user.email_verified) {
+      return res.status(403).json({ error: { message: "Please confirm your email first — check your inbox for the link.", needsVerification: true } });
+    }
     res.json({ token: tokenFor(user), user: publicUser(user) });
   } catch (e) { res.status(500).json({ error: { message: "Could not sign in. Try again." } }); }
+});
+
+// Click target from the confirmation email. Marks the user verified, then redirects to the
+// app with ?verified=1 (or ?verified=0 on a bad/expired token) so the UI can show a notice.
+app.get("/api/auth/verify", async (req, res) => {
+  const home = baseUrl(req);
+  try {
+    const token = String(req.query.token || "");
+    if (!token) return res.redirect(home + "/?verified=0");
+    const { rows } = await q(
+      `update users set email_verified = true, verify_token = null
+       where verify_token = $1 and verify_sent_at > now() - interval '${VERIFY_TTL_HOURS} hours'
+       returning id`,
+      [token],
+    );
+    return res.redirect(home + (rows.length ? "/?verified=1" : "/?verified=0"));
+  } catch (e) { return res.redirect(home + "/?verified=0"); }
+});
+
+// Re-send the confirmation email for an unverified account. Always replies the same way
+// (don't reveal whether the email exists).
+app.post("/api/auth/resend", async (req, res) => {
+  const done = () => res.json({ ok: true, message: "If that account exists and is unconfirmed, a new confirmation email is on its way." });
+  try {
+    if (!emailVerifyOn) return done();
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    if (!EMAIL_RE.test(email)) return done();
+    const { rows } = await q("select id, first_name, email_verified from users where email = $1", [email]);
+    const user = rows[0];
+    if (!user || user.email_verified) return done();
+    const token = crypto.randomBytes(32).toString("hex");
+    await q("update users set verify_token = $1, verify_sent_at = now() where id = $2", [token, user.id]);
+    await sendVerificationEmail(email, user.first_name, baseUrl(req) + "/api/auth/verify?token=" + token).catch(() => {});
+    return done();
+  } catch (e) { return done(); }
 });
 
 app.get("/api/auth/me", requireUser, async (req, res) => {
