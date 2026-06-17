@@ -171,9 +171,9 @@ export function AuthGate({ children }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [showResend, setShowResend] = useState(false);
-  // Cinematic handshake intro — plays once per browser session; click to skip.
-  const [intro, setIntro] = useState(() => { try { return !sessionStorage.getItem("kc_intro_seen"); } catch (e) { return true; } });
-  function endIntro() { setIntro(false); try { sessionStorage.setItem("kc_intro_seen", "1"); } catch (e) {} }
+  // Cinematic handshake intro — plays whenever the login screen loads; click to skip.
+  const [intro, setIntro] = useState(true);
+  function endIntro() { setIntro(false); }
   useEffect(() => {
     if (!intro) return;
     let reduce = false;
