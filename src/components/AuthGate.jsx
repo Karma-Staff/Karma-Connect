@@ -110,8 +110,9 @@ const AUTH_CSS = `
 .kcauth-intro .stage{position:relative; width:min(560px,88vw); display:flex; align-items:center; justify-content:center}
 .kcauth-intro svg{width:100%; height:auto; transform-origin:50% 54%; animation:kcIntroZoom 3.7s cubic-bezier(.55,0,.2,1) both}
 .kcauth-intro .hands{transform-origin:50% 54%; animation:kcHandshake .26s ease-in-out 5 alternate}
-.kcauth-intro .vid{width:min(560px,88vw); max-height:70vh; border-radius:18px; object-fit:cover; transform-origin:50% 50%;
-  box-shadow:0 30px 80px -30px rgba(0,0,0,.85), 0 0 0 1px rgba(124,92,255,.18); animation:kcVidZoom 3.7s cubic-bezier(.55,0,.2,1) both}
+/* Black-background clip: screen blend drops the black, leaving just the hands over our bg. */
+.kcauth-intro .vid{width:min(640px,92vw); max-height:76vh; object-fit:contain; mix-blend-mode:screen; transform-origin:50% 50%;
+  animation:kcVidZoom 3.7s cubic-bezier(.55,0,.2,1) both}
 @keyframes kcVidZoom{0%{transform:scale(1.55)}60%{transform:scale(1)}100%{transform:scale(1)}}
 .kcauth-intro .figs{animation:kcFigsFade .7s ease 2.6s both}
 .kcauth-intro .logo{position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:15px; opacity:0; animation:kcLogoReveal .9s cubic-bezier(.22,1,.36,1) 2.6s both}
