@@ -102,6 +102,27 @@ const AUTH_CSS = `
 .kcauth .field input{background:rgba(255,255,255,.06); border-color:rgba(140,160,220,.22);
   -webkit-backdrop-filter:blur(10px) saturate(1.4); backdrop-filter:blur(10px) saturate(1.4)}
 .kcauth .field input:focus{background:rgba(255,255,255,.1); box-shadow:0 0 0 4px rgba(124,92,255,.18), inset 0 1px 0 rgba(255,255,255,.25)}
+
+/* ── Cinematic stick-figure handshake intro ── */
+.kcauth-intro{position:fixed; inset:0; z-index:60; display:flex; align-items:center; justify-content:center; cursor:pointer; overflow:hidden;
+  background:radial-gradient(900px 700px at 50% 42%, rgba(22,56,90,.55), transparent 60%), linear-gradient(160deg,#071426 0%,#081B38 50%,#020B1C 100%);
+  animation:kcIntroOut .7s ease 3.7s both}
+.kcauth-intro .stage{position:relative; width:min(560px,88vw); display:flex; align-items:center; justify-content:center}
+.kcauth-intro svg{width:100%; height:auto; transform-origin:50% 56%; animation:kcIntroZoom 3.7s cubic-bezier(.55,0,.2,1) both}
+.kcauth-intro .hands{transform-origin:50% 56%; animation:kcHandshake .24s ease-in-out 5 alternate}
+.kcauth-intro .figs{animation:kcFigsFade .7s ease 2.6s both}
+.kcauth-intro .logo{position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:15px; opacity:0; animation:kcLogoReveal .9s cubic-bezier(.22,1,.36,1) 2.6s both}
+.kcauth-intro .logo .mk{width:76px; height:76px; border-radius:21px; display:flex; align-items:center; justify-content:center;
+  background:linear-gradient(150deg,#0a1c44,#16385A); border:1px solid rgba(124,92,255,.3); box-shadow:0 18px 50px -18px rgba(124,92,255,.6), 0 0 44px -8px rgba(124,92,255,.55)}
+.kcauth-intro .logo h1{font-family:'Lora',serif; font-size:30px; font-weight:700; color:#eef2fb; letter-spacing:-.02em}
+.kcauth-intro .logo h1 b{background:linear-gradient(135deg,#FFD83A,#E7B74B); -webkit-background-clip:text; background-clip:text; color:transparent}
+.kcauth-intro .skip{position:absolute; bottom:26px; left:0; right:0; text-align:center; font-size:10.5px; letter-spacing:.2em; text-transform:uppercase; color:#5f72a0; font-weight:700}
+@keyframes kcIntroZoom{0%{transform:scale(3.6)}28%{transform:scale(3.6)}62%{transform:scale(1)}100%{transform:scale(1)}}
+@keyframes kcHandshake{from{transform:translateY(-5px)}to{transform:translateY(5px)}}
+@keyframes kcFigsFade{to{opacity:0}}
+@keyframes kcLogoReveal{0%{opacity:0; transform:scale(.7)}100%{opacity:1; transform:scale(1)}}
+@keyframes kcIntroOut{to{opacity:0; visibility:hidden}}
+@media(prefers-reduced-motion:reduce){ .kcauth-intro{display:none} }
 `;
 
 function I({ d, c }) { return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">{c || <path d={d} />}</svg>; }
@@ -150,6 +171,18 @@ export function AuthGate({ children }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [showResend, setShowResend] = useState(false);
+  // Cinematic handshake intro — plays once per browser session; click to skip.
+  const [intro, setIntro] = useState(() => { try { return !sessionStorage.getItem("kc_intro_seen"); } catch (e) { return true; } });
+  function endIntro() { setIntro(false); try { sessionStorage.setItem("kc_intro_seen", "1"); } catch (e) {} }
+  useEffect(() => {
+    if (!intro) return;
+    let reduce = false;
+    try { reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) {}
+    if (reduce) { endIntro(); return; }
+    const t = setTimeout(endIntro, 4400);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // After the email-confirmation link redirects back with ?verified=1 / ?verified=0.
   useEffect(() => {
@@ -267,6 +300,39 @@ export function AuthGate({ children }) {
     <div className="kcauth">
       <style>{AUTH_CSS}</style>
       <Backdrop />
+      {intro && (
+        <div className="kcauth-intro" onClick={endIntro} title="Click to skip">
+          <div className="stage">
+            <svg viewBox="0 0 400 280" fill="none" stroke="#dfe7f5" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round">
+              <g className="figs">
+                {/* left figure */}
+                <circle cx="120" cy="68" r="20" />
+                <path d="M120 88 L120 176" />
+                <path d="M120 176 L96 230" />
+                <path d="M120 176 L140 230" />
+                <path d="M120 112 L92 146" />
+                {/* right figure */}
+                <circle cx="280" cy="68" r="20" />
+                <path d="M280 88 L280 176" />
+                <path d="M280 176 L304 230" />
+                <path d="M280 176 L260 230" />
+                <path d="M280 112 L308 146" />
+                {/* clasped hands — the focal point, shakes */}
+                <g className="hands">
+                  <path d="M120 112 L186 150" />
+                  <path d="M280 112 L214 150" />
+                  <path d="M181 150 L219 150" stroke="#FFCF00" strokeWidth="14" />
+                </g>
+              </g>
+            </svg>
+            <div className="logo">
+              <div className="mk"><KarmaMark color="#fff" w={40} /></div>
+              <h1>Karma <b>Connect</b></h1>
+            </div>
+          </div>
+          <div className="skip">click to skip</div>
+        </div>
+      )}
       <div className="center">
         <div className="brand">
           <div className="mk"><KarmaMark color="#fff" w={28} /></div>
