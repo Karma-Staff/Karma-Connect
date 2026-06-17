@@ -342,15 +342,15 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
 /* ── Phase 4: premium micro-polish (no token cost) ── */
 /* Liquid-glass scrollbar: thin by default; focuses into a glowing 3D glass pill on hover/drag. */
 .kc{scrollbar-width:thin; scrollbar-color:rgba(124,92,255,.5) transparent}
-.kc *::-webkit-scrollbar{width:8px; height:8px}
+.kc *::-webkit-scrollbar{width:6px; height:6px}
 .kc *::-webkit-scrollbar-track{background:transparent; margin:4px}
-.kc *::-webkit-scrollbar-thumb{border-radius:20px; border:2px solid transparent; background-clip:padding-box;
+.kc *::-webkit-scrollbar-thumb{border-radius:20px; border:1.5px solid transparent; background-clip:padding-box;
   background:linear-gradient(180deg, rgba(124,92,255,.5), rgba(74,134,200,.42));
   box-shadow:inset 0 1px 0 rgba(255,255,255,.22)}
-.kc *::-webkit-scrollbar-thumb:hover{border-width:1px;
+.kc *::-webkit-scrollbar-thumb:hover{border-width:0;
   background:linear-gradient(180deg, rgba(155,124,255,.95), rgba(124,92,255,.7));
   box-shadow:inset 0 1px 0 rgba(255,255,255,.55), inset 0 -2px 4px rgba(0,0,0,.3), 0 0 10px rgba(124,92,255,.7)}
-.kc *::-webkit-scrollbar-thumb:active{border-width:1px;
+.kc *::-webkit-scrollbar-thumb:active{border-width:0;
   background:linear-gradient(180deg, #c2adff, #7C5CFF);
   box-shadow:inset 0 1px 0 rgba(255,255,255,.75), inset 0 -3px 5px rgba(0,0,0,.35), 0 0 16px rgba(124,92,255,.95)}
 
