@@ -108,8 +108,8 @@ const AUTH_CSS = `
   background:radial-gradient(900px 700px at 50% 42%, rgba(22,56,90,.55), transparent 60%), linear-gradient(160deg,#071426 0%,#081B38 50%,#020B1C 100%);
   animation:kcIntroOut .7s ease 3.7s both}
 .kcauth-intro .stage{position:relative; width:min(560px,88vw); display:flex; align-items:center; justify-content:center}
-.kcauth-intro svg{width:100%; height:auto; transform-origin:50% 56%; animation:kcIntroZoom 3.7s cubic-bezier(.55,0,.2,1) both}
-.kcauth-intro .hands{transform-origin:50% 56%; animation:kcHandshake .24s ease-in-out 5 alternate}
+.kcauth-intro svg{width:100%; height:auto; transform-origin:50% 54%; animation:kcIntroZoom 3.7s cubic-bezier(.55,0,.2,1) both}
+.kcauth-intro .hands{transform-origin:50% 54%; animation:kcHandshake .26s ease-in-out 5 alternate}
 .kcauth-intro .figs{animation:kcFigsFade .7s ease 2.6s both}
 .kcauth-intro .logo{position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:15px; opacity:0; animation:kcLogoReveal .9s cubic-bezier(.22,1,.36,1) 2.6s both}
 .kcauth-intro .logo .mk{width:76px; height:76px; border-radius:21px; display:flex; align-items:center; justify-content:center;
@@ -303,25 +303,25 @@ export function AuthGate({ children }) {
       {intro && (
         <div className="kcauth-intro" onClick={endIntro} title="Click to skip">
           <div className="stage">
-            <svg viewBox="0 0 400 280" fill="none" stroke="#dfe7f5" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round">
+            <svg viewBox="0 0 400 300" fill="none" stroke="#e7eefb" strokeWidth="16" strokeLinecap="round" strokeLinejoin="round">
               <g className="figs">
-                {/* left figure */}
-                <circle cx="120" cy="68" r="20" />
-                <path d="M120 88 L120 176" />
-                <path d="M120 176 L96 230" />
-                <path d="M120 176 L140 230" />
-                <path d="M120 112 L92 146" />
-                {/* right figure */}
-                <circle cx="280" cy="68" r="20" />
-                <path d="M280 88 L280 176" />
-                <path d="M280 176 L304 230" />
-                <path d="M280 176 L260 230" />
-                <path d="M280 112 L308 146" />
+                {/* left silhouette (facing right) */}
+                <circle cx="118" cy="72" r="21" fill="#e7eefb" stroke="none" />
+                <path d="M118 94 L118 184" />
+                <path d="M118 184 L98 248" />
+                <path d="M118 184 L138 248" />
+                <path d="M118 120 L94 158" />
+                {/* right silhouette (facing left) */}
+                <circle cx="282" cy="72" r="21" fill="#e7eefb" stroke="none" />
+                <path d="M282 94 L282 184" />
+                <path d="M282 184 L302 248" />
+                <path d="M282 184 L262 248" />
+                <path d="M282 120 L306 158" />
                 {/* clasped hands — the focal point, shakes */}
                 <g className="hands">
-                  <path d="M120 112 L186 150" />
-                  <path d="M280 112 L214 150" />
-                  <path d="M181 150 L219 150" stroke="#FFCF00" strokeWidth="14" />
+                  <path d="M118 120 L190 162" />
+                  <path d="M282 120 L210 162" />
+                  <path d="M185 162 L215 162" stroke="#FFCF00" strokeWidth="22" />
                 </g>
               </g>
             </svg>
