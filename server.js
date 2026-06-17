@@ -121,7 +121,7 @@ function tokenFor(user) {
   return signJWT({ sub: user.id, email: user.email, first_name: user.first_name, last_name: user.last_name }, JWT_SECRET);
 }
 function publicUser(u) {
-  return { id: u.id, email: u.email, firstName: u.first_name || "", lastName: u.last_name || "", isAdmin: isAdminEmail(u.email) };
+  return { id: u.id, email: u.email, firstName: u.first_name || "", lastName: u.last_name || "", isAdmin: u.is_admin === true || isAdminEmail(u.email) };
 }
 // Express middleware: require a valid login token; attaches req.userId / req.email.
 function requireUser(req, res, next) {
@@ -134,10 +134,15 @@ function requireUser(req, res, next) {
   req.email = claims.email || "";
   next();
 }
-// Require an admin (for approving leads). Runs after requireUser.
-function requireAdmin(req, res, next) {
-  if (!isAdminEmail(req.email)) return res.status(403).json({ error: { message: "Admins only." } });
-  next();
+// Require an admin (for approving leads). Runs after requireUser. Admin = on the ADMIN_EMAILS
+// config list, OR flagged is_admin in the DB (granted via the admin signup code).
+async function requireAdmin(req, res, next) {
+  if (isAdminEmail(req.email)) return next();
+  try {
+    const { rows } = await q("select is_admin from users where id = $1", [req.userId]);
+    if (rows[0] && rows[0].is_admin) return next();
+  } catch (e) { /* fall through to 403 */ }
+  return res.status(403).json({ error: { message: "Admins only." } });
 }
 
 // ─────────────────────────────── Auth ───────────────────────────────
@@ -152,6 +157,16 @@ app.post("/api/auth/signup", async (req, res) => {
     if (password.length < 8) return res.status(400).json({ error: { message: "Use a password of at least 8 characters." } });
     if (!emailAllowed(email)) return res.status(403).json({ error: { message: "This email is not allowed to use Karma Connect." } });
 
+    // Optional admin signup code. Empty = normal member. Non-empty must match ADMIN_SIGNUP_CODE,
+    // otherwise reject so the person knows the code was wrong (rather than silently demoting them).
+    const adminCode = String(req.body?.adminCode || "");
+    let wantsAdmin = false;
+    if (adminCode) {
+      const expected = process.env.ADMIN_SIGNUP_CODE || "";
+      if (!expected || adminCode !== expected) return res.status(403).json({ error: { message: "Invalid admin code." } });
+      wantsAdmin = true;
+    }
+
     const exists = await q("select 1 from users where email = $1", [email]);
     if (exists.rowCount) return res.status(409).json({ error: { message: "An account with that email already exists. Sign in instead." } });
 
@@ -160,9 +175,9 @@ app.post("/api/auth/signup", async (req, res) => {
     // When it's off (no Resend key), create them already-verified and log them straight in.
     const token = emailVerifyOn ? crypto.randomBytes(32).toString("hex") : null;
     const { rows } = await q(
-      `insert into users (email, password_hash, first_name, last_name, email_verified, verify_token, verify_sent_at)
-       values ($1,$2,$3,$4,$5,$6,$7) returning *`,
-      [email, hash, firstName, lastName, !emailVerifyOn, token, token ? new Date() : null],
+      `insert into users (email, password_hash, first_name, last_name, email_verified, verify_token, verify_sent_at, is_admin)
+       values ($1,$2,$3,$4,$5,$6,$7,$8) returning *`,
+      [email, hash, firstName, lastName, !emailVerifyOn, token, token ? new Date() : null, wantsAdmin],
     );
     const user = rows[0];
 

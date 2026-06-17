@@ -44,8 +44,8 @@ async function post(path, body) {
   return data;
 }
 
-export async function signUp({ email, password, firstName, lastName }) {
-  const data = await post("/api/auth/signup", { email, password, firstName, lastName });
+export async function signUp({ email, password, firstName, lastName, adminCode }) {
+  const data = await post("/api/auth/signup", { email, password, firstName, lastName, adminCode });
   // When email verification is on, the server returns { needsVerification: true } and no
   // token — don't log in; the caller shows a "check your email" notice instead.
   if (data.token) setSession(data);

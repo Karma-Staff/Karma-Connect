@@ -109,6 +109,7 @@ export function AuthGate({ children }) {
   const [password2, setPassword2] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
+  const [adminCode, setAdminCode] = useState("");
   const [remember, setRemember] = useState(true);
   const [showPw, setShowPw] = useState(false);
   const [notice, setNotice] = useState("");
@@ -181,7 +182,7 @@ export function AuthGate({ children }) {
     setBusy(true);
     try {
       if (mode === "signup") {
-        const r = await signUp({ email: addr, password, firstName: firstName.trim(), lastName: lastName.trim() });
+        const r = await signUp({ email: addr, password, firstName: firstName.trim(), lastName: lastName.trim(), adminCode: adminCode.trim() });
         if (r && r.needsVerification) {
           // Email confirmation required — don't log in; prompt them to check their inbox.
           setNotice(r.message || "Account created. Check your email for a confirmation link, then sign in.");
@@ -265,6 +266,13 @@ export function AuthGate({ children }) {
               <>
                 <label>Confirm password</label>
                 <div className="field"><span className="ic">{LockIc}</span><input type={showPw ? "text" : "password"} autoComplete="new-password" value={password2} onChange={(e) => setPassword2(e.target.value)} placeholder="Re-enter your password" /></div>
+              </>
+            )}
+
+            {remote && mode === "signup" && (
+              <>
+                <label>Admin code <span style={{ color: "#6f7fa6", fontWeight: 500 }}>(optional)</span></label>
+                <div className="field"><span className="ic">{LockIc}</span><input type="password" autoComplete="off" value={adminCode} onChange={(e) => setAdminCode(e.target.value)} placeholder="Leave blank — only if you were given one" /></div>
               </>
             )}
 

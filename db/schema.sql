@@ -30,6 +30,10 @@ alter table users add column if not exists verify_token   text;
 alter table users add column if not exists verify_sent_at timestamptz;
 create index if not exists users_verify_token_idx on users (verify_token);
 
+-- Admin flag. Set at signup when the correct ADMIN_SIGNUP_CODE is supplied (a user can also
+-- be made admin via the ADMIN_EMAILS config list, independent of this column).
+alter table users add column if not exists is_admin boolean not null default false;
+
 -- ─────────────────────────────────────────────────────────────────────────────
 -- prospects: a saved prospect snapshot (the app's "History"). `data` holds the full
 -- snapshot (prospect fields, analysis, generated messages, favorites, sender, offer).
