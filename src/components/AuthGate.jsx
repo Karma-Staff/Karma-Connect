@@ -68,6 +68,30 @@ const AUTH_CSS = `
   background:linear-gradient(135deg,#FFD83A,#E7B74B); -webkit-background-clip:text; background-clip:text; color:transparent}
 .kcauth :focus-visible{outline:2px solid rgba(155,124,255,.7); outline-offset:2px}
 @media(max-width:560px){ .kcauth .card{padding:28px 22px} .kcauth .row2{grid-template-columns:1fr} }
+
+/* ═══════ Crystal / lightning upgrade (matches the workspace) ═══════ */
+/* Drifting ambient aurora behind the login. */
+.kcauth:after{content:""; position:absolute; inset:-25%; z-index:0; pointer-events:none; opacity:.6; filter:blur(30px);
+  background:
+    radial-gradient(36% 30% at 20% 22%, rgba(124,92,255,.30), transparent 60%),
+    radial-gradient(32% 28% at 80% 30%, rgba(74,134,200,.22), transparent 60%),
+    radial-gradient(40% 34% at 60% 86%, rgba(231,183,75,.16), transparent 62%);
+  animation:authAurora 20s ease-in-out infinite alternate}
+@keyframes authAurora{0%{transform:translate3d(0,0,0) scale(1)}50%{transform:translate3d(3%,-2%,0) scale(1.08)}100%{transform:translate3d(-3%,2%,0) scale(1.05)}}
+/* keep particles + network above the aurora veil, content above all */
+.kcauth .net,.kcauth .pdot{z-index:1}
+.kcauth .center{z-index:3}
+/* Violet halo + brighter mark glow. */
+.kcauth .card{box-shadow:0 40px 90px -42px rgba(0,0,0,.9), 0 0 0 1px rgba(124,92,255,.08), 0 0 70px -30px rgba(124,92,255,.45), inset 0 1px 0 rgba(255,255,255,.14)}
+.kcauth .brand .mk{box-shadow:0 18px 50px -18px rgba(124,92,255,.6), inset 0 1px 0 rgba(255,255,255,.18), 0 0 32px -6px rgba(124,92,255,.55)}
+/* Lightning sweep across the main button on hover. */
+.kcauth .cta{position:relative; overflow:hidden}
+.kcauth .cta:after{content:""; position:absolute; top:-20%; left:-70%; width:45%; height:140%; transform:skewX(-22deg);
+  background:linear-gradient(90deg, transparent, rgba(255,255,255,.6), transparent); pointer-events:none}
+.kcauth .cta:hover:not(:disabled):after{animation:authSweep .8s ease}
+@keyframes authSweep{from{left:-70%}to{left:130%}}
+.kcauth .cta:hover:not(:disabled){box-shadow:0 26px 54px -14px rgba(231,183,75,.95), 0 0 36px -6px rgba(255,207,0,.55), inset 0 1px 0 rgba(255,255,255,.6)}
+@media(prefers-reduced-motion:reduce){ .kcauth:after,.kcauth .cta:after{animation:none} }
 `;
 
 function I({ d, c }) { return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">{c || <path d={d} />}</svg>; }
