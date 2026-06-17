@@ -63,6 +63,15 @@ function emailAllowed(email) {
   return !domain || e.endsWith("@" + domain);
 }
 
+// Admins can approve leads for the locked engines. Set ADMIN_EMAILS (comma-separated)
+// in the server env. Recomputed from email on every request, so the list can change
+// without users needing to log in again.
+function isAdminEmail(email) {
+  const e = (email || "").toLowerCase();
+  const admins = (process.env.ADMIN_EMAILS || "").toLowerCase().split(",").map((s) => s.trim()).filter(Boolean);
+  return admins.includes(e);
+}
+
 // ── Email verification via Resend (optional, env-gated) ──
 // If RESEND_API_KEY is set, new signups must confirm their email before they can sign in.
 // If it's not configured (e.g. local dev), users are created already-verified (no friction).
@@ -112,7 +121,7 @@ function tokenFor(user) {
   return signJWT({ sub: user.id, email: user.email, first_name: user.first_name, last_name: user.last_name }, JWT_SECRET);
 }
 function publicUser(u) {
-  return { id: u.id, email: u.email, firstName: u.first_name || "", lastName: u.last_name || "" };
+  return { id: u.id, email: u.email, firstName: u.first_name || "", lastName: u.last_name || "", isAdmin: isAdminEmail(u.email) };
 }
 // Express middleware: require a valid login token; attaches req.userId / req.email.
 function requireUser(req, res, next) {
@@ -123,6 +132,11 @@ function requireUser(req, res, next) {
   if (!claims || !claims.sub) return res.status(401).json({ error: { message: "Please sign in again." } });
   req.userId = claims.sub;
   req.email = claims.email || "";
+  next();
+}
+// Require an admin (for approving leads). Runs after requireUser.
+function requireAdmin(req, res, next) {
+  if (!isAdminEmail(req.email)) return res.status(403).json({ error: { message: "Admins only." } });
   next();
 }
 
@@ -292,6 +306,65 @@ async function writeUsageRow(row) {
     [row.user_id, row.kind, row.input_tokens, row.output_tokens, row.cache_read_tokens, row.cost_usd],
   );
 }
+
+// ───────────────────────────── Lead approvals ───────────────────────
+// Member requests approval for a lead (to unlock relationship / meeting / follow-up).
+app.post("/api/approvals", requireUser, async (req, res) => {
+  try {
+    const prospectId = String(req.body?.prospectId || "").trim();
+    if (!prospectId) return res.status(400).json({ error: { message: "Missing lead id." } });
+    const label = String(req.body?.label || "").slice(0, 200);
+    const sub = String(req.body?.sub || "").slice(0, 200);
+    // Re-requesting resets a denied lead back to pending; an already-approved lead stays approved.
+    const { rows } = await q(
+      `insert into lead_approvals (user_id, prospect_id, label, sub, status, requested_at)
+       values ($1,$2,$3,$4,'pending', now())
+       on conflict (user_id, prospect_id) do update
+         set label = excluded.label, sub = excluded.sub,
+             status = case when lead_approvals.status = 'approved' then 'approved' else 'pending' end,
+             requested_at = case when lead_approvals.status = 'approved' then lead_approvals.requested_at else now() end
+       returning prospect_id, status`,
+      [req.userId, prospectId, label, sub],
+    );
+    res.json({ approval: rows[0] });
+  } catch (e) { res.status(500).json({ error: { message: "Could not request approval." } }); }
+});
+
+// Member: their own lead statuses, to gate the UI.
+app.get("/api/approvals/mine", requireUser, async (req, res) => {
+  try {
+    const { rows } = await q("select prospect_id, status from lead_approvals where user_id = $1", [req.userId]);
+    res.json({ approvals: rows });
+  } catch (e) { res.status(500).json({ error: { message: "Could not load approvals." } }); }
+});
+
+// Admin: list approval requests (pending first).
+app.get("/api/approvals", requireUser, requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await q(
+      `select a.id, a.prospect_id, a.label, a.sub, a.status, a.requested_at, a.decided_by, a.decided_at,
+              u.email as member_email, u.first_name, u.last_name
+         from lead_approvals a join users u on u.id = a.user_id
+        order by case when a.status = 'pending' then 0 else 1 end, a.requested_at desc
+        limit 200`,
+    );
+    res.json({ approvals: rows });
+  } catch (e) { res.status(500).json({ error: { message: "Could not load approvals." } }); }
+});
+
+// Admin: approve or deny a request.
+app.post("/api/approvals/:id/decide", requireUser, requireAdmin, async (req, res) => {
+  try {
+    const decision = req.body?.decision === "approved" ? "approved" : req.body?.decision === "denied" ? "denied" : null;
+    if (!decision) return res.status(400).json({ error: { message: "decision must be 'approved' or 'denied'." } });
+    const { rows } = await q(
+      "update lead_approvals set status = $1, decided_by = $2, decided_at = now() where id = $3 returning id, status",
+      [decision, req.email, String(req.params.id)],
+    );
+    if (!rows[0]) return res.status(404).json({ error: { message: "Request not found." } });
+    res.json({ approval: rows[0] });
+  } catch (e) { res.status(500).json({ error: { message: "Could not save the decision." } }); }
+});
 
 // ─────────────────────────── Anthropic proxy ────────────────────────
 app.post("/api/claude", async (req, res) => {

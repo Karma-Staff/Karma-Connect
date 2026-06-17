@@ -63,6 +63,25 @@ create table if not exists usage (
 
 create index if not exists usage_user_idx on usage (user_id, ts desc);
 
+-- ─────────────────────────────────────────────────────────────────────────────
+-- lead_approvals: an admin gate. Members work a lead through connection freely; to unlock
+-- the Relationship / Meeting / Follow-up engines for THAT lead, an admin must approve it.
+-- One row per (member, lead). Status: pending | approved | denied.
+-- ─────────────────────────────────────────────────────────────────────────────
+create table if not exists lead_approvals (
+  id            uuid primary key default gen_random_uuid(),
+  user_id       uuid not null references users (id) on delete cascade,  -- the member who owns the lead
+  prospect_id   text not null,           -- matches the client lead id (prospects.id)
+  label         text,                    -- lead name, for the admin list
+  sub           text,
+  status        text not null default 'pending',
+  requested_at  timestamptz not null default now(),
+  decided_by    text,                    -- admin email
+  decided_at    timestamptz,
+  unique (user_id, prospect_id)
+);
+create index if not exists lead_approvals_status_idx on lead_approvals (status, requested_at desc);
+
 -- Keep updated_at fresh on prospects.
 create or replace function touch_updated_at()
 returns trigger language plpgsql as $$

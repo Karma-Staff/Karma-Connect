@@ -15,6 +15,8 @@ import { Loader } from "./components/Loader.jsx";
 import { MsgCard } from "./components/MsgCard.jsx";
 import { listHistory, writeHistory, deleteHistory, HISTORY_PAGE_SIZE } from "./lib/history.js";
 import { scoreFit } from "./lib/scoring.js";
+import { currentUser } from "./lib/auth.js";
+import { requestApproval, myApprovals, listApprovals, decideApproval } from "./lib/approvals.js";
 
 export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   // Working draft is namespaced per account so different logins don't clobber each other.
@@ -57,6 +59,19 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   const [showRubric, setShowRubric] = useState(false);
   const [currentEntryId, setCurrentEntryId] = useState(saved.currentEntryId || null);
 
+  // ---- Admin approval gate ----
+  // Members work a lead through connection freely; Relationship / Meeting / Follow-up stay
+  // locked per lead until an admin approves it. Admins bypass the lock.
+  const me = currentUser();
+  const isAdmin = !!(me && me.isAdmin);
+  const APPROVAL_ENGINES = ["relationship", "meeting", "followup"];
+  const [approvals, setApprovals] = useState({});   // { prospectId: 'pending'|'approved'|'denied' }
+  const [apprBusy, setApprBusy] = useState(false);
+  const [adminList, setAdminList] = useState([]);    // admin view: all requests
+  const leadStatus = currentEntryId ? approvals[currentEntryId] : undefined;
+  const leadApproved = isAdmin || leadStatus === "approved";
+  const engineLocked = (id) => APPROVAL_ENGINES.includes(id) && !leadApproved;
+
   // Load saved prospects (Supabase when signed in, else localStorage). Async + paginated.
   useEffect(() => {
     let alive = true;
@@ -66,6 +81,20 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
     });
     return () => { alive = false; };
   }, [userEmail]);
+
+  // Load this member's lead-approval statuses (gates the locked engines). Admins also load
+  // the full request list for the Approvals panel + badge.
+  useEffect(() => {
+    refreshApprovals();
+    if (isAdmin) loadAdminList();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userEmail]);
+  // Re-check when opening a locked engine, so an admin's just-granted approval shows up.
+  useEffect(() => {
+    if (!isAdmin && APPROVAL_ENGINES.includes(view)) refreshApprovals();
+    if (isAdmin && view === "approvals") loadAdminList();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
 
   // Persist work to localStorage so a refresh never loses (or re-bills) it.
   useEffect(() => {
@@ -149,6 +178,34 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   function deleteFromHistory(id) {
     setHistory(history.filter((h) => h.id !== id));
     deleteHistory(userEmail, id);
+  }
+
+  // ---- Approval gate actions ----
+  async function refreshApprovals() {
+    if (!userEmail) return;
+    try { setApprovals(await myApprovals()); } catch (e) { /* keep prior */ }
+  }
+  async function doRequestApproval() {
+    if (!currentEntryId) { showToast("Run AI Analysis first so the lead is saved."); return; }
+    setApprBusy(true);
+    try {
+      const label = [prospect.firstName, prospect.lastName].filter(Boolean).join(" ") || prospect.company || "Untitled";
+      const sub = [prospect.title, prospect.company].filter(Boolean).join(" · ");
+      const a = await requestApproval(currentEntryId, label, sub);
+      setApprovals((m) => ({ ...m, [currentEntryId]: (a && a.status) || "pending" }));
+      showToast("Approval requested.");
+    } catch (e) { showToast("Could not request approval. Try again."); }
+    setApprBusy(false);
+  }
+  async function loadAdminList() {
+    try { setAdminList(await listApprovals()); } catch (e) { /* not admin / network */ }
+  }
+  async function doDecide(id, decision) {
+    try {
+      await decideApproval(id, decision);
+      setAdminList((list) => list.map((a) => (a.id === id ? { ...a, status: decision, decided_by: userEmail } : a)));
+      showToast(decision === "approved" ? "Lead approved." : "Lead denied.");
+    } catch (e) { showToast("Could not save the decision."); }
   }
   const favKey = (kind, i, msg) => kind + ":" + i + ":" + (msg || "").slice(0, 24);
   function toggleFav(kind, i, msg) { const k = favKey(kind, i, msg); setFavs((f) => ({ ...f, [k]: !f[k] })); }
@@ -300,6 +357,9 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
     return "";
   }
   async function generate(kind) {
+    // Approval gate: don't spend on locked engines until an admin approves this lead.
+    const baseKind = kind.indexOf("meeting_") === 0 ? "meeting" : kind;
+    if (APPROVAL_ENGINES.includes(baseKind) && !leadApproved) { showToast("An admin must approve this lead first."); return; }
     setLoading((l) => ({ ...l, [kind]: true })); setErrors((e) => ({ ...e, [kind]: null })); setResults((r) => ({ ...r, [kind]: [] }));
     try {
       if (kind === "followup") {
@@ -351,6 +411,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
     { id: "meeting", label: "Meeting Requests", ic: Ic.meet, gate: true },
     { id: "followup", label: "Follow-up Engine", ic: Ic.fup, gate: true, count: results.followup.length },
     { id: "history", label: "History", ic: Ic.hist, count: history.length },
+    ...(isAdmin ? [{ id: "approvals", label: "Approvals", ic: Ic.intel, admin: true, count: adminList.filter((a) => a.status === "pending").length }] : []),
   ];
 
   function GenSkeleton() {
@@ -416,6 +477,40 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
     );
   }
 
+  // Locked-engine panel shown to members until an admin approves the current lead.
+  function ApprovalGate({ title }) {
+    const st = leadStatus;
+    return (
+      <div>
+        <div className="head"><div className="eyebrow">Locked · needs admin approval</div><h2>{title}</h2><p>This is an advanced outreach stage. An admin approves each lead before it can move past connection requests.</p></div>
+        <ProspectStrip />
+        <div className="empty">
+          <div className="eic" style={{ fontSize: 30 }}>🔒</div>
+          {st === "pending" ? (
+            <>
+              <h3>Approval requested</h3>
+              <p>Waiting for an admin to approve <b>{prospect.firstName || "this lead"}</b>. Once approved, Relationship, Meeting and Follow-up unlock for them.</p>
+              <button className="btn ghost" onClick={refreshApprovals}>Check again</button>
+            </>
+          ) : st === "denied" ? (
+            <>
+              <h3>Not approved</h3>
+              <p>An admin did not approve this lead for the advanced engines. You can request again if something has changed.</p>
+              <button className="btn primary" onClick={doRequestApproval} disabled={apprBusy}>{apprBusy ? "Requesting…" : "Request again"}</button>
+            </>
+          ) : (
+            <>
+              <h3>Approval required</h3>
+              <p>Ask an admin to approve <b>{prospect.firstName || "this lead"}</b> to unlock the Relationship, Meeting and Follow-up engines.</p>
+              <button className="btn primary" onClick={doRequestApproval} disabled={apprBusy || !currentEntryId}>{apprBusy ? "Requesting…" : "Request approval"}</button>
+              {!currentEntryId && <p className="hint">Run AI Analysis first so the lead is saved.</p>}
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   // Deterministic, explainable fit — computed in code from the prospect's own data (lib/scoring.js).
   // Same prospect always yields the same number, and every score carries a factor breakdown you can
   // show a client. Independent of the AI's qualitative read.
@@ -446,15 +541,22 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
           </div>
           <div className="navlbl">Workspace</div>
           {NAV.map((n) => {
-            const locked = n.gate && !analysis && !loading.analysis;
+            // analysisLock blocks the click (can't use engines before analysis).
+            const analysisLock = n.gate && !analysis && !loading.analysis;
+            // approvalLock shows a 🔒 on the locked engines but stays clickable, so the member
+            // can open the view and request approval. Admins never see the approval lock.
+            const approvalLock = APPROVAL_ENGINES.includes(n.id) && !leadApproved && analysis;
+            const locked = analysisLock;
+            const showLock = analysisLock || approvalLock;
             return (
               <Fragment key={n.id}>
                 {n.id === "connection" && <div className="navlbl" style={{ marginTop: 4 }}>Outreach</div>}
                 {n.id === "history" && <div className="navlbl" style={{ marginTop: 4 }}>Library</div>}
+                {n.id === "approvals" && <div className="navlbl" style={{ marginTop: 4 }}>Admin</div>}
                 <button className={"nav" + (view === n.id ? " on" : "") + (locked ? " lock" : "")} onClick={() => { if (!locked) setView(n.id); }}>
                   {n.ic}{n.label}
                   {n.count > 0 && <span className="ct">{n.count}</span>}
-                  {locked && <span className="ct" style={{ color: "var(--faint)" }}>🔒</span>}
+                  {showLock && <span className="ct" style={{ color: "var(--faint)" }}>🔒</span>}
                 </button>
               </Fragment>
             );
@@ -713,9 +815,11 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
           )}
 
           {view === "connection" && <SectionGenerator kind="connection" eyebrow="Section 01 · Most important" title="LinkedIn connection requests" blurb="Personalized invite notes under 300 characters. No pitch, no selling, no meeting ask — the only goal is an accepted connection that feels genuinely personal." charLimit={300} />}
-          {view === "relationship" && <SectionGenerator kind="relationship" eyebrow="Section 02 · After they accept" title="Post-connection relationship builder" blurb="Relationship-first openers that start a real conversation and demonstrate relevance — built to earn a reply, not to pitch." />}
+          {view === "relationship" && (engineLocked("relationship")
+            ? <ApprovalGate title="Relationship Builder" />
+            : <SectionGenerator kind="relationship" eyebrow="Section 02 · After they accept" title="Post-connection relationship builder" blurb="Relationship-first openers that start a real conversation and demonstrate relevance — built to earn a reply, not to pitch." />)}
 
-          {view === "meeting" && (
+          {view === "meeting" && (engineLocked("meeting") ? <ApprovalGate title="Meeting Requests" /> : (
             <div>
               <div className="head"><div className="eyebrow">Section 03 · Once rapport is built</div><h2>Meeting request generator</h2><p>Value-focused, non-salesy meeting requests that make the ask an easy yes. Choose a length, then generate 10 angles.</p></div>
               <ProspectStrip />
@@ -747,9 +851,9 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
                 </div>
               )}
             </div>
-          )}
+          ))}
 
-          {view === "followup" && (
+          {view === "followup" && (engineLocked("followup") ? <ApprovalGate title="Follow-up Engine" /> : (
             <div>
               <div className="head"><div className="eyebrow">Section 04 · No reply yet</div><h2>Intelligent follow-up engine</h2><p>A 5-step sequence where every message introduces something new — never "just checking in," never a repeat.</p></div>
               <ProspectStrip />
@@ -778,7 +882,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
                 </div>
               )}
             </div>
-          )}
+          ))}
 
           {view === "history" && (
             <div>
@@ -819,6 +923,37 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
               {history.length > 0 && historyMore && (
                 <div className="toprow" style={{ justifyContent: "center", marginTop: 18 }}>
                   <button className="btn ghost sm" onClick={loadMoreHistory}>Load older</button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {view === "approvals" && isAdmin && (
+            <div>
+              <div className="head"><div className="eyebrow">Admin</div><h2>Lead approvals</h2><p>Approve a lead to unlock the Relationship, Meeting and Follow-up engines for the member who requested it. Keeps the advanced (and pricier) stages gated.</p></div>
+              <div className="toprow"><button className="btn ghost sm" onClick={loadAdminList}>Refresh</button></div>
+              {adminList.length === 0 ? (
+                <div className="empty"><div className="eic">{Ic.intel}</div><h3>No requests yet</h3><p>When a member requests approval for a lead, it appears here for you to approve or deny.</p></div>
+              ) : (
+                <div className="grid2">
+                  {adminList.map((a) => (
+                    <div className="mcard" key={a.id}>
+                      <div className="mctop">
+                        <span className={"chip" + (a.status === "approved" ? " idx" : "")}>{a.status}</span>
+                        <span className="stagehd">{a.label || a.prospect_id}</span>
+                      </div>
+                      {a.sub && <div className="pr" style={{ fontSize: 12, color: "var(--muted)" }}>{a.sub}</div>}
+                      <div className="pr" style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>Requested by {a.member_email}</div>
+                      {a.status === "pending" ? (
+                        <div className="mact" style={{ marginTop: 10 }}>
+                          <button className="btn primary sm" onClick={() => doDecide(a.id, "approved")}>Approve</button>
+                          <button className="btn danger sm" onClick={() => doDecide(a.id, "denied")} style={{ marginLeft: 8 }}>Deny</button>
+                        </div>
+                      ) : (
+                        <div className="pr" style={{ fontSize: 12, marginTop: 8, color: a.status === "approved" ? "#52d39e" : "var(--faint)" }}>{a.status}{a.decided_by ? " · by " + a.decided_by : ""}</div>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
