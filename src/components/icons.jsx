@@ -1,14 +1,15 @@
 // SVG icons and the Karma mark, kept together as presentational constants/components.
 
-// Karma Staff mark: three ascending bars + a bold "k" (stem + arm), matching the brand logo.
+// Karma Staff mark: three ascending square bars + a bold sharp "k" (stem + chevron arm),
+// matching the official brand logo (square corners, sharp k tips).
 export function KarmaMark({ color = "#fff", w = 24 }) {
   return (
     <svg width={w} height={w * (80 / 120)} viewBox="0 0 120 80" fill="none">
-      <rect x="4"  y="52" width="15" height="24" rx="1.5" fill={color} />
-      <rect x="25" y="38" width="15" height="38" rx="1.5" fill={color} />
-      <rect x="46" y="22" width="15" height="54" rx="1.5" fill={color} />
-      <rect x="67" y="4"  width="16" height="72" rx="1.5" fill={color} />
-      <path d="M116 9 L85 40 L116 75" fill="none" stroke={color} strokeWidth="16" strokeLinejoin="round" strokeLinecap="round" />
+      <rect x="4"  y="50" width="16" height="26" fill={color} />
+      <rect x="26" y="36" width="16" height="40" fill={color} />
+      <rect x="48" y="20" width="16" height="56" fill={color} />
+      <rect x="68" y="2"  width="16" height="74" fill={color} />
+      <path d="M114 6 L84 39 L114 76" fill="none" stroke={color} strokeWidth="17" strokeLinejoin="round" strokeLinecap="round" />
     </svg>
   );
 }
