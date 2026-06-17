@@ -110,6 +110,9 @@ const AUTH_CSS = `
 .kcauth-intro .stage{position:relative; width:min(560px,88vw); display:flex; align-items:center; justify-content:center}
 .kcauth-intro svg{width:100%; height:auto; transform-origin:50% 54%; animation:kcIntroZoom 3.7s cubic-bezier(.55,0,.2,1) both}
 .kcauth-intro .hands{transform-origin:50% 54%; animation:kcHandshake .26s ease-in-out 5 alternate}
+.kcauth-intro .vid{width:min(560px,88vw); max-height:70vh; border-radius:18px; object-fit:cover; transform-origin:50% 50%;
+  box-shadow:0 30px 80px -30px rgba(0,0,0,.85), 0 0 0 1px rgba(124,92,255,.18); animation:kcVidZoom 3.7s cubic-bezier(.55,0,.2,1) both}
+@keyframes kcVidZoom{0%{transform:scale(1.55)}60%{transform:scale(1)}100%{transform:scale(1)}}
 .kcauth-intro .figs{animation:kcFigsFade .7s ease 2.6s both}
 .kcauth-intro .logo{position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:15px; opacity:0; animation:kcLogoReveal .9s cubic-bezier(.22,1,.36,1) 2.6s both}
 .kcauth-intro .logo .mk{width:76px; height:76px; border-radius:21px; display:flex; align-items:center; justify-content:center;
@@ -173,6 +176,8 @@ export function AuthGate({ children }) {
   const [showResend, setShowResend] = useState(false);
   // Cinematic handshake intro — plays whenever the login screen loads; click to skip.
   const [intro, setIntro] = useState(true);
+  // Use /login-intro.mp4 if present; otherwise fall back to the silhouette animation.
+  const [videoOk, setVideoOk] = useState(true);
   function endIntro() { setIntro(false); }
   useEffect(() => {
     if (!intro) return;
@@ -303,6 +308,9 @@ export function AuthGate({ children }) {
       {intro && (
         <div className="kcauth-intro" onClick={endIntro} title="Click to skip">
           <div className="stage">
+            {videoOk ? (
+            <video className="vid" src="/login-intro.mp4" autoPlay muted playsInline onError={() => setVideoOk(false)} />
+            ) : (
             <svg viewBox="0 0 400 300" fill="none" stroke="#e7eefb" strokeWidth="16" strokeLinecap="round" strokeLinejoin="round">
               <g className="figs">
                 {/* left silhouette (facing right) */}
@@ -325,6 +333,7 @@ export function AuthGate({ children }) {
                 </g>
               </g>
             </svg>
+            )}
             <div className="logo">
               <div className="mk"><KarmaMark color="#fff" w={40} /></div>
               <h1>Karma <b>Connect</b></h1>
