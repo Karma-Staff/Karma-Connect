@@ -381,4 +381,40 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
 .kc .modal .mrow{display:flex; gap:10px; justify-content:flex-end}
 .kc .btn.danger{background:linear-gradient(135deg,#ff8a8a,#e24a4a); color:#fff; box-shadow:0 14px 32px -14px rgba(226,74,74,.6), inset 0 1px 0 rgba(255,255,255,.32)}
 .kc .btn.danger:hover{transform:translateY(-2px); box-shadow:0 22px 44px -12px rgba(226,74,74,.85), inset 0 1px 0 rgba(255,255,255,.42)}
+
+/* ═══════════════ Crystal / lightning theme upgrade ═══════════════ */
+/* 1) Ambient aurora that slowly drifts behind everything — soft moving light. */
+.kc:after{content:""; position:fixed; inset:-25%; z-index:0; pointer-events:none; opacity:.55;
+  background:
+    radial-gradient(38% 30% at 18% 22%, rgba(124,92,255,.20), transparent 60%),
+    radial-gradient(34% 28% at 82% 28%, rgba(74,134,200,.18), transparent 60%),
+    radial-gradient(42% 34% at 62% 88%, rgba(231,183,75,.10), transparent 62%);
+  filter:blur(28px); animation:auroraDrift 22s ease-in-out infinite alternate}
+@keyframes auroraDrift{0%{transform:translate3d(0,0,0) scale(1)}50%{transform:translate3d(2.5%,-2%,0) scale(1.07)}100%{transform:translate3d(-2.5%,2%,0) scale(1.04)}}
+
+/* 2) Crystalline gradient bevel on glass surfaces — a thin bright edge that catches light. */
+.kc .panel,.kc .mcard,.kc .iblock,.kc .hero,.kc .copilot,.kc .scorecard,.kc .pchip,.kc .modal{position:relative}
+.kc .panel:before,.kc .mcard:before,.kc .iblock:before,.kc .hero:before,.kc .copilot:before,.kc .scorecard:before,.kc .pchip:before,.kc .modal:before{
+  content:""; position:absolute; inset:0; border-radius:inherit; padding:1px; pointer-events:none; z-index:0;
+  background:linear-gradient(140deg, rgba(255,255,255,.6), rgba(255,255,255,.06) 26%, transparent 52%, rgba(124,92,255,.32));
+  -webkit-mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite:xor;
+  mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); mask-composite:exclude;
+  opacity:.6; transition:opacity .25s ease}
+.kc .panel:hover:before,.kc .mcard:hover:before,.kc .iblock:hover:before,.kc .hero:hover:before{opacity:1}
+/* keep content above the bevel */
+.kc .mcard>*,.kc .panel>*,.kc .iblock>*,.kc .hero>*,.kc .copilot>*,.kc .scorecard>*,.kc .pchip>*,.kc .modal>*{position:relative; z-index:1}
+
+/* 3) Lightning sweep across primary / AI buttons on hover. */
+.kc .btn.primary,.kc .btn.ai{position:relative; overflow:hidden}
+.kc .btn.primary:after,.kc .btn.ai:after{content:""; position:absolute; top:-20%; left:-70%; width:45%; height:140%;
+  transform:skewX(-22deg); background:linear-gradient(90deg, transparent, rgba(255,255,255,.55), transparent); pointer-events:none}
+.kc .btn.primary:hover:after,.kc .btn.ai:hover:after{animation:btnSweep .75s ease}
+@keyframes btnSweep{from{left:-70%}to{left:130%}}
+
+/* 4) Brighter glowing accents (gold + violet light bloom). */
+.kc .mark{box-shadow:0 8px 22px -8px rgba(7,24,85,.9), inset 0 0 0 1px rgba(255,207,0,.4), 0 0 28px -6px rgba(255,207,0,.5)}
+.kc .nav.on:before{box-shadow:0 0 12px var(--yellow)}
+.kc .btn.primary:hover{box-shadow:0 24px 48px -12px rgba(231,183,75,.95), 0 0 34px -6px rgba(255,207,0,.5), inset 0 1px 0 rgba(255,255,255,.65)}
+.kc .btn.ai:hover{box-shadow:0 24px 50px -12px rgba(124,92,255,1), 0 0 36px -6px rgba(124,92,255,.6), inset 0 1px 0 rgba(255,255,255,.45)}
+.kc .pchip .av,.kc .stepbadge .sn{box-shadow:0 6px 16px -8px rgba(124,92,255,.6), 0 0 18px -6px rgba(124,92,255,.5), inset 0 1px 0 rgba(255,255,255,.4)}
 `;
