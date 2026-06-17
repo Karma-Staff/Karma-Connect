@@ -6,3 +6,8 @@ dist
 .vercel
 .DS_Store
 *.log
+
+# Local machine helpers (this PC's portable Node/Postgres paths) — not for the repo
+.vscode/
+start-karma.ps1
+Start Karma Connect.bat

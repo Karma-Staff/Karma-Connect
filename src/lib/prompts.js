@@ -41,18 +41,18 @@ export function buildContext(p, offer, analysis, org) {
 }
 
 export function pAnalysis(base) {
-  return base + `\nTASK: Build a concise intelligence profile of this prospect to drive personalized outreach, AND score fit for Karma Staff. Infer from role and industry where data is missing, but never fabricate specific facts.
+  // Note: fit scores are computed deterministically in code (lib/scoring.js -> scoreFit),
+  // so we do NOT ask the model for them — that output was generated and discarded.
+  return base + `\nTASK: Build a concise intelligence profile of this prospect to drive personalized outreach. Infer from role and industry where data is missing, but never fabricate specific facts.
 
 CRITICAL OUTPUT RULES:
 - Return ONLY a single valid JSON object. No markdown. No code fences. No preamble. Start with { and end with }.
 - Every string value must be properly JSON-escaped. No unescaped quotes or newlines inside strings.
-- Keep every array item under 12 words. Keep "why" fields under 15 words. Keep "persona" under 40 words.
+- Keep every array item under 12 words. Keep "persona" under 40 words.
 - All arrays must have exactly the count specified — no more, no fewer.
 
 Return this exact structure:
-{"persona":"2-3 sentence portrait (under 40 words total)","responsibilities":["item 1","item 2","item 3","item 4"],"painPoints":["item 1","item 2","item 3","item 4"],"goals":["item 1","item 2","item 3"],"hooks":["item 1","item 2","item 3","item 4"],"trends":["item 1","item 2","item 3"],"challenges":["item 1","item 2","item 3"],"fit":{"icp":{"score":75,"confidence":"medium","why":"one short sentence"},"qualification":{"score":70,"confidence":"medium","why":"one short sentence"},"readiness":{"score":60,"confidence":"low","why":"one short sentence"}}}
-
-Score honestly. Not everything is a 90.`;
+{"persona":"2-3 sentence portrait (under 40 words total)","responsibilities":["item 1","item 2","item 3","item 4"],"painPoints":["item 1","item 2","item 3","item 4"],"goals":["item 1","item 2","item 3"],"hooks":["item 1","item 2","item 3","item 4"],"trends":["item 1","item 2","item 3"],"challenges":["item 1","item 2","item 3"]}`;
 }
 
 export function pConnection(base, n, avoid) {
