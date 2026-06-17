@@ -417,4 +417,26 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
 .kc .btn.primary:hover{box-shadow:0 24px 48px -12px rgba(231,183,75,.95), 0 0 34px -6px rgba(255,207,0,.5), inset 0 1px 0 rgba(255,255,255,.65)}
 .kc .btn.ai:hover{box-shadow:0 24px 50px -12px rgba(124,92,255,1), 0 0 36px -6px rgba(124,92,255,.6), inset 0 1px 0 rgba(255,255,255,.45)}
 .kc .pchip .av,.kc .stepbadge .sn{box-shadow:0 6px 16px -8px rgba(124,92,255,.6), 0 0 18px -6px rgba(124,92,255,.5), inset 0 1px 0 rgba(255,255,255,.4)}
+
+/* ═══════════════ Liquid glass ═══════════════ */
+/* Thicker frost on every surface. */
+.kc .panel,.kc .mcard,.kc .iblock,.kc .hero,.kc .copilot,.kc .scorecard,.kc .pchip,.kc .modal,.kc .side,.kc .empty,.kc .seg,.kc .btn.ghost,.kc .iconbtn,.kc .kctoast{
+  -webkit-backdrop-filter:blur(34px) saturate(185%); backdrop-filter:blur(34px) saturate(185%)}
+/* Glass panes: rounder, brighter rim, real depth. */
+.kc .panel,.kc .mcard,.kc .iblock,.kc .hero,.kc .copilot{border-radius:22px;
+  background:linear-gradient(150deg, rgba(255,255,255,.17), rgba(255,255,255,.055) 40%, rgba(255,255,255,.02) 100%);
+  box-shadow:0 30px 60px -30px rgba(0,0,0,.82), inset 0 1px 0 rgba(255,255,255,.42), inset 0 -16px 32px -24px rgba(255,255,255,.14)}
+/* Specular gloss — light catching the curved glass (sits behind content). */
+.kc .panel:after,.kc .mcard:after,.kc .iblock:after,.kc .hero:after,.kc .copilot:after,.kc .scorecard:after,.kc .modal:after,.kc .pchip:after{
+  content:""; position:absolute; inset:0; border-radius:inherit; pointer-events:none; z-index:0;
+  background:radial-gradient(135% 95% at 12% -14%, rgba(255,255,255,.30), rgba(255,255,255,0) 46%), linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,0) 20%);
+  opacity:.8}
+/* Frosted-glass inputs. */
+.kc input,.kc textarea{background:rgba(255,255,255,.06); border-color:rgba(255,255,255,.14);
+  -webkit-backdrop-filter:blur(10px) saturate(1.4); backdrop-filter:blur(10px) saturate(1.4)}
+.kc input::placeholder,.kc textarea::placeholder{color:#828fb2}
+.kc input:focus,.kc textarea:focus{background:rgba(255,255,255,.1); border-color:var(--steel); box-shadow:0 0 0 3px rgba(74,134,200,.22), inset 0 1px 0 rgba(255,255,255,.25)}
+/* Glassier ghost buttons + sidebar. */
+.kc .btn.ghost{background:rgba(255,255,255,.09)}
+.kc .side{background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(7,24,85,.20)); box-shadow:inset -1px 0 0 rgba(255,255,255,.08), 0 0 60px -20px rgba(0,0,0,.6)}
 `;

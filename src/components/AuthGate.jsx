@@ -92,6 +92,16 @@ const AUTH_CSS = `
 @keyframes authSweep{from{left:-70%}to{left:130%}}
 .kcauth .cta:hover:not(:disabled){box-shadow:0 26px 54px -14px rgba(231,183,75,.95), 0 0 36px -6px rgba(255,207,0,.55), inset 0 1px 0 rgba(255,255,255,.6)}
 @media(prefers-reduced-motion:reduce){ .kcauth:after,.kcauth .cta:after{animation:none} }
+
+/* Liquid glass: thicker frost + glossy sheen on the card and frosted inputs. */
+.kcauth .card{-webkit-backdrop-filter:blur(38px) saturate(185%); backdrop-filter:blur(38px) saturate(185%);
+  background:linear-gradient(150deg, rgba(255,255,255,.16), rgba(255,255,255,.05) 42%, rgba(255,255,255,.02) 100%)}
+.kcauth .card>*{position:relative; z-index:1}
+.kcauth .card:after{content:""; position:absolute; inset:0; border-radius:inherit; pointer-events:none; z-index:0;
+  background:radial-gradient(130% 90% at 12% -12%, rgba(255,255,255,.28), rgba(255,255,255,0) 46%), linear-gradient(180deg, rgba(255,255,255,.1), rgba(255,255,255,0) 20%); opacity:.8}
+.kcauth .field input{background:rgba(255,255,255,.06); border-color:rgba(140,160,220,.22);
+  -webkit-backdrop-filter:blur(10px) saturate(1.4); backdrop-filter:blur(10px) saturate(1.4)}
+.kcauth .field input:focus{background:rgba(255,255,255,.1); box-shadow:0 0 0 4px rgba(124,92,255,.18), inset 0 1px 0 rgba(255,255,255,.25)}
 `;
 
 function I({ d, c }) { return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">{c || <path d={d} />}</svg>; }
