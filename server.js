@@ -65,6 +65,17 @@ async function q(text, params) {
   return pool.query(text, params);
 }
 
+// Apply newer idempotent columns at boot so the live DB stays current without a manual
+// `npm run db:init` after each deploy. Safe to run every start (add column if not exists).
+async function ensureSchema() {
+  if (!dbOn) return;
+  try {
+    await q("alter table users add column if not exists reset_token text");
+    await q("alter table users add column if not exists reset_sent_at timestamptz");
+    await q("create index if not exists users_reset_token_idx on users (reset_token)");
+  } catch (e) { console.error("ensureSchema:", e.message); }
+}
+
 // ── Allowlist (mirrors the proxy) — optional lock-down to a domain / exact emails ──
 // Registration/sign-in is locked to a single email domain. Defaults to karmastaff.com
 // so the app is never open to the public even if the env var is unset; override with
@@ -93,6 +104,7 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
 const RESEND_FROM = process.env.RESEND_FROM || "Karma Connect <noreply@karmastaff.com>";
 const emailVerifyOn = !!RESEND_API_KEY;
 const VERIFY_TTL_HOURS = 24;
+const RESET_TTL_HOURS = 1; // password-reset links expire fast
 
 // Public base URL for links in emails. Prefer APP_URL; otherwise derive from the request
 // (honours Render's x-forwarded-proto so links are https in production).
@@ -118,6 +130,26 @@ async function sendVerificationEmail(email, firstName, link) {
     method: "POST",
     headers: { Authorization: "Bearer " + RESEND_API_KEY, "Content-Type": "application/json" },
     body: JSON.stringify({ from: RESEND_FROM, to: [email], subject: "Confirm your email for Karma Connect", html }),
+  });
+  if (!r.ok) { const t = await r.text().catch(() => ""); throw new Error("Resend " + r.status + ": " + t); }
+}
+
+async function sendResetEmail(email, firstName, link) {
+  const hi = firstName ? "Hi " + escapeHtml(firstName) + "," : "Hi,";
+  const html = `<div style="font-family:Inter,Segoe UI,Arial,sans-serif;max-width:480px;margin:0 auto;color:#0b2545">
+    <h2 style="color:#0b2545">Reset your password</h2>
+    <p>${hi}</p>
+    <p>We received a request to reset your Karma Connect password. Click below to choose a new one.</p>
+    <p style="margin:28px 0">
+      <a href="${link}" style="background:#E7B74B;color:#071226;text-decoration:none;font-weight:700;padding:12px 22px;border-radius:10px;display:inline-block">Set a new password</a>
+    </p>
+    <p style="font-size:12px;color:#667">Or paste this link into your browser:<br><a href="${link}">${link}</a></p>
+    <p style="font-size:12px;color:#667">This link expires in ${RESET_TTL_HOURS} hour. If you didn't request this, you can safely ignore this email — your password won't change.</p>
+  </div>`;
+  const r = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { Authorization: "Bearer " + RESEND_API_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({ from: RESEND_FROM, to: [email], subject: "Reset your Karma Connect password", html }),
   });
   if (!r.ok) { const t = await r.text().catch(() => ""); throw new Error("Resend " + r.status + ": " + t); }
 }
@@ -186,6 +218,8 @@ const reqEmail = (req) => String((req.body && req.body.email) || "").toLowerCase
 const signinLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 12, message: "Too many sign-in attempts. Please wait a few minutes and try again.", keyFn: (req) => "signin:" + req.ip + ":" + reqEmail(req) });
 const signupLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 8, message: "Too many sign-up attempts from this network. Please try again later.", keyFn: (req) => "signup:" + req.ip });
 const resendLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 6, message: "Too many requests. Please try again later.", keyFn: (req) => "resend:" + req.ip + ":" + reqEmail(req) });
+const forgotLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 6, message: "Too many reset requests. Please try again later.", keyFn: (req) => "forgot:" + req.ip + ":" + reqEmail(req) });
+const resetLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 15, message: "Too many attempts. Please try again later.", keyFn: (req) => "reset:" + req.ip });
 
 // A real bcrypt hash to compare against when the email doesn't exist, so a missing-user
 // sign-in takes the same time as a real one (no timing-based account enumeration — L3).
@@ -328,6 +362,46 @@ app.post("/api/auth/resend", resendLimiter, async (req, res) => {
     await sendVerificationEmail(email, user.first_name, baseUrl(req) + "/api/auth/verify?token=" + token).catch(() => {});
     return done();
   } catch (e) { return done(); }
+});
+
+// Request a password reset. Always replies the same way (don't reveal whether the email
+// exists). Sends a one-time reset link via Resend when the account is found.
+app.post("/api/auth/forgot", forgotLimiter, async (req, res) => {
+  const done = () => res.json({ ok: true, message: "If an account exists for that email, a password reset link is on its way." });
+  try {
+    if (!emailVerifyOn) return res.status(503).json({ error: { message: "Password reset isn't available — email isn't configured. Contact your administrator." } });
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    if (!EMAIL_RE.test(email) || !emailAllowed(email)) return done();
+    const { rows } = await q("select id, first_name from users where email = $1", [email]);
+    const user = rows[0];
+    if (!user) return done();
+    const token = crypto.randomBytes(32).toString("hex");
+    await q("update users set reset_token = $1, reset_sent_at = now() where id = $2", [token, user.id]);
+    await sendResetEmail(email, user.first_name, baseUrl(req) + "/?reset=" + token).catch(() => {});
+    return done();
+  } catch (e) { return done(); }
+});
+
+// Complete a password reset: set a new password from a valid, unexpired token, then log in.
+// Proving control of the emailed link also confirms the email address.
+app.post("/api/auth/reset", resetLimiter, async (req, res) => {
+  try {
+    if (!JWT_SECRET) return res.status(500).json({ error: { message: "Server not configured (missing AUTH_JWT_SECRET)." } });
+    const token = String(req.body?.token || "");
+    const password = String(req.body?.password || "");
+    if (!token) return res.status(400).json({ error: { message: "Missing or invalid reset link." } });
+    if (password.length < 8) return res.status(400).json({ error: { message: "Use a password of at least 8 characters." } });
+    const hash = await bcrypt.hash(password, 12);
+    const { rows } = await q(
+      `update users set password_hash = $1, reset_token = null, email_verified = true
+        where reset_token = $2 and reset_sent_at > now() - interval '${RESET_TTL_HOURS} hour'
+        returning *`,
+      [hash, token],
+    );
+    const user = rows[0];
+    if (!user) return res.status(400).json({ error: { message: "This reset link is invalid or has expired. Request a new one." } });
+    res.json({ token: tokenFor(user), user: publicUser(user) });
+  } catch (e) { res.status(500).json({ error: { message: "Could not reset the password. Try again." } }); }
 });
 
 app.get("/api/auth/me", requireUser, async (req, res) => {
@@ -495,6 +569,8 @@ if (!DEV) {
     res.sendFile(path.join(dist, "index.html"));
   });
 }
+
+ensureSchema(); // apply idempotent column migrations on boot
 
 const server = app.listen(PORT, () => {
   console.log(`Karma Connect server on :${PORT} (${DEV ? "dev" : "prod"}, db=${dbOn ? "on" : "OFF"})`);

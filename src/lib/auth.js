@@ -57,6 +57,19 @@ export async function resendVerification(email) {
   return post("/api/auth/resend", { email });
 }
 
+// Request a password-reset email (server replies uniformly whether or not the account exists).
+export async function requestPasswordReset(email) {
+  return post("/api/auth/forgot", { email });
+}
+
+// Complete a reset with the emailed token + a new password. On success the server returns a
+// session token and we log straight in.
+export async function resetPassword(token, password) {
+  const data = await post("/api/auth/reset", { token, password });
+  if (data.token) setSession(data);
+  return data;
+}
+
 export async function signIn({ email, password }) {
   const data = await post("/api/auth/signin", { email, password });
   setSession(data);

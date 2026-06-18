@@ -34,6 +34,11 @@ create index if not exists users_verify_token_idx on users (verify_token);
 -- be made admin via the ADMIN_EMAILS config list, independent of this column).
 alter table users add column if not exists is_admin boolean not null default false;
 
+-- Password reset (Resend). Same one-time-token pattern as email verification.
+alter table users add column if not exists reset_token   text;
+alter table users add column if not exists reset_sent_at timestamptz;
+create index if not exists users_reset_token_idx on users (reset_token);
+
 -- ─────────────────────────────────────────────────────────────────────────────
 -- prospects: a saved prospect snapshot (the app's "History"). `data` holds the full
 -- snapshot (prospect fields, analysis, generated messages, favorites, sender, offer).

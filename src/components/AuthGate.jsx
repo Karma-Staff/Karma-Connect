@@ -1,5 +1,5 @@
 import { useState, useEffect, cloneElement } from "react";
-import { signIn, signUp, signOut, currentUser, onAuthChange, refreshUser, authAvailable, resendVerification } from "../lib/auth.js";
+import { signIn, signUp, signOut, currentUser, onAuthChange, refreshUser, authAvailable, resendVerification, requestPasswordReset, resetPassword } from "../lib/auth.js";
 import { hasPassword, setPassword as setLocalPw, verifyPassword, clearPassword } from "../lib/localpass.js";
 import { KarmaMark } from "./icons.jsx";
 
@@ -175,6 +175,7 @@ export function AuthGate({ children }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [showResend, setShowResend] = useState(false);
+  const [resetToken, setResetToken] = useState(""); // set from a ?reset=<token> email link
   // Cinematic handshake intro — plays whenever the login screen loads; click to skip.
   const [intro, setIntro] = useState(true);
   // Use /login-intro.mp4 if present; otherwise fall back to the silhouette animation.
@@ -197,6 +198,15 @@ export function AuthGate({ children }) {
     if (v == null) return;
     if (v === "1") setNotice("Email confirmed. You can sign in now.");
     else { setErr("That confirmation link is invalid or has expired. Sign in to get a new one."); setShowResend(true); }
+    try { window.history.replaceState({}, "", window.location.pathname); } catch (e) {}
+  }, []);
+
+  // After a password-reset email link redirects back with ?reset=<token>, show the set-new-password form.
+  useEffect(() => {
+    let t;
+    try { t = new URLSearchParams(window.location.search).get("reset"); } catch (e) { return; }
+    if (!t) return;
+    setResetToken(t);
     try { window.history.replaceState({}, "", window.location.pathname); } catch (e) {}
   }, []);
 
@@ -295,11 +305,73 @@ export function AuthGate({ children }) {
       clearPassword(addr); setPassword(""); setPassword2(""); setNotice("Password cleared. Set a new one below.");
       return;
     }
-    setNotice("Password reset isn't enabled yet — contact your administrator to reset it.");
+    if (!EMAIL_RE.test(addr)) { setErr("Enter your email first, then tap Forgot password."); return; }
+    setBusy(true);
+    try {
+      const r = await requestPasswordReset(addr);
+      setNotice((r && r.message) || "If an account exists for that email, a password reset link is on its way.");
+    } catch (e) {
+      setErr((e && e.message) || "Could not start a reset right now. Try again in a moment.");
+    }
+    setBusy(false);
+  }
+
+  // Submit the set-new-password form (reached via the emailed ?reset link).
+  async function handleReset(e) {
+    e.preventDefault();
+    setErr(""); setNotice("");
+    if (!password || password.length < 8) { setErr("Use a password of at least 8 characters."); return; }
+    if (password !== password2) { setErr("The two passwords don't match."); return; }
+    setBusy(true);
+    try {
+      await resetPassword(resetToken, password);
+      // resetPassword logs us in (onAuthChange flips the gate); clear the token to be safe.
+      setResetToken("");
+    } catch (e2) {
+      setErr((e2 && e2.message) || "Could not reset the password. The link may have expired — request a new one.");
+    }
+    setBusy(false);
   }
 
   if (authMode === undefined) {
     return <div className="kcauth"><style>{AUTH_CSS}</style><p style={{ color: "#9aa7c4" }}>Loading…</p></div>;
+  }
+
+  // Set-new-password screen, reached from the emailed reset link (?reset=<token>).
+  if (remote && resetToken) {
+    return (
+      <div className="kcauth">
+        <style>{AUTH_CSS}</style>
+        <Backdrop />
+        <div className="center">
+          <div className="brand">
+            <div className="mk"><KarmaMark color="#fff" w={28} /></div>
+            <h1>Karma <b>Connect</b></h1>
+            <p>AI-Powered Prospect Intelligence</p>
+          </div>
+          <div className="card">
+            <h2>Set a new password</h2>
+            <div className="sub">Choose a new password for your account. You'll be signed in right after.</div>
+            <form onSubmit={handleReset}>
+              <label>New password</label>
+              <div className="field">
+                <span className="ic">{LockIc}</span>
+                <input type={showPw ? "text" : "password"} autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="At least 8 characters" />
+                <button type="button" className="eye" onClick={() => setShowPw((v) => !v)} aria-label={showPw ? "Hide password" : "Show password"}>{showPw ? EyeOffIc : EyeIc}</button>
+              </div>
+              <label>Confirm new password</label>
+              <div className="field"><span className="ic">{LockIc}</span><input type={showPw ? "text" : "password"} autoComplete="new-password" value={password2} onChange={(e) => setPassword2(e.target.value)} placeholder="Re-enter your new password" /></div>
+              <button className="cta" type="submit" disabled={busy}>{busy ? "Working…" : "Reset password"}</button>
+              {err && <p className="msg err">{err}</p>}
+              {notice && <p className="msg ok">{notice}</p>}
+            </form>
+            <div className="foot">
+              <button type="button" className="lk" onClick={() => { setResetToken(""); setPassword(""); setPassword2(""); setErr(""); setNotice(""); }}>Back to sign in</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
