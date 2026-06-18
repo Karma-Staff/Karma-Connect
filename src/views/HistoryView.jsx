@@ -1,5 +1,6 @@
-// Saved-prospects list with search, pipeline-status filter, and a per-lead status dropdown.
+// Saved-prospects list with search, pipeline-status filter, and a per-lead status picker.
 // Presentational: all state + actions come in as props.
+import { useState, useRef, useEffect } from "react";
 import { Ic } from "../components/icons.jsx";
 
 export const LEAD_STATUSES = [
@@ -11,6 +12,45 @@ export const LEAD_STATUSES = [
   { v: "lost", label: "Lost", color: "#e24a4a" },
 ];
 const META = Object.fromEntries(LEAD_STATUSES.map((s) => [s.v, s]));
+
+// Themed dropdown to match the dark/glass UI (a native <select> renders an unstyled
+// white OS popup that can't be themed). Closes on outside-click or Escape.
+function StatusPicker({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const cur = META[value] || META.new;
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const onKey = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("mousedown", onDoc); document.removeEventListener("keydown", onKey); };
+  }, [open]);
+  return (
+    <div className={"statuspick" + (open ? " open" : "")} ref={ref}>
+      <button type="button" className="statuspick-btn" onClick={() => setOpen((o) => !o)}
+        style={{ color: cur.color, borderColor: cur.color + "66", background: cur.color + "1f" }} aria-haspopup="listbox" aria-expanded={open}>
+        <span className="dot" style={{ background: cur.color }} />
+        {cur.label}
+        <svg className="chev" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M6 9l6 6 6-6" /></svg>
+      </button>
+      {open && (
+        <div className="statuspick-menu" role="listbox">
+          {LEAD_STATUSES.map((s) => (
+            <button type="button" key={s.v} role="option" aria-selected={s.v === value}
+              className={"statuspick-opt" + (s.v === value ? " on" : "")}
+              onClick={() => { onChange(s.v); setOpen(false); }}>
+              <span className="dot" style={{ background: s.color, boxShadow: "0 0 8px " + s.color }} />
+              {s.label}
+              {s.v === value && <span className="tick">✓</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function HistoryView({ history, historyMore, onOpen, onDelete, onLoadMore, onGoHub, askConfirm, query, status, onSearch, onFilter, onSetStatus }) {
   return (
@@ -60,10 +100,7 @@ export function HistoryView({ history, historyMore, onOpen, onDelete, onLoadMore
                 </div>
                 <div className="mact" style={{ alignItems: "center", gap: 8 }}>
                   <label style={{ fontSize: 11, color: "var(--faint)" }}>Stage</label>
-                  <select value={h.status || "new"} onChange={(e) => onSetStatus(h.id, e.target.value)}
-                    style={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, padding: "5px 8px", color: "var(--text)", fontSize: 12 }}>
-                    {LEAD_STATUSES.map((s) => <option key={s.v} value={s.v}>{s.label}</option>)}
-                  </select>
+                  <StatusPicker value={h.status || "new"} onChange={(v) => onSetStatus(h.id, v)} />
                   <button className="iconbtn" onClick={() => onOpen(h)} style={{ marginLeft: "auto" }}>Open</button>
                   <button className="iconbtn" onClick={() => askConfirm({ title: "Remove from history?", message: "Remove " + (h.label || "this prospect") + " and everything saved for them. This can't be undone.", confirmLabel: "Delete", danger: true, onConfirm: () => onDelete(h.id) })}>Delete</button>
                 </div>

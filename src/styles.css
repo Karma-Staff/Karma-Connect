@@ -447,3 +447,30 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
 /* Glassier ghost buttons + sidebar. */
 .kc .btn.ghost{background:rgba(255,255,255,.09)}
 .kc .side{background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(7,24,85,.20)); box-shadow:inset -1px 0 0 rgba(255,255,255,.08), 0 0 60px -20px rgba(0,0,0,.6)}
+
+/* Themed lead-status picker (replaces the unstyleable native <select> popup) */
+.kc .statuspick{position:relative; display:inline-block}
+.kc .statuspick-btn{display:inline-flex; align-items:center; gap:7px; font-size:12px; font-weight:700;
+  border-radius:999px; padding:5px 11px 5px 10px; border:1px solid; cursor:pointer; line-height:1;
+  transition:filter .15s ease, box-shadow .15s ease}
+.kc .statuspick-btn:hover{filter:brightness(1.18)}
+.kc .statuspick.open .statuspick-btn{box-shadow:0 0 0 3px rgba(124,92,255,.18)}
+.kc .statuspick-btn .dot{width:7px; height:7px; border-radius:50%; flex:0 0 auto}
+.kc .statuspick-btn .chev{opacity:.75; margin-left:2px; transition:transform .18s ease}
+.kc .statuspick.open .statuspick-btn .chev{transform:rotate(180deg)}
+.kc .statuspick-menu{position:absolute; z-index:40; top:calc(100% + 7px); left:0; min-width:172px; padding:6px;
+  background:rgba(10,24,50,.97); border:1px solid var(--border2); border-radius:14px;
+  backdrop-filter:blur(22px) saturate(1.7); -webkit-backdrop-filter:blur(22px) saturate(1.7);
+  box-shadow:0 26px 64px -20px rgba(0,0,0,.85), inset 0 1px 0 rgba(255,255,255,.08);
+  animation:statuspop .14s ease both; transform-origin:top left}
+@keyframes statuspop{from{opacity:0; transform:translateY(-6px) scale(.97)} to{opacity:1; transform:none}}
+.kc .statuspick-opt{display:flex; align-items:center; gap:9px; width:100%; text-align:left; cursor:pointer;
+  background:none; border:none; color:var(--text); font-size:12.5px; font-weight:600;
+  padding:8px 10px; border-radius:9px; transition:background .12s ease}
+.kc .statuspick-opt .dot{width:8px; height:8px; border-radius:50%; flex:0 0 auto}
+.kc .statuspick-opt:hover{background:rgba(124,150,210,.14)}
+.kc .statuspick-opt.on{background:rgba(124,92,255,.16)}
+.kc .statuspick-opt .tick{margin-left:auto; color:var(--ai2); font-weight:800}
+/* Lift the card whose picker is open so the menu floats above neighbouring cards */
+.kc .mcard{position:relative}
+.kc .mcard:has(.statuspick.open){z-index:30}
