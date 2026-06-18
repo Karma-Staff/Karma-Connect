@@ -6,7 +6,7 @@ import { safeJSON } from "./lib/json.js";
 import { cleanMessages, stripLinkedInNoise } from "./lib/text.js";
 import {
   COMPANY_SYSTEM, companyResearchPrompt, buildContext,
-  pAnalysis, pConnection, pRelationship, pMeeting, pFollowup,
+  pAnalysis, pConnection, pRelationship, pMeeting, pFollowup, pFollowupSequence,
   STAGES_ANALYZE, STAGES_GEN, FOLLOWUP_STAGES,
 } from "./lib/prompts.js";
 import { KarmaMark, Ic, CopyIc, StarIc } from "./components/icons.jsx";
@@ -53,14 +53,15 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   const [parseMsg, setParseMsg] = useState("");
   const [parseErr, setParseErr] = useState("");
   const [analysis, setAnalysis] = useState(saved.analysis || null);
-  const [results, setResults] = useState(saved.results || { connection: [], relationship: [], meeting_short: [], meeting_standard: [], meeting_executive: [], followup: [] });
+  const [results, setResults] = useState(saved.results || { connection: [], relationship: [], meeting_short: [], meeting_standard: [], meeting_executive: [], followup: [], followupSeq: [] });
   const [loading, setLoading] = useState({});
   const [errors, setErrors] = useState({});
   const [regen, setRegen] = useState({});
   const [favs, setFavs] = useState(saved.favs || {});
   const [meetLen, setMeetLen] = useState(saved.meetLen || "standard");
   const [prospectReply, setProspectReply] = useState(saved.prospectReply || "");
-  const [fuStage, setFuStage] = useState(saved.fuStage || "post_meeting"); // follow-up stage
+  const [fuMode, setFuMode] = useState(saved.fuMode || "sequence"); // "sequence" (LinkedIn 5-step) | "email" (after-meeting)
+  const [fuStage, setFuStage] = useState(saved.fuStage || "post_meeting"); // follow-up stage (email mode)
   const [transcript, setTranscript] = useState(saved.transcript || "");    // call/meeting transcript
   const [toast, setToast] = useState("");
   const [exportingBrief, setExportingBrief] = useState(false);
@@ -118,9 +119,9 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   // Persist work to localStorage so a refresh never loses (or re-bills) it.
   useEffect(() => {
     try {
-      localStorage.setItem(STATE_KEY, JSON.stringify({ view, prospect, sender, offer, coUrl, analysis, results, favs, meetLen, prospectReply, fuStage, transcript, currentEntryId }));
+      localStorage.setItem(STATE_KEY, JSON.stringify({ view, prospect, sender, offer, coUrl, analysis, results, favs, meetLen, prospectReply, fuMode, fuStage, transcript, currentEntryId }));
     } catch (e) {}
-  }, [view, prospect, sender, offer, coUrl, analysis, results, favs, meetLen, prospectReply, fuStage, transcript, currentEntryId, STATE_KEY]);
+  }, [view, prospect, sender, offer, coUrl, analysis, results, favs, meetLen, prospectReply, fuMode, fuStage, transcript, currentEntryId, STATE_KEY]);
 
   // Auto-save the current prospect to history once analysis has run, then keep it in sync
   // (debounced) as messages are generated/edited. No manual "Save" needed.
@@ -159,8 +160,8 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   function doReset() {
     setProspect({ ...EMPTY_PROSPECT });
     setAnalysis(null);
-    setResults({ connection: [], relationship: [], meeting_short: [], meeting_standard: [], meeting_executive: [], followup: [] });
-    setFavs({}); setCoUrl(""); setRawPaste(""); setProspectReply(""); setTranscript(""); setFuStage("post_meeting"); setView("hub");
+    setResults({ connection: [], relationship: [], meeting_short: [], meeting_standard: [], meeting_executive: [], followup: [], followupSeq: [] });
+    setFavs({}); setCoUrl(""); setRawPaste(""); setProspectReply(""); setTranscript(""); setFuMode("sequence"); setFuStage("post_meeting"); setView("hub");
     setEnrichMsg(""); setEnrichErr(""); setParseMsg(""); setParseErr("");
     setCurrentEntryId(null);
     showToast("Cleared. Ready for a new prospect.");
@@ -178,7 +179,7 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
     const label = [prospect.firstName, prospect.lastName].filter(Boolean).join(" ") || prospect.company || "Untitled";
     const sub = [prospect.title, prospect.company].filter(Boolean).join(" · ");
     const status = (history.find((h) => h.id === id) || {}).status || "new"; // keep the lead's stage
-    const entry = { id, label, sub, status, savedAt: new Date().toISOString(), snapshot: { prospect, sender, offer, coUrl, analysis, results, favs, meetLen, prospectReply, fuStage, transcript } };
+    const entry = { id, label, sub, status, savedAt: new Date().toISOString(), snapshot: { prospect, sender, offer, coUrl, analysis, results, favs, meetLen, prospectReply, fuMode, fuStage, transcript } };
     setHistory((cur) => [entry, ...cur.filter((h) => h.id !== id)]);
     writeHistory(userEmail, [entry]);
   }
@@ -213,10 +214,11 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
     setOffer(s.offer || senderOffer(SENDERS[0]));
     setCoUrl(s.coUrl || "");
     setAnalysis(s.analysis || null);
-    setResults(s.results || { connection: [], relationship: [], meeting_short: [], meeting_standard: [], meeting_executive: [], followup: [] });
+    setResults(s.results || { connection: [], relationship: [], meeting_short: [], meeting_standard: [], meeting_executive: [], followup: [], followupSeq: [] });
     setFavs(s.favs || {});
     setMeetLen(s.meetLen || "standard");
     setProspectReply(s.prospectReply || "");
+    setFuMode(s.fuMode || "sequence");
     setFuStage(s.fuStage || "post_meeting");
     setTranscript(s.transcript || "");
     setCurrentEntryId(entry.id);
@@ -428,7 +430,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
   }
   async function generate(kind) {
     // Approval gate: don't spend on locked engines until an admin approves this lead.
-    const baseKind = kind.indexOf("meeting_") === 0 ? "meeting" : kind;
+    const baseKind = kind.indexOf("meeting_") === 0 ? "meeting" : kind === "followupSeq" ? "followup" : kind;
     if (APPROVAL_ENGINES.includes(baseKind) && !leadApproved) { showToast("An admin must approve this lead first."); return; }
     setLoading((l) => ({ ...l, [kind]: true })); setErrors((e) => ({ ...e, [kind]: null })); setResults((r) => ({ ...r, [kind]: [] }));
     try {
@@ -439,6 +441,11 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
         arr = arr.filter((x) => x && x.message); arr = cleanMessages(arr);
         if (!arr.length) throw new Error("No email came back. Please try again.");
         setResults((r) => ({ ...r, followup: arr }));
+      } else if (kind === "followupSeq") {
+        const txt = await callClaude(SYSTEM, pFollowupSequence(buildContext(prospect, offer, analysis, "")), false, 2800);
+        let arr = safeJSON(txt); if (!Array.isArray(arr)) arr = [arr]; arr = cleanMessages(arr);
+        if (!arr.length) throw new Error("No sequence came back. Please try again.");
+        setResults((r) => ({ ...r, followupSeq: arr }));
       } else {
         const target = TARGET[kind] || 3;
         const isMeeting = kind.indexOf("meeting_") === 0;
@@ -484,7 +491,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
     { id: "connection", label: "Connection Requests", ic: Ic.conn, gate: true, count: results.connection.length },
     { id: "relationship", label: "Relationship Builder", ic: Ic.rel, gate: true, count: results.relationship.length },
     { id: "meeting", label: "Meeting Requests", ic: Ic.meet, gate: true },
-    { id: "followup", label: "Follow-up Engine", ic: Ic.fup, gate: true, count: results.followup.length },
+    { id: "followup", label: "Follow-up Engine", ic: Ic.fup, gate: true, count: results.followup.length + results.followupSeq.length },
     { id: "history", label: "History", ic: Ic.hist, count: history.length },
     { id: "board", label: "Board", ic: Ic.board },
     { id: "reminders", label: "Reminders", ic: Ic.fup, count: remindersDue },
@@ -953,8 +960,45 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
 
           {view === "followup" && (engineLocked("followup") ? <ApprovalGate title="Follow-up Engine" /> : (
             <div>
-              <div className="head"><div className="eyebrow">Section 04 · Follow-up</div><h2>Follow-up engine</h2><p>Pick the stage you're at and generate one tailored email. Paste your call or meeting transcript for a sharper message that references what was actually said.</p></div>
+              <div className="head"><div className="eyebrow">Section 04 · Follow-up</div><h2>Follow-up engine</h2><p>Two ways to follow up: a 5-step LinkedIn sequence for when there's no reply yet, or a stage-aware email after a meeting.</p></div>
               <ProspectStrip />
+              <div className="seg" style={{ marginBottom: 18 }}>
+                <button className={fuMode === "sequence" ? "on" : ""} onClick={() => setFuMode("sequence")}>LinkedIn sequence</button>
+                <button className={fuMode === "email" ? "on" : ""} onClick={() => setFuMode("email")}>After-meeting email</button>
+              </div>
+
+              {fuMode === "sequence" ? (
+                <>
+                  <div className="toprow">
+                    <button className="btn primary" onClick={() => generate("followupSeq")} disabled={loading.followupSeq}>{loading.followupSeq ? "Generating…" : (results.followupSeq.length ? "Regenerate sequence" : "Generate 5-step sequence")}</button>
+                    <span style={{ color: "var(--muted)", fontSize: 13 }}>A no-reply sequence — each step introduces something new, never "just checking in".</span>
+                  </div>
+                  {errors.followupSeq && <div className="err" style={{ marginTop: 16 }}>⚠ {errors.followupSeq}</div>}
+                  {loading.followupSeq && <div className="panel" style={{ marginTop: 16 }}><Loader stages={STAGES_GEN} /></div>}
+                  {!loading.followupSeq && results.followupSeq.length === 0 && !errors.followupSeq && (
+                    <div className="empty" style={{ marginTop: 16 }}><div className="eic">{Ic.fup}</div><h3>No sequence yet</h3><p>Generate a 5-step follow-up sequence tailored to {name}.</p><button className="btn primary" onClick={() => generate("followupSeq")}>Generate sequence</button></div>
+                  )}
+                  {results.followupSeq.length > 0 && (
+                    <div className="tline" style={{ marginTop: 16 }}>
+                      {results.followupSeq.map((st, i) => { const kind = "followupSeq"; return (
+                        <div className="titem" key={i}>
+                          <div className="mcard">
+                            <div className="mctop"><span className="chip idx">{i + 1}</span><span className="stagehd">{st.stage}</span></div>
+                            <div className="mbody" style={{ whiteSpace: "pre-wrap" }}>{st.message}</div>
+                            {st.fresh && <div className="reason"><b>New angle</b> · {st.fresh}</div>}
+                            {st.reasoning && <div className="reason"><b>AI Coach</b> · {st.reasoning}</div>}
+                            <div className="mact">
+                              <button className="iconbtn" onClick={() => copy(st.message)}>{CopyIc} Copy</button>
+                              <button className={"iconbtn fav" + (favs[favKey(kind, i, st.message)] ? " on" : "")} onClick={() => toggleFav(kind, i, st.message)} aria-label={favs[favKey(kind, i, st.message)] ? "Remove from favorites" : "Add to favorites"} aria-pressed={!!favs[favKey(kind, i, st.message)]} style={{ marginLeft: "auto" }}>{StarIc(!!favs[favKey(kind, i, st.message)])}</button>
+                            </div>
+                          </div>
+                        </div>
+                      ); })}
+                    </div>
+                  )}
+                </>
+              ) : (
+              <>
               <div className="panel" style={{ marginBottom: 20 }}>
                 <div className="sect-title">Which stage are you at?</div>
                 <div className="fustages">
@@ -992,6 +1036,8 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
                   </div>
                 </div>
               ); })}
+              </>
+              )}
             </div>
           ))}
 

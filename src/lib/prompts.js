@@ -119,6 +119,29 @@ export const FOLLOWUP_STAGES = [
   { v: "closing", label: "Closing the deal", intent: "They've confirmed they'll go ahead with the candidate from a specific start date. Confirm the details and next steps and close the engagement professionally and warmly." },
 ];
 
+// The original 5-step LinkedIn follow-up sequence (for when there's no reply yet).
+export function pFollowupSequence(base) {
+  return base + `\nTASK: No reply after the meeting request. Write a 5-step FOLLOW-UP SEQUENCE. Each step MUST introduce something genuinely NEW — never repeat earlier messages, never use "just checking in" / "following up" / "circling back".
+
+Steps (in order): 1) Gentle reminder  2) New insight  3) Different angle  4) Industry-specific observation  5) Respectful close-out (graceful, no guilt).
+
+MANDATORY FORMAT for every step — follow this exact structure:
+Hi [prospect first name],
+
+[body — 2-3 sentences, something genuinely new each time]
+
+[CALENDAR LINK from sender section on its own line — include on steps 1 through 4 only, omit on step 5 close-out]
+
+Best,
+[SIGN-OFF NAME from sender section]
+[EMAIL from sender section]
+www.karmastaff.com
+
+${HUMANIZE}
+${ARR} EXACTLY 5 objects in order:
+[{"stage":"Gentle reminder","message":"the full formatted message","fresh":"the new element introduced","reasoning":"why it works"}]`;
+}
+
 export function pFollowup(base, stage, transcript) {
   const s = stage || FOLLOWUP_STAGES[0];
   const hasT = transcript && transcript.trim();
