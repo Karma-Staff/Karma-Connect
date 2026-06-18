@@ -63,7 +63,7 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   const [favs, setFavs] = useState(saved.favs || {});
   const [meetLen, setMeetLen] = useState(saved.meetLen || "standard");
   const [prospectReply, setProspectReply] = useState(saved.prospectReply || "");
-  const [fuMode, setFuMode] = useState(saved.fuMode || "sequence"); // "sequence" (LinkedIn 5-step) | "email" (after-meeting)
+  const [fuMode, setFuMode] = useState(saved.fuMode || "sequence"); // "sequence" (LinkedIn 5-step) | "email" (after-meeting, admin-only)
   const [fuStage, setFuStage] = useState(saved.fuStage || "post_meeting"); // follow-up stage (email mode)
   const [transcript, setTranscript] = useState(saved.transcript || "");    // call/meeting transcript
   const [toast, setToast] = useState("");
@@ -90,6 +90,8 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   const leadStatus = currentEntryId ? approvals[currentEntryId] : undefined;
   const leadApproved = isAdmin || leadStatus === "approved";
   const engineLocked = (id) => APPROVAL_ENGINES.includes(id) && !leadApproved;
+  // The after-meeting email mode is admin-only; members are always on the LinkedIn sequence.
+  const fuModeEff = isAdmin ? fuMode : "sequence";
 
   // Load saved prospects (server when signed in, else localStorage). Async + paginated, and
   // re-fetches page 0 when the search box / status filter changes (debounced while typing).
@@ -435,6 +437,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
     // Approval gate: don't spend on locked engines until an admin approves this lead.
     const baseKind = kind.indexOf("meeting_") === 0 ? "meeting" : kind === "followupSeq" ? "followup" : kind;
     if (APPROVAL_ENGINES.includes(baseKind) && !leadApproved) { showToast("An admin must approve this lead first."); return; }
+    if (kind === "followup" && !isAdmin) { showToast("The after-meeting email is for admins only."); return; }
     setLoading((l) => ({ ...l, [kind]: true })); setErrors((e) => ({ ...e, [kind]: null })); setResults((r) => ({ ...r, [kind]: [] }));
     try {
       if (kind === "followup") {
@@ -966,11 +969,11 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
               <div className="head"><div className="eyebrow">Section 04 · Follow-up</div><h2>Follow-up engine</h2><p>Two ways to follow up: a 5-step LinkedIn sequence for when there's no reply yet, or a stage-aware email after a meeting.</p></div>
               <ProspectStrip />
               <div className="seg" style={{ marginBottom: 18 }}>
-                <button className={fuMode === "sequence" ? "on" : ""} onClick={() => setFuMode("sequence")}>LinkedIn sequence</button>
-                <button className={fuMode === "email" ? "on" : ""} onClick={() => setFuMode("email")}>After-meeting email</button>
+                <button className={fuModeEff === "sequence" ? "on" : ""} onClick={() => setFuMode("sequence")}>LinkedIn sequence</button>
+                <button className={fuModeEff === "email" ? "on" : ""} onClick={() => (isAdmin ? setFuMode("email") : showToast("The after-meeting email is for admins only."))}>After-meeting email{!isAdmin && " 🔒"}</button>
               </div>
 
-              {fuMode === "sequence" ? (
+              {fuModeEff === "sequence" ? (
                 <>
                   <div className="toprow">
                     <button className="btn primary" onClick={() => generate("followupSeq")} disabled={loading.followupSeq}>{loading.followupSeq ? "Generating…" : (results.followupSeq.length ? "Regenerate sequence" : "Generate 5-step sequence")}</button>
