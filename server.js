@@ -83,6 +83,30 @@ async function ensureSchema() {
       prospect_id text not null, kind text not null default 'note',
       body text not null, created_at timestamptz not null default now())`);
     await q("create index if not exists lead_notes_idx on lead_notes (user_id, prospect_id, created_at desc)");
+    // Indexes for the newer query patterns (status filter, reminders, usage-by-kind).
+    await q("create index if not exists prospects_status_idx on prospects (user_id, status)");
+    await q("create index if not exists prospects_next_action_idx on prospects (user_id, next_action_at)");
+    await q("create index if not exists usage_user_kind_idx on usage (user_id, kind)");
+    // Usage rollup: pre-aggregated per user/day/kind so the dashboard + admin reads never
+    // scan the ever-growing raw `usage` table. Maintained incrementally on each AI call.
+    await q(`create table if not exists usage_daily (
+      user_id uuid not null references users (id) on delete cascade,
+      day date not null,
+      kind text not null default 'ai',
+      input_tokens bigint not null default 0,
+      output_tokens bigint not null default 0,
+      cache_read_tokens bigint not null default 0,
+      cost_usd numeric(14,5) not null default 0,
+      calls integer not null default 0,
+      primary key (user_id, day, kind))`);
+    await q("create index if not exists usage_daily_user_idx on usage_daily (user_id, day)");
+    // One-time backfill from existing raw rows (no-op once the rollup has any data).
+    await q(`insert into usage_daily (user_id, day, kind, input_tokens, output_tokens, cache_read_tokens, cost_usd, calls)
+      select user_id, ts::date, coalesce(kind,'ai'),
+             sum(input_tokens), sum(output_tokens), sum(cache_read_tokens), sum(cost_usd), count(*)
+        from usage where not exists (select 1 from usage_daily)
+       group by user_id, ts::date, coalesce(kind,'ai')
+      on conflict (user_id, day, kind) do nothing`);
   } catch (e) { console.error("ensureSchema:", e.message); }
 }
 
@@ -768,22 +792,23 @@ app.delete("/api/leads/:id/notes/:noteId", requireUser, async (req, res) => {
 // ─────────────────────────────── Usage ──────────────────────────────
 app.get("/api/usage", requireUser, async (req, res) => {
   try {
+    // Reads come from the small pre-aggregated rollup, never the raw usage table.
     const totalsSql = `select coalesce(sum(input_tokens),0)::bigint as input_tokens,
               coalesce(sum(output_tokens),0)::bigint as output_tokens,
               coalesce(sum(cache_read_tokens),0)::bigint as cache_read_tokens,
               coalesce(sum(cost_usd),0)::numeric as cost_usd,
-              count(*)::int as calls
-         from usage where user_id = $1`;
+              coalesce(sum(calls),0)::int as calls
+         from usage_daily where user_id = $1`;
     const monthSql = `select coalesce(sum(input_tokens),0)::bigint as input_tokens,
               coalesce(sum(output_tokens),0)::bigint as output_tokens,
               coalesce(sum(cost_usd),0)::numeric as cost_usd,
-              count(*)::int as calls
-         from usage where user_id = $1 and ts >= date_trunc('month', now())`;
+              coalesce(sum(calls),0)::int as calls
+         from usage_daily where user_id = $1 and day >= date_trunc('month', current_date)`;
     const byKindSql = `select kind,
               coalesce(sum(input_tokens + output_tokens),0)::bigint as tokens,
               coalesce(sum(cost_usd),0)::numeric as cost_usd,
-              count(*)::int as calls
-         from usage where user_id = $1 group by kind order by cost_usd desc`;
+              coalesce(sum(calls),0)::int as calls
+         from usage_daily where user_id = $1 group by kind order by cost_usd desc`;
     const [totals, month, byKind] = await Promise.all([
       q(totalsSql, [req.userId]), q(monthSql, [req.userId]), q(byKindSql, [req.userId]),
     ]);
@@ -794,10 +819,23 @@ app.get("/api/usage", requireUser, async (req, res) => {
 // Persist one usage row (called by the proxy core after a successful Anthropic call).
 async function writeUsageRow(row) {
   if (!dbOn) return;
+  const k = row.kind || "ai";
   await q(
     "insert into usage (user_id, kind, input_tokens, output_tokens, cache_read_tokens, cost_usd) values ($1,$2,$3,$4,$5,$6)",
-    [row.user_id, row.kind, row.input_tokens, row.output_tokens, row.cache_read_tokens, row.cost_usd],
+    [row.user_id, k, row.input_tokens, row.output_tokens, row.cache_read_tokens, row.cost_usd],
   );
+  // Maintain the rollup incrementally so reads never scan the raw table.
+  await q(
+    `insert into usage_daily (user_id, day, kind, input_tokens, output_tokens, cache_read_tokens, cost_usd, calls)
+     values ($1, current_date, $2, $3, $4, $5, $6, 1)
+     on conflict (user_id, day, kind) do update set
+       input_tokens = usage_daily.input_tokens + excluded.input_tokens,
+       output_tokens = usage_daily.output_tokens + excluded.output_tokens,
+       cache_read_tokens = usage_daily.cache_read_tokens + excluded.cache_read_tokens,
+       cost_usd = usage_daily.cost_usd + excluded.cost_usd,
+       calls = usage_daily.calls + 1`,
+    [row.user_id, k, row.input_tokens, row.output_tokens, row.cache_read_tokens, row.cost_usd],
+  ).catch((e) => console.error("usage_daily rollup:", e.message));
 }
 
 // ───────────────────────────── Lead approvals ───────────────────────
@@ -865,8 +903,8 @@ app.get("/api/admin/users", requireUser, requireAdmin, async (req, res) => {
   try {
     const { rows } = await q(
       `select u.id, u.email, u.first_name, u.last_name, u.is_admin, u.email_verified, u.created_at,
-              coalesce(sum(us.cost_usd),0)::numeric as cost_usd, count(us.id)::int as calls
-         from users u left join usage us on us.user_id = u.id
+              coalesce(sum(d.cost_usd),0)::numeric as cost_usd, coalesce(sum(d.calls),0)::int as calls
+         from users u left join usage_daily d on d.user_id = u.id
         group by u.id order by u.created_at desc limit 500`,
     );
     res.json({ users: rows });

@@ -62,6 +62,8 @@ alter table prospects add column if not exists next_action_at   timestamptz;
 alter table prospects add column if not exists next_action_note text;
 
 create index if not exists prospects_user_idx on prospects (user_id, updated_at desc);
+create index if not exists prospects_status_idx on prospects (user_id, status);
+create index if not exists prospects_next_action_idx on prospects (user_id, next_action_at);
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- usage: per-user token/cost accounting. Rows are INSERTED server-side by the proxy.
@@ -78,6 +80,23 @@ create table if not exists usage (
 );
 
 create index if not exists usage_user_idx on usage (user_id, ts desc);
+create index if not exists usage_user_kind_idx on usage (user_id, kind);
+
+-- usage_daily: pre-aggregated rollup (per user/day/kind) maintained incrementally by the
+-- server. The dashboard + admin usage reads hit this small table, never the raw `usage`
+-- table, so those queries stay fast no matter how many AI calls accumulate.
+create table if not exists usage_daily (
+  user_id           uuid not null references users (id) on delete cascade,
+  day               date not null,
+  kind              text not null default 'ai',
+  input_tokens      bigint not null default 0,
+  output_tokens     bigint not null default 0,
+  cache_read_tokens bigint not null default 0,
+  cost_usd          numeric(14,5) not null default 0,
+  calls             integer not null default 0,
+  primary key (user_id, day, kind)
+);
+create index if not exists usage_daily_user_idx on usage_daily (user_id, day);
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- lead_approvals: an admin gate. Members work a lead through connection freely; to unlock
