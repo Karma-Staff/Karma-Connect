@@ -12,6 +12,8 @@ import {
 import { KarmaMark, Ic, CopyIc, StarIc } from "./components/icons.jsx";
 import { Loader } from "./components/Loader.jsx";
 import { MsgCard } from "./components/MsgCard.jsx";
+import { HistoryView } from "./views/HistoryView.jsx";
+import { ApprovalsView } from "./views/ApprovalsView.jsx";
 import { listHistory, writeHistory, deleteHistory, HISTORY_PAGE_SIZE } from "./lib/history.js";
 import { scoreFit } from "./lib/scoring.js";
 import { currentUser } from "./lib/auth.js";
@@ -883,78 +885,19 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
           ))}
 
           {view === "history" && (
-            <div>
-              <div className="head"><div className="eyebrow">Saved prospects</div><h2>History</h2><p>Every prospect you save lands here, tied to your account. Open one to restore the full prospect, analysis, and generated messages, or remove it.</p></div>
-              {history.length === 0 ? (
-                <div className="empty">
-                  <div className="eic">{Ic.hist}</div>
-                  <h3>No saved prospects yet</h3>
-                  <p>Run <b>AI Analysis</b> on a prospect and it's saved here automatically, along with everything you generate for them.</p>
-                  <button className="btn primary" onClick={() => setView("hub")}>Go to Prospect Hub</button>
-                </div>
-              ) : (
-                <div className="grid2">
-                  {history.map((h) => (
-                    <div className="mcard" key={h.id}>
-                      <div className="mctop">
-                        <span className="av" style={{ width: 30, height: 30, borderRadius: 8, background: "var(--grad)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 12, color: "#fff", fontFamily: "'Lora',serif" }}>
-                          {((h.label || "?")[0] || "?").toUpperCase()}
-                        </span>
-                        <div>
-                          <div className="pn" style={{ fontSize: 14, fontWeight: 700 }}>{h.label}</div>
-                          {h.sub && <div className="pr" style={{ fontSize: 11.5, color: "var(--muted)" }}>{h.sub}</div>}
-                        </div>
-                      </div>
-                      <div style={{ fontSize: 11.5, color: "var(--faint)", display: "flex", gap: 12, flexWrap: "wrap" }}>
-                        <span>Saved {new Date(h.savedAt).toLocaleDateString()} {new Date(h.savedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
-                        {h.snapshot?.analysis && <span style={{ color: "#52d39e" }}>Analysis ✓</span>}
-                        {(() => { const r = h.snapshot?.results || {}; const n = Object.values(r).reduce((a, x) => a + (Array.isArray(x) ? x.length : 0), 0); return n ? <span>{n} messages</span> : null; })()}
-                      </div>
-                      <div className="mact">
-                        <button className="iconbtn" onClick={() => loadFromHistory(h)}>Open</button>
-                        <button className="iconbtn" onClick={() => askConfirm({ title: "Remove from history?", message: "Remove " + (h.label || "this prospect") + " and everything saved for them. This can't be undone.", confirmLabel: "Delete", danger: true, onConfirm: () => deleteFromHistory(h.id) })} style={{ marginLeft: "auto" }}>Delete</button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {history.length > 0 && historyMore && (
-                <div className="toprow" style={{ justifyContent: "center", marginTop: 18 }}>
-                  <button className="btn ghost sm" onClick={loadMoreHistory}>Load older</button>
-                </div>
-              )}
-            </div>
+            <HistoryView
+              history={history}
+              historyMore={historyMore}
+              onOpen={loadFromHistory}
+              onDelete={deleteFromHistory}
+              onLoadMore={loadMoreHistory}
+              onGoHub={() => setView("hub")}
+              askConfirm={askConfirm}
+            />
           )}
 
           {view === "approvals" && isAdmin && (
-            <div>
-              <div className="head"><div className="eyebrow">Admin</div><h2>Lead approvals</h2><p>Approve a lead to unlock the Relationship, Meeting and Follow-up engines for the member who requested it. Keeps the advanced (and pricier) stages gated.</p></div>
-              <div className="toprow"><button className="btn ghost sm" onClick={loadAdminList}>Refresh</button></div>
-              {adminList.length === 0 ? (
-                <div className="empty"><div className="eic">{Ic.intel}</div><h3>No requests yet</h3><p>When a member requests approval for a lead, it appears here for you to approve or deny.</p></div>
-              ) : (
-                <div className="grid2">
-                  {adminList.map((a) => (
-                    <div className="mcard" key={a.id}>
-                      <div className="mctop">
-                        <span className={"chip" + (a.status === "approved" ? " idx" : "")}>{a.status}</span>
-                        <span className="stagehd">{a.label || a.prospect_id}</span>
-                      </div>
-                      {a.sub && <div className="pr" style={{ fontSize: 12, color: "var(--muted)" }}>{a.sub}</div>}
-                      <div className="pr" style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>Requested by {a.member_email}</div>
-                      {a.status === "pending" ? (
-                        <div className="mact" style={{ marginTop: 10 }}>
-                          <button className="btn primary sm" onClick={() => doDecide(a.id, "approved")}>Approve</button>
-                          <button className="btn danger sm" onClick={() => doDecide(a.id, "denied")} style={{ marginLeft: 8 }}>Deny</button>
-                        </div>
-                      ) : (
-                        <div className="pr" style={{ fontSize: 12, marginTop: 8, color: a.status === "approved" ? "#52d39e" : "var(--faint)" }}>{a.status}{a.decided_by ? " · by " + a.decided_by : ""}</div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+            <ApprovalsView adminList={adminList} onRefresh={loadAdminList} onDecide={doDecide} />
           )}
           </div>
           <div className="appfoot">
