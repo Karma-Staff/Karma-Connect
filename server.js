@@ -16,8 +16,9 @@ const crypto = require("node:crypto");
 const express = require("express");
 const compression = require("compression");
 const bcrypt = require("bcryptjs");
-const PDFDocument = require("pdfkit");
 const { Pool } = require("pg");
+const { rateLimit } = require("./server/ratelimit.cjs");
+const { streamLeadsPdf, streamProspectBriefPdf } = require("./server/pdf.cjs");
 const { handleClaude, signJWT, verifyJWT, JWT_ISS } = require("./api/_proxy.cjs");
 
 // ── Minimal .env loader (only for local dev; Render injects real env vars) ──
@@ -134,11 +135,8 @@ function isAdminEmail(email) {
 // ── Email verification via Resend (optional, env-gated) ──
 // If RESEND_API_KEY is set, new signups must confirm their email before they can sign in.
 // If it's not configured (e.g. local dev), users are created already-verified (no friction).
-const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
-const RESEND_FROM = process.env.RESEND_FROM || "Karma Connect <noreply@karmastaff.com>";
-const emailVerifyOn = !!RESEND_API_KEY;
-const VERIFY_TTL_HOURS = 24;
-const RESET_TTL_HOURS = 1; // password-reset links expire fast
+// Email senders + verify/reset config (Resend). Required here, after the .env loader above.
+const { emailVerifyOn, VERIFY_TTL_HOURS, RESET_TTL_HOURS, sendVerificationEmail, sendResetEmail } = require("./server/email.cjs");
 
 // Public base URL for links in emails. Prefer APP_URL; otherwise derive from the request
 // (honours Render's x-forwarded-proto so links are https in production).
@@ -148,45 +146,6 @@ function baseUrl(req) {
   return proto + "://" + req.headers.host;
 }
 
-async function sendVerificationEmail(email, firstName, link) {
-  const hi = firstName ? "Hi " + escapeHtml(firstName) + "," : "Hi,";
-  const html = `<div style="font-family:Inter,Segoe UI,Arial,sans-serif;max-width:480px;margin:0 auto;color:#0b2545">
-    <h2 style="color:#0b2545">Confirm your email</h2>
-    <p>${hi}</p>
-    <p>Thanks for creating a Karma Connect account. Please confirm this email address to activate your login.</p>
-    <p style="margin:28px 0">
-      <a href="${link}" style="background:#E7B74B;color:#071226;text-decoration:none;font-weight:700;padding:12px 22px;border-radius:10px;display:inline-block">Confirm my email</a>
-    </p>
-    <p style="font-size:12px;color:#667">Or paste this link into your browser:<br><a href="${link}">${link}</a></p>
-    <p style="font-size:12px;color:#667">This link expires in ${VERIFY_TTL_HOURS} hours. If you didn't create this account, you can ignore this email.</p>
-  </div>`;
-  const r = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: { Authorization: "Bearer " + RESEND_API_KEY, "Content-Type": "application/json" },
-    body: JSON.stringify({ from: RESEND_FROM, to: [email], subject: "Confirm your email for Karma Connect", html }),
-  });
-  if (!r.ok) { const t = await r.text().catch(() => ""); throw new Error("Resend " + r.status + ": " + t); }
-}
-
-async function sendResetEmail(email, firstName, link) {
-  const hi = firstName ? "Hi " + escapeHtml(firstName) + "," : "Hi,";
-  const html = `<div style="font-family:Inter,Segoe UI,Arial,sans-serif;max-width:480px;margin:0 auto;color:#0b2545">
-    <h2 style="color:#0b2545">Reset your password</h2>
-    <p>${hi}</p>
-    <p>We received a request to reset your Karma Connect password. Click below to choose a new one.</p>
-    <p style="margin:28px 0">
-      <a href="${link}" style="background:#E7B74B;color:#071226;text-decoration:none;font-weight:700;padding:12px 22px;border-radius:10px;display:inline-block">Set a new password</a>
-    </p>
-    <p style="font-size:12px;color:#667">Or paste this link into your browser:<br><a href="${link}">${link}</a></p>
-    <p style="font-size:12px;color:#667">This link expires in ${RESET_TTL_HOURS} hour. If you didn't request this, you can safely ignore this email — your password won't change.</p>
-  </div>`;
-  const r = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: { Authorization: "Bearer " + RESEND_API_KEY, "Content-Type": "application/json" },
-    body: JSON.stringify({ from: RESEND_FROM, to: [email], subject: "Reset your Karma Connect password", html }),
-  });
-  if (!r.ok) { const t = await r.text().catch(() => ""); throw new Error("Resend " + r.status + ": " + t); }
-}
 
 const app = express();
 app.disable("x-powered-by");
@@ -227,27 +186,8 @@ app.use("/api/claude", express.text({ type: () => true, limit: "4mb" }));
 // Everything else is JSON.
 app.use(express.json({ limit: "2mb" }));
 
-// ── Lightweight in-memory rate limiter for the auth endpoints (M2) ──
-// Single-instance friendly (one Render dyno). Throttles online password brute-force and
-// signup/resend abuse (which would otherwise spam Resend). Runs after express.json, so
-// req.body is available to the key function.
-const rlStore = new Map(); // key -> { count, resetAt }
-function rateLimit({ windowMs, max, keyFn, message }) {
-  return (req, res, next) => {
-    const now = Date.now();
-    const key = keyFn(req);
-    let e = rlStore.get(key);
-    if (!e || now > e.resetAt) { e = { count: 0, resetAt: now + windowMs }; rlStore.set(key, e); }
-    e.count++;
-    if (e.count > max) {
-      res.setHeader("Retry-After", String(Math.ceil((e.resetAt - now) / 1000)));
-      return res.status(429).json({ error: { message: message || "Too many requests. Please slow down and try again shortly." } });
-    }
-    next();
-  };
-}
-setInterval(() => { const now = Date.now(); for (const [k, e] of rlStore) if (now > e.resetAt) rlStore.delete(k); }, 60000).unref();
-
+// Rate limiters for the auth endpoints (factory in server/ratelimit.cjs). Runs after
+// express.json, so req.body is available to the key function.
 const reqEmail = (req) => String((req.body && req.body.email) || "").toLowerCase();
 const signinLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 12, message: "Too many sign-in attempts. Please wait a few minutes and try again.", keyFn: (req) => "signin:" + req.ip + ":" + reqEmail(req) });
 const signupLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 8, message: "Too many sign-up attempts from this network. Please try again later.", keyFn: (req) => "signup:" + req.ip });
@@ -260,11 +200,6 @@ const passwordLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, message: 
 // A real bcrypt hash to compare against when the email doesn't exist, so a missing-user
 // sign-in takes the same time as a real one (no timing-based account enumeration — L3).
 const DUMMY_HASH = bcrypt.hashSync("not-a-real-password-placeholder", 12);
-
-// Escape user-supplied text before embedding it in email HTML (L5).
-function escapeHtml(s) {
-  return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-}
 
 // ── Auth helpers ──
 function tokenFor(user) {
@@ -589,143 +524,23 @@ app.get("/api/stats", requireUser, async (req, res) => {
   } catch (e) { res.status(500).json({ error: { message: "Could not load stats." } }); }
 });
 
-// Branded PDF export of the user's leads. Streams application/pdf.
+// Branded PDF export of the user's leads (rendering in server/pdf.cjs).
 app.get("/api/leads/export.pdf", requireUser, async (req, res) => {
   try {
     const { rows } = await q(
       "select label, sub, status, created_at, updated_at from prospects where user_id = $1 order by updated_at desc limit 1000",
       [req.userId],
     );
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", 'attachment; filename="karma-connect-leads.pdf"');
-    const doc = new PDFDocument({ size: "A4", margin: 48 });
-    doc.pipe(res);
-
-    const NAVY = "#0b2545", GOLD = "#b8860b", GREY = "#444", LIGHT = "#888";
-    const STATUS_LABEL = { new: "New", connected: "Connected", replied: "Replied", meeting: "Meeting", won: "Won", lost: "Lost" };
-    const counts = {};
-    for (const r of rows) counts[r.status] = (counts[r.status] || 0) + 1;
-
-    // Header
-    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(20).text("Karma Connect");
-    doc.fillColor(GOLD).font("Helvetica").fontSize(12).text("Lead export");
-    doc.fillColor(LIGHT).fontSize(9).text(new Date().toISOString().slice(0, 10) + "  ·  " + req.email + "  ·  " + rows.length + " leads");
-    doc.moveDown(0.5);
-    doc.moveTo(48, doc.y).lineTo(547, doc.y).strokeColor("#dddddd").lineWidth(1).stroke();
-    doc.moveDown(0.4);
-    const summary = ["new", "connected", "replied", "meeting", "won", "lost"].map((k) => STATUS_LABEL[k] + ": " + (counts[k] || 0)).join("    ");
-    doc.fillColor(GREY).font("Helvetica").fontSize(9.5).text(summary);
-    doc.moveDown(0.6);
-
-    // Table
-    const COLS = [{ x: 48, w: 150, t: "Name" }, { x: 200, w: 210, t: "Title / Company" }, { x: 412, w: 70, t: "Stage" }, { x: 484, w: 63, t: "Updated" }];
-    const header = () => {
-      doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(9);
-      for (const c of COLS) doc.text(c.t, c.x, doc.y, { width: c.w, continued: false });
-      doc.moveDown(0.2);
-      doc.moveTo(48, doc.y).lineTo(547, doc.y).strokeColor("#eeeeee").lineWidth(1).stroke();
-      doc.moveDown(0.25);
-    };
-    header();
-    doc.font("Helvetica").fontSize(9);
-    for (const r of rows) {
-      if (doc.y > 790) { doc.addPage(); header(); doc.font("Helvetica").fontSize(9); }
-      const y = doc.y;
-      doc.fillColor(GREY).text(r.label || "Untitled", COLS[0].x, y, { width: COLS[0].w, ellipsis: true, lineBreak: false });
-      doc.fillColor(LIGHT).text(r.sub || "", COLS[1].x, y, { width: COLS[1].w, ellipsis: true, lineBreak: false });
-      doc.fillColor(GREY).text(STATUS_LABEL[r.status] || r.status || "", COLS[2].x, y, { width: COLS[2].w, lineBreak: false });
-      doc.fillColor(LIGHT).text(new Date(r.updated_at).toISOString().slice(0, 10), COLS[3].x, y, { width: COLS[3].w, lineBreak: false });
-      doc.moveDown(0.55);
-      doc.x = 48;
-    }
-    if (rows.length === 0) doc.fillColor(LIGHT).text("No leads yet.", 48);
-    doc.end();
+    streamLeadsPdf(res, rows, req.email);
   } catch (e) {
     if (!res.headersSent) res.status(500).json({ error: { message: "Could not generate the PDF." } });
   }
 });
 
-// One prospect's brief: details + computed fit + the AI intelligence profile. The client
-// posts what's on screen (prospect + analysis + fit) and we render a branded PDF.
+// One prospect's brief PDF (details + computed fit + AI profile). Client posts what's on screen.
 app.post("/api/leads/brief.pdf", requireUser, async (req, res) => {
   try {
-    const b = req.body || {};
-    const p = b.prospect || {};
-    const a = b.analysis || {};
-    const fit = b.fit || null;
-    const name = [p.firstName, p.lastName].filter(Boolean).join(" ") || "Prospect";
-    const fileSafe = (name.replace(/[^a-z0-9]+/gi, "-").toLowerCase() || "prospect");
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", 'attachment; filename="karma-connect-' + fileSafe + '-brief.pdf"');
-
-    const doc = new PDFDocument({ size: "A4", margin: 50 });
-    doc.pipe(res);
-    const NAVY = "#0b2545", GOLD = "#b8860b", GREY = "#333", LIGHT = "#777";
-    const W = doc.page.width - 100;
-    const ensure = (h) => { if (doc.y > doc.page.height - h) doc.addPage(); };
-    const rule = () => { doc.moveTo(50, doc.y).lineTo(50 + W, doc.y).strokeColor("#e6e6e6").lineWidth(1).stroke(); doc.moveDown(0.4); };
-    const h1 = (t) => { doc.moveDown(0.7); ensure(110); doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(13).text(t); doc.moveDown(0.15); rule(); };
-    const para = (t) => { doc.fillColor(GREY).font("Helvetica").fontSize(10).text(String(t), { width: W, lineGap: 2 }); doc.moveDown(0.3); };
-    const bullet = (t) => { ensure(40); doc.fillColor(GREY).font("Helvetica").fontSize(10).text("•  " + String(t), { width: W, indent: 4, lineGap: 2 }); doc.moveDown(0.12); };
-    const kv = (k, v) => { if (!v || !String(v).trim()) return; ensure(30); doc.font("Helvetica-Bold").fontSize(9.5).fillColor(NAVY).text(k + ":  ", { continued: true }).font("Helvetica").fillColor(GREY).text(String(v).trim(), { width: W }); doc.moveDown(0.15); };
-    const block = (k, v) => { if (!v || !String(v).trim()) return; ensure(50); doc.font("Helvetica-Bold").fontSize(9.5).fillColor(NAVY).text(k + ":"); doc.moveDown(0.1); para(v); };
-    const list = (title, arr) => { if (!Array.isArray(arr) || !arr.length) return; doc.moveDown(0.2); ensure(70); doc.font("Helvetica-Bold").fontSize(10).fillColor(NAVY).text(title); doc.moveDown(0.15); arr.forEach(bullet); };
-
-    // Header + identity
-    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(19).text("Karma Connect");
-    doc.fillColor(GOLD).font("Helvetica").fontSize(11.5).text("Prospect brief");
-    doc.fillColor(LIGHT).fontSize(9).text(new Date().toISOString().slice(0, 10) + "  ·  prepared by " + req.email);
-    doc.moveDown(0.7);
-    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(22).text(name);
-    const subline = [p.title, p.company].filter(Boolean).join("  ·  ");
-    if (subline) doc.fillColor(GREY).font("Helvetica").fontSize(12).text(subline);
-    if (p.location) doc.fillColor(LIGHT).font("Helvetica").fontSize(10).text(p.location);
-
-    // Details
-    h1("Prospect details");
-    kv("Industry", p.industry); kv("Company", p.company); kv("Website", p.website);
-    kv("LinkedIn headline", p.headline);
-    block("About", p.about);
-    block("Experience", p.experience);
-    kv("Company description", p.companyDesc);
-    kv("Recent news / signals", p.news);
-    kv("Mutual interests", p.mutual);
-    block("Notes", p.notes);
-    kv("Known pain points", p.pain); kv("Growth objectives", p.growth);
-    kv("Staffing challenges", p.staffing); kv("Operational challenges", p.ops);
-    block("Additional research", p.research);
-
-    // Fit
-    if (fit) {
-      h1("Fit & opportunity (computed)");
-      const fitRow = (label, d) => {
-        if (!d) return; ensure(40);
-        doc.font("Helvetica-Bold").fontSize(10.5).fillColor(NAVY).text(label + " — " + (d.score || 0) + "/100  ", { continued: true })
-          .font("Helvetica").fontSize(9).fillColor(LIGHT).text("(" + (d.confidence || "low") + " confidence)");
-        if (d.why) { doc.font("Helvetica").fontSize(9.5).fillColor(GREY).text(d.why, { width: W }); }
-        doc.moveDown(0.3);
-      };
-      fitRow("ICP fit", fit.icp); fitRow("Qualification", fit.qualification); fitRow("Buying readiness", fit.readiness);
-      kv("Overall opportunity", (fit.overall || 0) + "/100");
-    }
-
-    // AI analysis
-    const hasAnalysis = a && (a.persona || a.responsibilities || a.painPoints || a.goals || a.hooks);
-    if (hasAnalysis) {
-      h1("AI intelligence profile");
-      block("Who they are", a.persona);
-      list("Likely responsibilities", a.responsibilities);
-      list("Pain points", a.painPoints);
-      list("Goals they're pursuing", a.goals);
-      list("Connection angles", a.hooks);
-      list("Industry trends", a.trends);
-      list("Sector challenges", a.challenges);
-    }
-
-    doc.moveDown(1);
-    ensure(40);
-    doc.fillColor(LIGHT).font("Helvetica-Oblique").fontSize(8.5).text("Generated by Karma Connect. Fit scores are computed from the entered data; the intelligence profile is AI-inferred and should be verified before outreach.", { width: W });
-    doc.end();
+    streamProspectBriefPdf(res, req.body || {}, req.email);
   } catch (e) {
     if (!res.headersSent) res.status(500).json({ error: { message: "Could not generate the PDF." } });
   }
