@@ -19,7 +19,7 @@ function lsMerge(email, list) {
   lsWrite(email, [...list, ...existing.filter((e) => !ids.has(e.id))]);
 }
 
-const rowToEntry = (r) => ({ id: r.id, label: r.label, sub: r.sub, status: r.status || "new", savedAt: r.updated_at, snapshot: r.data || {} });
+const rowToEntry = (r) => ({ id: r.id, label: r.label, sub: r.sub, status: r.status || "new", nextActionAt: r.next_action_at || null, nextActionNote: r.next_action_note || "", savedAt: r.updated_at, snapshot: r.data || {} });
 const entryToRow = (e) => ({ id: e.id, label: e.label || "", sub: e.sub || "", status: e.status || "new", data: e.snapshot || {} });
 
 async function api(path, { method = "GET", body } = {}) {

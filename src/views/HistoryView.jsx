@@ -53,7 +53,25 @@ function StatusPicker({ value, onChange }) {
   );
 }
 
-export function HistoryView({ history, historyMore, onOpen, onDelete, onLoadMore, onGoHub, askConfirm, query, status, onSearch, onFilter, onSetStatus }) {
+// Inline follow-up reminder editor (date + optional note) for one lead.
+function ReminderRow({ entry, onSet }) {
+  const iso = entry.nextActionAt ? new Date(entry.nextActionAt).toISOString().slice(0, 10) : "";
+  const [date, setDate] = useState(iso);
+  const [note, setNote] = useState(entry.nextActionNote || "");
+  return (
+    <div style={{ marginTop: 10, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+      <span style={{ fontSize: 11, color: "var(--faint)" }}>Follow-up</span>
+      <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
+        style={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, padding: "5px 8px", color: "var(--text)", fontSize: 12, colorScheme: "dark" }} />
+      <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="reason (optional)"
+        style={{ flex: "1 1 120px", minWidth: 100, background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, padding: "5px 8px", color: "var(--text)", fontSize: 12 }} />
+      <button className="btn primary sm" onClick={() => onSet(entry.id, date, note)} disabled={!date}>Set</button>
+      {entry.nextActionAt && <button className="iconbtn" onClick={() => { setDate(""); setNote(""); onSet(entry.id, "", ""); }}>Clear</button>}
+    </div>
+  );
+}
+
+export function HistoryView({ history, historyMore, onOpen, onDelete, onLoadMore, onGoHub, askConfirm, query, status, onSearch, onFilter, onSetStatus, onSetReminder }) {
   const [notesOpen, setNotesOpen] = useState(null); // prospect id whose notes are expanded
   return (
     <div>
@@ -107,7 +125,12 @@ export function HistoryView({ history, historyMore, onOpen, onDelete, onLoadMore
                   <button className="iconbtn" onClick={() => onOpen(h)}>Open</button>
                   <button className="iconbtn" onClick={() => askConfirm({ title: "Remove from history?", message: "Remove " + (h.label || "this prospect") + " and everything saved for them. This can't be undone.", confirmLabel: "Delete", danger: true, onConfirm: () => onDelete(h.id) })}>Delete</button>
                 </div>
-                {notesOpen === h.id && <NotesPanel prospectId={h.id} />}
+                {notesOpen === h.id && (
+                  <>
+                    <ReminderRow entry={h} onSet={onSetReminder} />
+                    <NotesPanel prospectId={h.id} />
+                  </>
+                )}
               </div>
             );
           })}

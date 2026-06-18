@@ -57,6 +57,10 @@ create table if not exists prospects (
 -- Pipeline status for the lead (new | connected | replied | meeting | won | lost).
 alter table prospects add column if not exists status text not null default 'new';
 
+-- Follow-up reminder: a next-action date + an optional note (drives the Reminders view).
+alter table prospects add column if not exists next_action_at   timestamptz;
+alter table prospects add column if not exists next_action_note text;
+
 create index if not exists prospects_user_idx on prospects (user_id, updated_at desc);
 
 -- ─────────────────────────────────────────────────────────────────────────────

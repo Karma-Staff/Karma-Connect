@@ -19,7 +19,9 @@ import { UsageView } from "./views/UsageView.jsx";
 import { AdminMembersView } from "./views/AdminMembersView.jsx";
 import { DashboardView } from "./views/DashboardView.jsx";
 import { BoardView } from "./views/BoardView.jsx";
+import { RemindersView } from "./views/RemindersView.jsx";
 import { listHistory, writeHistory, deleteHistory, setLeadStatus, HISTORY_PAGE_SIZE } from "./lib/history.js";
+import { setReminder, listReminders } from "./lib/reminders.js";
 import { scoreFit } from "./lib/scoring.js";
 import { currentUser } from "./lib/auth.js";
 import { requestApproval, myApprovals, listApprovals, decideApproval } from "./lib/approvals.js";
@@ -64,6 +66,7 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   const [historyMore, setHistoryMore] = useState(false);
   const [histQuery, setHistQuery] = useState("");   // History search box
   const [histStatus, setHistStatus] = useState(""); // History pipeline-status filter ("" = all)
+  const [remindersDue, setRemindersDue] = useState(0); // count of overdue/due-today follow-ups (nav badge)
   const [showRubric, setShowRubric] = useState(false);
   const [currentEntryId, setCurrentEntryId] = useState(saved.currentEntryId || null);
 
@@ -94,10 +97,11 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   }, [userEmail, histQuery, histStatus]);
 
   // Load this member's lead-approval statuses (gates the locked engines). Admins also load
-  // the full request list for the Approvals panel + badge.
+  // the full request list for the Approvals panel + badge. Also the follow-up due count.
   useEffect(() => {
     refreshApprovals();
     if (isAdmin) loadAdminList();
+    loadRemindersDue();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userEmail]);
   // Re-check when opening a locked engine, so an admin's just-granted approval shows up.
@@ -175,6 +179,19 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   function setHistoryStatus(id, status) {
     setHistory((cur) => cur.map((h) => (h.id === id ? { ...h, status } : h)));
     setLeadStatus(userEmail, id, status);
+  }
+  function setHistoryReminder(id, date, note) {
+    const iso = date ? new Date(date).toISOString() : null;
+    setHistory((cur) => cur.map((h) => (h.id === id ? { ...h, nextActionAt: iso, nextActionNote: date ? note : "" } : h)));
+    setReminder(id, date || null, note || "").then(loadRemindersDue).catch(() => {});
+  }
+  function loadRemindersDue() {
+    if (!userEmail) return;
+    listReminders().then((rs) => {
+      const now = new Date();
+      const endToday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+      setRemindersDue(rs.filter((r) => new Date(r.next_action_at) < endToday).length);
+    }).catch(() => {});
   }
   function loadFromHistory(entry) {
     const s = entry.snapshot || {};
@@ -451,6 +468,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
     { id: "followup", label: "Follow-up Engine", ic: Ic.fup, gate: true, count: results.followup.length },
     { id: "history", label: "History", ic: Ic.hist, count: history.length },
     { id: "board", label: "Board", ic: Ic.board },
+    { id: "reminders", label: "Reminders", ic: Ic.fup, count: remindersDue },
     ...(isAdmin ? [
       { id: "approvals", label: "Approvals", ic: Ic.intel, admin: true, count: adminList.filter((a) => a.status === "pending").length },
       { id: "members", label: "Members", ic: <KarmaMark color="currentColor" w={18} />, admin: true },
@@ -943,6 +961,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
               onSearch={setHistQuery}
               onFilter={setHistStatus}
               onSetStatus={setHistoryStatus}
+              onSetReminder={setHistoryReminder}
             />
           )}
 
@@ -957,6 +976,8 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
           {view === "dashboard" && <DashboardView onGoStage={(st) => { setHistStatus(st); setView("history"); }} />}
 
           {view === "board" && <BoardView onSetStatus={setHistoryStatus} />}
+
+          {view === "reminders" && <RemindersView onChanged={loadRemindersDue} />}
 
           {view === "usage" && <UsageView />}
 

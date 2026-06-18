@@ -74,6 +74,8 @@ async function ensureSchema() {
     await q("alter table users add column if not exists reset_sent_at timestamptz");
     await q("create index if not exists users_reset_token_idx on users (reset_token)");
     await q("alter table prospects add column if not exists status text not null default 'new'");
+    await q("alter table prospects add column if not exists next_action_at timestamptz");
+    await q("alter table prospects add column if not exists next_action_note text");
     await q(`create table if not exists lead_notes (
       id uuid primary key default gen_random_uuid(),
       user_id uuid not null references users (id) on delete cascade,
@@ -482,7 +484,7 @@ app.get("/api/history", requireUser, async (req, res) => {
     if (status) { params.push(status); where += ` and status = $${params.length}`; }
     params.push(PAGE_SIZE, page * PAGE_SIZE);
     const { rows } = await q(
-      `select id, label, sub, status, data, updated_at from prospects where ${where} order by updated_at desc limit $${params.length - 1} offset $${params.length}`,
+      `select id, label, sub, status, next_action_at, next_action_note, data, updated_at from prospects where ${where} order by updated_at desc limit $${params.length - 1} offset $${params.length}`,
       params,
     );
     res.json({ rows });
@@ -560,6 +562,32 @@ app.get("/api/stats", requireUser, async (req, res) => {
     );
     res.json({ stats: rows[0] });
   } catch (e) { res.status(500).json({ error: { message: "Could not load stats." } }); }
+});
+
+// Set or clear a lead's follow-up reminder (next-action date + optional note).
+app.post("/api/history/:id/reminder", requireUser, async (req, res) => {
+  try {
+    let date = null;
+    if (req.body?.date) { date = new Date(req.body.date); if (isNaN(date.getTime())) return res.status(400).json({ error: { message: "Invalid date." } }); }
+    const note = date ? String(req.body?.note || "").slice(0, 300) : null;
+    const { rows } = await q(
+      "update prospects set next_action_at = $1, next_action_note = $2 where user_id = $3 and id = $4 returning id, next_action_at, next_action_note",
+      [date, note, req.userId, String(req.params.id)],
+    );
+    if (!rows[0]) return res.status(404).json({ error: { message: "Lead not found." } });
+    res.json({ ok: true, reminder: rows[0] });
+  } catch (e) { res.status(500).json({ error: { message: "Could not set the reminder." } }); }
+});
+
+// All leads with a follow-up date, soonest first — powers the Reminders view + badge.
+app.get("/api/reminders", requireUser, async (req, res) => {
+  try {
+    const { rows } = await q(
+      "select id, label, sub, status, next_action_at, next_action_note from prospects where user_id = $1 and next_action_at is not null order by next_action_at asc limit 200",
+      [req.userId],
+    );
+    res.json({ reminders: rows });
+  } catch (e) { res.status(500).json({ error: { message: "Could not load reminders." } }); }
 });
 
 // ───────────────────────── Lead notes & activity ────────────────────
