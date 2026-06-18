@@ -14,6 +14,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const express = require("express");
+const compression = require("compression");
 const bcrypt = require("bcryptjs");
 const { Pool } = require("pg");
 const { handleClaude, signJWT, verifyJWT, JWT_ISS } = require("./api/_proxy.cjs");
@@ -45,8 +46,18 @@ const EMAIL_RE = /\S+@\S+\.\S+/;
 const DATABASE_URL = process.env.DATABASE_URL || "";
 // Render Postgres requires SSL; local Postgres usually doesn't (set PGSSL=off).
 const pool = DATABASE_URL
-  ? new Pool({ connectionString: DATABASE_URL, ssl: process.env.PGSSL === "off" ? false : { rejectUnauthorized: false } })
+  ? new Pool({
+      connectionString: DATABASE_URL,
+      ssl: process.env.PGSSL === "off" ? false : { rejectUnauthorized: false },
+      // Bound the pool so we never exhaust the database's connection limit (per instance).
+      max: parseInt(process.env.PG_POOL_MAX || "10", 10),
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000,
+      keepAlive: true,
+    })
   : null;
+// A dropped idle connection emits 'error' on the pool — handle it so it can't crash the process.
+if (pool) pool.on("error", (e) => console.error("pg pool error:", e.message));
 const dbOn = !!pool;
 
 async function q(text, params) {
@@ -115,6 +126,8 @@ const app = express();
 app.disable("x-powered-by");
 // Behind Render's proxy: trust it so req.ip is the real client IP and req.secure is correct.
 app.set("trust proxy", 1);
+// gzip every response above the threshold (the JS/CSS bundle + JSON API) — big bandwidth win.
+app.use(compression());
 
 // ── HTTP security headers (L4) ──
 // CSP allows our own assets + Google Fonts (index.html links them) and inline styles (the app
@@ -468,11 +481,31 @@ app.get("/api/health", (_req, res) => res.json({ ok: true, db: dbOn }));
 // In dev, Vite serves the client and proxies /api here, so we don't serve static files.
 if (!DEV) {
   const dist = path.join(__dirname, "dist");
-  app.use(express.static(dist));
-  // SPA fallback: any non-/api GET returns index.html.
-  app.get(/^\/(?!api\/).*/, (_req, res) => res.sendFile(path.join(dist, "index.html")));
+  app.use(express.static(dist, {
+    setHeaders: (res, filePath) => {
+      // Vite fingerprints files in /assets (content hash in the name) — cache them forever.
+      // Everything else (incl. index.html) stays no-cache so a new deploy is picked up at once.
+      if (filePath.includes(path.sep + "assets" + path.sep)) res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+      else res.setHeader("Cache-Control", "no-cache");
+    },
+  }));
+  // SPA fallback: any non-/api GET returns index.html (never cached, so deploys are instant).
+  app.get(/^\/(?!api\/).*/, (_req, res) => {
+    res.setHeader("Cache-Control", "no-cache");
+    res.sendFile(path.join(dist, "index.html"));
+  });
 }
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Karma Connect server on :${PORT} (${DEV ? "dev" : "prod"}, db=${dbOn ? "on" : "OFF"})`);
 });
+
+// Graceful shutdown: Render sends SIGTERM on deploy/restart. Stop accepting connections,
+// let in-flight requests finish, close the DB pool, then exit (hard-exit after 10s as a backstop).
+function shutdown(sig) {
+  console.log(`${sig} received — shutting down gracefully…`);
+  server.close(() => { (pool ? pool.end() : Promise.resolve()).finally(() => process.exit(0)); });
+  setTimeout(() => process.exit(1), 10000).unref();
+}
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
