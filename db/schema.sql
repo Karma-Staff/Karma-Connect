@@ -54,6 +54,9 @@ create table if not exists prospects (
   updated_at  timestamptz not null default now()
 );
 
+-- Pipeline status for the lead (new | connected | replied | meeting | won | lost).
+alter table prospects add column if not exists status text not null default 'new';
+
 create index if not exists prospects_user_idx on prospects (user_id, updated_at desc);
 
 -- ─────────────────────────────────────────────────────────────────────────────

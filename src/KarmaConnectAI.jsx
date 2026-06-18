@@ -15,7 +15,7 @@ import { MsgCard } from "./components/MsgCard.jsx";
 import { HistoryView } from "./views/HistoryView.jsx";
 import { ApprovalsView } from "./views/ApprovalsView.jsx";
 import { SettingsView } from "./views/SettingsView.jsx";
-import { listHistory, writeHistory, deleteHistory, HISTORY_PAGE_SIZE } from "./lib/history.js";
+import { listHistory, writeHistory, deleteHistory, setLeadStatus, HISTORY_PAGE_SIZE } from "./lib/history.js";
 import { scoreFit } from "./lib/scoring.js";
 import { currentUser } from "./lib/auth.js";
 import { requestApproval, myApprovals, listApprovals, decideApproval } from "./lib/approvals.js";
@@ -58,6 +58,8 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   const [history, setHistory] = useState([]);
   const [historyPage, setHistoryPage] = useState(0);
   const [historyMore, setHistoryMore] = useState(false);
+  const [histQuery, setHistQuery] = useState("");   // History search box
+  const [histStatus, setHistStatus] = useState(""); // History pipeline-status filter ("" = all)
   const [showRubric, setShowRubric] = useState(false);
   const [currentEntryId, setCurrentEntryId] = useState(saved.currentEntryId || null);
 
@@ -74,15 +76,18 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   const leadApproved = isAdmin || leadStatus === "approved";
   const engineLocked = (id) => APPROVAL_ENGINES.includes(id) && !leadApproved;
 
-  // Load saved prospects (Supabase when signed in, else localStorage). Async + paginated.
+  // Load saved prospects (server when signed in, else localStorage). Async + paginated, and
+  // re-fetches page 0 when the search box / status filter changes (debounced while typing).
   useEffect(() => {
     let alive = true;
-    listHistory(userEmail, 0).then((rows) => {
-      if (!alive) return;
-      setHistory(rows); setHistoryPage(0); setHistoryMore(rows.length >= HISTORY_PAGE_SIZE);
-    });
-    return () => { alive = false; };
-  }, [userEmail]);
+    const t = setTimeout(() => {
+      listHistory(userEmail, 0, { q: histQuery, status: histStatus }).then((rows) => {
+        if (!alive) return;
+        setHistory(rows); setHistoryPage(0); setHistoryMore(rows.length >= HISTORY_PAGE_SIZE);
+      });
+    }, histQuery ? 250 : 0);
+    return () => { alive = false; clearTimeout(t); };
+  }, [userEmail, histQuery, histStatus]);
 
   // Load this member's lead-approval statuses (gates the locked engines). Admins also load
   // the full request list for the Approvals panel + badge.
@@ -151,16 +156,21 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
     if (!id) { id = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : "h" + Date.now(); setCurrentEntryId(id); }
     const label = [prospect.firstName, prospect.lastName].filter(Boolean).join(" ") || prospect.company || "Untitled";
     const sub = [prospect.title, prospect.company].filter(Boolean).join(" · ");
-    const entry = { id, label, sub, savedAt: new Date().toISOString(), snapshot: { prospect, sender, offer, coUrl, analysis, results, favs, meetLen, prospectReply } };
+    const status = (history.find((h) => h.id === id) || {}).status || "new"; // keep the lead's stage
+    const entry = { id, label, sub, status, savedAt: new Date().toISOString(), snapshot: { prospect, sender, offer, coUrl, analysis, results, favs, meetLen, prospectReply } };
     setHistory((cur) => [entry, ...cur.filter((h) => h.id !== id)]);
     writeHistory(userEmail, [entry]);
   }
   function loadMoreHistory() {
     const next = historyPage + 1;
-    listHistory(userEmail, next).then((rows) => {
+    listHistory(userEmail, next, { q: histQuery, status: histStatus }).then((rows) => {
       if (rows.length) { setHistory((cur) => [...cur, ...rows]); setHistoryPage(next); }
       setHistoryMore(rows.length >= HISTORY_PAGE_SIZE);
     });
+  }
+  function setHistoryStatus(id, status) {
+    setHistory((cur) => cur.map((h) => (h.id === id ? { ...h, status } : h)));
+    setLeadStatus(userEmail, id, status);
   }
   function loadFromHistory(entry) {
     const s = entry.snapshot || {};
@@ -320,7 +330,29 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
     setParsing(false);
   }
 
+  // Zero-token duplicate guard: before spending AI credits, warn if this person is already saved.
   async function runAnalysis() {
+    try {
+      const nameLabel = [prospect.firstName, prospect.lastName].filter(Boolean).join(" ").trim();
+      const qstr = prospect.company.trim() || nameLabel;
+      if (qstr) {
+        const matches = await listHistory(userEmail, 0, { q: qstr });
+        const dup = matches.find((h) => h.id !== currentEntryId && nameLabel && (h.label || "").toLowerCase() === nameLabel.toLowerCase());
+        if (dup) {
+          askConfirm({
+            title: "You already have this lead",
+            message: "“" + dup.label + "” is already in your History" + (dup.sub ? " (" + dup.sub + ")" : "") + ". Analyzing again uses AI credits — open the saved one from History instead, or analyze again?",
+            confirmLabel: "Analyze again",
+            onConfirm: doRunAnalysis,
+          });
+          return;
+        }
+      }
+    } catch (e) { /* dedup is best-effort — never block analysis */ }
+    doRunAnalysis();
+  }
+
+  async function doRunAnalysis() {
     setLoading((l) => ({ ...l, analysis: true }));
     setErrors((e) => ({ ...e, analysis: null }));
     setView("intel");
@@ -896,6 +928,11 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
               onLoadMore={loadMoreHistory}
               onGoHub={() => setView("hub")}
               askConfirm={askConfirm}
+              query={histQuery}
+              status={histStatus}
+              onSearch={setHistQuery}
+              onFilter={setHistStatus}
+              onSetStatus={setHistoryStatus}
             />
           )}
 

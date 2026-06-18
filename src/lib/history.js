@@ -19,8 +19,8 @@ function lsMerge(email, list) {
   lsWrite(email, [...list, ...existing.filter((e) => !ids.has(e.id))]);
 }
 
-const rowToEntry = (r) => ({ id: r.id, label: r.label, sub: r.sub, savedAt: r.updated_at, snapshot: r.data || {} });
-const entryToRow = (e) => ({ id: e.id, label: e.label || "", sub: e.sub || "", data: e.snapshot || {} });
+const rowToEntry = (r) => ({ id: r.id, label: r.label, sub: r.sub, status: r.status || "new", savedAt: r.updated_at, snapshot: r.data || {} });
+const entryToRow = (e) => ({ id: e.id, label: e.label || "", sub: e.sub || "", status: e.status || "new", data: e.snapshot || {} });
 
 async function api(path, { method = "GET", body } = {}) {
   const token = getAccessToken();
@@ -44,15 +44,37 @@ async function reconcile(email, userId) {
   } catch (e) { /* leave local intact; try again next sign-in */ }
 }
 
-// Read a page (page 0 = newest 25). Returns [{ id, label, sub, savedAt, snapshot }].
-export async function listHistory(email, page = 0) {
+// Read a page (page 0 = newest 25). Optional { q, status } filters (server-side when signed
+// in; client-side over the local list when offline). Returns [{ id, label, sub, status, savedAt, snapshot }].
+export async function listHistory(email, page = 0, { q = "", status = "" } = {}) {
   const user = currentUser();
-  if (!user || !getAccessToken()) return lsRead(email);
+  if (!user || !getAccessToken()) {
+    let list = lsRead(email);
+    if (q) { const s = q.toLowerCase(); list = list.filter((e) => (e.label || "").toLowerCase().includes(s) || (e.sub || "").toLowerCase().includes(s)); }
+    if (status) list = list.filter((e) => (e.status || "new") === status);
+    return list;
+  }
   try {
     if (page === 0) await reconcile(email, user.id);
-    const data = await api("/api/history?page=" + page);
+    const qs = new URLSearchParams({ page: String(page) });
+    if (q) qs.set("q", q);
+    if (status) qs.set("status", status);
+    const data = await api("/api/history?" + qs.toString());
     return (data?.rows || []).map(rowToEntry);
   } catch (e) { return lsRead(email); }
+}
+
+// Update the pipeline status of one saved lead.
+export async function setLeadStatus(email, id, status) {
+  const user = currentUser();
+  if (!user || !getAccessToken()) {
+    const list = lsRead(email).map((e) => (e.id === id ? { ...e, status } : e));
+    lsWrite(email, list);
+    return;
+  }
+  try {
+    await api("/api/history/" + encodeURIComponent(id) + "/status", { method: "POST", body: { status } });
+  } catch (e) { /* best-effort */ }
 }
 
 // Upsert one or more entries (merge — does not delete anything).

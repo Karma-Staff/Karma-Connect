@@ -73,6 +73,7 @@ async function ensureSchema() {
     await q("alter table users add column if not exists reset_token text");
     await q("alter table users add column if not exists reset_sent_at timestamptz");
     await q("create index if not exists users_reset_token_idx on users (reset_token)");
+    await q("alter table prospects add column if not exists status text not null default 'new'");
   } catch (e) { console.error("ensureSchema:", e.message); }
 }
 
@@ -444,15 +445,38 @@ app.delete("/api/auth/account", requireUser, async (req, res) => {
 // ───────────────────────────── History ──────────────────────────────
 const PAGE_SIZE = 25;
 
+const LEAD_STATUSES = ["new", "connected", "replied", "meeting", "won", "lost"];
+
 app.get("/api/history", requireUser, async (req, res) => {
   try {
     const page = Math.max(0, parseInt(req.query.page || "0", 10) || 0);
+    const q1 = String(req.query.q || "").trim();
+    const status = LEAD_STATUSES.includes(String(req.query.status || "")) ? String(req.query.status) : "";
+    const params = [req.userId];
+    let where = "user_id = $1";
+    if (q1) { params.push("%" + q1 + "%"); where += ` and (label ilike $${params.length} or sub ilike $${params.length})`; }
+    if (status) { params.push(status); where += ` and status = $${params.length}`; }
+    params.push(PAGE_SIZE, page * PAGE_SIZE);
     const { rows } = await q(
-      "select id, label, sub, data, updated_at from prospects where user_id = $1 order by updated_at desc limit $2 offset $3",
-      [req.userId, PAGE_SIZE, page * PAGE_SIZE],
+      `select id, label, sub, status, data, updated_at from prospects where ${where} order by updated_at desc limit $${params.length - 1} offset $${params.length}`,
+      params,
     );
     res.json({ rows });
   } catch (e) { res.status(500).json({ error: { message: "Could not load history." } }); }
+});
+
+// Update just the pipeline status of one lead.
+app.post("/api/history/:id/status", requireUser, async (req, res) => {
+  try {
+    const status = LEAD_STATUSES.includes(String(req.body?.status || "")) ? String(req.body.status) : null;
+    if (!status) return res.status(400).json({ error: { message: "Invalid status." } });
+    const { rows } = await q(
+      "update prospects set status = $1 where user_id = $2 and id = $3 returning id, status",
+      [status, req.userId, String(req.params.id)],
+    );
+    if (!rows[0]) return res.status(404).json({ error: { message: "Lead not found." } });
+    res.json({ ok: true, status: rows[0].status });
+  } catch (e) { res.status(500).json({ error: { message: "Could not update status." } }); }
 });
 
 // Upsert one or more entries. Body: { entries: [{ id, label, sub, data }] }. Merge, never delete.
@@ -461,12 +485,13 @@ app.post("/api/history", requireUser, async (req, res) => {
     const entries = Array.isArray(req.body?.entries) ? req.body.entries : [];
     for (const e of entries) {
       if (!e || !e.id) continue;
+      const status = LEAD_STATUSES.includes(String(e.status || "")) ? String(e.status) : "new";
       await q(
-        `insert into prospects (id, user_id, label, sub, data)
-         values ($1,$2,$3,$4,$5)
+        `insert into prospects (id, user_id, label, sub, status, data)
+         values ($1,$2,$3,$4,$5,$6)
          on conflict (id) do update set label = excluded.label, sub = excluded.sub, data = excluded.data
          where prospects.user_id = $2`,
-        [String(e.id), req.userId, e.label || "", e.sub || "", e.data || {}],
+        [String(e.id), req.userId, e.label || "", e.sub || "", status, e.data || {}],
       );
     }
     res.json({ ok: true });
