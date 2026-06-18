@@ -1,4 +1,4 @@
-// Profile & account settings: see your role, upgrade to admin with the code, delete account.
+// Profile & account settings: identity, change password, upgrade to admin, delete account.
 import { useState } from "react";
 import { promoteToAdmin, deleteAccount, changePassword } from "../lib/auth.js";
 
@@ -10,13 +10,16 @@ export function SettingsView({ user, isAdmin, askConfirm, showToast }) {
   const [pw, setPw] = useState("");
   const [dBusy, setDBusy] = useState(false);
   const [dErr, setDErr] = useState("");
-  // Change password
   const [curPw, setCurPw] = useState("");
   const [newPw, setNewPw] = useState("");
   const [newPw2, setNewPw2] = useState("");
   const [cBusy, setCBusy] = useState(false);
   const [cMsg, setCMsg] = useState("");
   const [cErr, setCErr] = useState("");
+
+  const fullName = [user?.firstName, user?.lastName].filter(Boolean).join(" ");
+  const displayName = fullName || user?.email || "Your account";
+  const initial = ((fullName || user?.email || "?").trim()[0] || "?").toUpperCase();
 
   async function doChangePassword() {
     setCMsg(""); setCErr("");
@@ -28,13 +31,9 @@ export function SettingsView({ user, isAdmin, askConfirm, showToast }) {
       setCurPw(""); setNewPw(""); setNewPw2("");
       setCMsg("Password changed.");
       if (showToast) showToast("Password changed");
-    } catch (e) {
-      setCErr((e && e.message) || "Could not change the password.");
-    }
+    } catch (e) { setCErr((e && e.message) || "Could not change the password."); }
     setCBusy(false);
   }
-
-  const fullName = [user?.firstName, user?.lastName].filter(Boolean).join(" ") || "—";
 
   async function promote() {
     setPMsg(""); setPErr("");
@@ -43,11 +42,9 @@ export function SettingsView({ user, isAdmin, askConfirm, showToast }) {
     try {
       await promoteToAdmin(code.trim());
       setCode("");
-      setPMsg("You're now an admin — the Approvals section is available in the sidebar.");
+      setPMsg("You're now an admin — the Approvals & Members sections are in the sidebar.");
       if (showToast) showToast("You're now an admin");
-    } catch (e) {
-      setPErr((e && e.message) || "Could not update your role.");
-    }
+    } catch (e) { setPErr((e && e.message) || "Could not update your role."); }
     setPBusy(false);
   }
 
@@ -61,32 +58,36 @@ export function SettingsView({ user, isAdmin, askConfirm, showToast }) {
       danger: true,
       onConfirm: async () => {
         setDBusy(true);
-        try {
-          await deleteAccount(pw); // signs out → the gate returns to the login screen
-        } catch (e) {
-          setDErr((e && e.message) || "Could not delete the account.");
-          setDBusy(false);
-        }
+        try { await deleteAccount(pw); } // signs out → gate returns to login
+        catch (e) { setDErr((e && e.message) || "Could not delete the account."); setDBusy(false); }
       },
     });
   }
 
+  const rolePill = isAdmin
+    ? { color: "#52d39e", borderColor: "#52d39e55", background: "#52d39e1a" }
+    : { color: "var(--ice)", borderColor: "var(--border2)", background: "rgba(255,255,255,.04)" };
+
   return (
-    <div>
+    <div className="vstack">
       <div className="head"><div className="eyebrow">Account</div><h2>Profile &amp; settings</h2><p>Manage your account, role, and access.</p></div>
 
+      {/* Identity */}
       <div className="panel">
-        <div className="sect-title">Your account</div>
-        <div className="fgrid">
-          <div className="f"><label>Name</label><input value={fullName} readOnly /></div>
-          <div className="f"><label>Email</label><input value={user?.email || ""} readOnly /></div>
+        <div className="idrow">
+          <span className="idav">{initial}</span>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div className="idname">{displayName}</div>
+            <div className="idmail">{user?.email}</div>
+          </div>
+          <span className="rolepill" style={rolePill}><span style={{ width: 6, height: 6, borderRadius: "50%", background: "currentColor" }} />{isAdmin ? "Admin" : "Member"}</span>
         </div>
-        <div className="hint" style={{ marginTop: 10 }}>
-          Role: <b style={{ color: isAdmin ? "#52d39e" : "var(--ice)" }}>{isAdmin ? "Admin" : "Member"}</b>
-          {isAdmin ? " — you can approve leads and use every engine." : " — you can work leads through connection requests."}
+        <div className="hint" style={{ marginTop: 14 }}>
+          {isAdmin ? "You can approve leads, manage members, and use every engine." : "You can work leads through connection requests. Enter an admin code below to upgrade."}
         </div>
       </div>
 
+      {/* Change password */}
       <div className="panel">
         <div className="sect-title">Change password</div>
         <div className="fgrid">
@@ -94,41 +95,46 @@ export function SettingsView({ user, isAdmin, askConfirm, showToast }) {
           <div className="f"><label>New password</label><input type="password" autoComplete="new-password" value={newPw} onChange={(e) => setNewPw(e.target.value)} placeholder="At least 8 characters" /></div>
           <div className="f"><label>Confirm new password</label><input type="password" autoComplete="new-password" value={newPw2} onChange={(e) => setNewPw2(e.target.value)} placeholder="Re-enter new password" /></div>
         </div>
-        <div className="toprow" style={{ marginTop: 14 }}>
+        <div className="toprow" style={{ marginTop: 16 }}>
           <button className="btn primary" onClick={doChangePassword} disabled={cBusy}>{cBusy ? "Working…" : "Change password"}</button>
+          {cMsg && <span style={{ color: "#52d39e", fontSize: 12.5 }}>✓ {cMsg}</span>}
         </div>
-        {cMsg && <div className="reason" style={{ marginTop: 12 }}><b>Done</b> · {cMsg}</div>}
         {cErr && <div className="err" style={{ marginTop: 12 }}>⚠ {cErr}</div>}
       </div>
 
+      {/* Become an admin */}
       {!isAdmin && (
         <div className="panel">
           <div className="sect-title">Become an admin</div>
-          <p style={{ color: "var(--muted)", fontSize: 13.5, lineHeight: 1.6, marginBottom: 12 }}>
-            Created a normal account but you should be an admin? Enter the admin code to upgrade. Admins approve leads and unlock the Relationship, Meeting and Follow-up engines.
+          <p style={{ color: "var(--muted)", fontSize: 13.5, lineHeight: 1.6, marginBottom: 14 }}>
+            Created a normal account but you should be an admin? Enter the admin code to upgrade — admins approve leads and unlock the Relationship, Meeting and Follow-up engines.
           </p>
-          <div className="f full" style={{ maxWidth: 360 }}>
+          <div className="f full" style={{ maxWidth: 380 }}>
             <label>Admin code</label>
             <input type="password" autoComplete="off" value={code} placeholder="Enter the admin code" onChange={(e) => setCode(e.target.value)} />
           </div>
-          <div className="toprow" style={{ marginTop: 14 }}>
+          <div className="toprow" style={{ marginTop: 16 }}>
             <button className="btn primary" onClick={promote} disabled={pBusy}>{pBusy ? "Working…" : "Make me an admin"}</button>
+            {pMsg && <span style={{ color: "#52d39e", fontSize: 12.5 }}>✓ {pMsg}</span>}
           </div>
-          {pMsg && <div className="reason" style={{ marginTop: 12 }}><b>Done</b> · {pMsg}</div>}
           {pErr && <div className="err" style={{ marginTop: 12 }}>⚠ {pErr}</div>}
         </div>
       )}
 
-      <div className="panel" style={{ borderColor: "rgba(226,74,74,.3)", background: "rgba(226,74,74,.03)" }}>
-        <div className="sect-title" style={{ color: "#ff9a9a" }}>Delete account</div>
-        <p style={{ color: "var(--muted)", fontSize: 13.5, lineHeight: 1.6, marginBottom: 12 }}>
-          Permanently delete your account and everything saved to it. This can't be undone. Enter your password to confirm.
-        </p>
-        <div className="f full" style={{ maxWidth: 360 }}>
-          <label>Confirm your password</label>
-          <input type="password" autoComplete="current-password" value={pw} placeholder="Your password" onChange={(e) => setPw(e.target.value)} />
-        </div>
-        <div className="toprow" style={{ marginTop: 14 }}>
+      {/* Danger zone */}
+      <div className="panel danger-zone">
+        <div className="sect-title" style={{ color: "#ff9a9a" }}>Danger zone</div>
+        <div style={{ display: "flex", gap: 18, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <div style={{ flex: "1 1 280px", minWidth: 0 }}>
+            <div style={{ fontWeight: 700, color: "var(--text)", fontSize: 14, marginBottom: 4 }}>Delete account</div>
+            <p style={{ color: "var(--muted)", fontSize: 13, lineHeight: 1.6, margin: "0 0 12px" }}>
+              Permanently deletes your account and everything saved to it. This can't be undone.
+            </p>
+            <div className="f full" style={{ maxWidth: 320 }}>
+              <label>Confirm your password</label>
+              <input type="password" autoComplete="current-password" value={pw} placeholder="Your password" onChange={(e) => setPw(e.target.value)} />
+            </div>
+          </div>
           <button className="btn danger" onClick={confirmDelete} disabled={dBusy}>{dBusy ? "Deleting…" : "Delete my account"}</button>
         </div>
         {dErr && <div className="err" style={{ marginTop: 12 }}>⚠ {dErr}</div>}
