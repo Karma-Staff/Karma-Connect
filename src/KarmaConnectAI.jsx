@@ -22,6 +22,7 @@ import { BoardView } from "./views/BoardView.jsx";
 import { RemindersView } from "./views/RemindersView.jsx";
 import { listHistory, writeHistory, deleteHistory, setLeadStatus, HISTORY_PAGE_SIZE } from "./lib/history.js";
 import { setReminder, listReminders } from "./lib/reminders.js";
+import { getProspectBriefPdf } from "./lib/leads.js";
 import { scoreFit } from "./lib/scoring.js";
 import { currentUser } from "./lib/auth.js";
 import { requestApproval, myApprovals, listApprovals, decideApproval } from "./lib/approvals.js";
@@ -60,6 +61,7 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   const [meetLen, setMeetLen] = useState(saved.meetLen || "standard");
   const [prospectReply, setProspectReply] = useState(saved.prospectReply || "");
   const [toast, setToast] = useState("");
+  const [exportingBrief, setExportingBrief] = useState(false);
   const [confirmState, setConfirmState] = useState(null); // { title, message, confirmLabel, danger, onConfirm }
   const [history, setHistory] = useState([]);
   const [historyPage, setHistoryPage] = useState(0);
@@ -580,6 +582,21 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
   const fit = scoreFit(prospect);
   const fitRows = [["ICP Fit", fit.icp], ["Qualification", fit.qualification], ["Buying readiness", fit.readiness]];
 
+  // Export this prospect's brief (details + fit + AI analysis) as a PDF. Zero tokens.
+  async function exportBrief() {
+    if (!analysis) { showToast("Run AI Analysis first."); return; }
+    setExportingBrief(true);
+    try {
+      const blob = await getProspectBriefPdf({ prospect, analysis, fit });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const nm = [prospect.firstName, prospect.lastName].filter(Boolean).join("-").toLowerCase() || "prospect";
+      a.href = url; a.download = "karma-connect-" + nm + "-brief.pdf";
+      document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+    } catch (e) { showToast("Could not export the PDF."); }
+    setExportingBrief(false);
+  }
+
   // Prospect completion + research coverage + opportunity fit (derived from current data).
   const COMPLETION_FIELDS = ["firstName", "lastName", "title", "company", "industry", "location", "headline", "about", "experience", "website", "companyDesc", "news"];
   const completion = Math.round((100 * COMPLETION_FIELDS.filter((k) => String(prospect[k] || "").trim()).length) / COMPLETION_FIELDS.length);
@@ -868,6 +885,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
                   <div className="iblock full" style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between" }}>
                     <span style={{ color: "var(--muted)", fontSize: 13.5 }}>Profile ready — the engines are unlocked. Start with a connection request.</span>
                     <div style={{ display: "flex", gap: 10 }}>
+                      <button className="btn ghost sm" onClick={exportBrief} disabled={exportingBrief}>{exportingBrief ? "Preparing…" : "Export PDF"}</button>
                       <button className="btn ghost sm" onClick={runAnalysis}>Re-run analysis</button>
                       <button className="btn primary sm" onClick={() => setView("connection")}>Connection requests →</button>
                     </div>

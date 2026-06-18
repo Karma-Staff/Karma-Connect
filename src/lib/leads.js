@@ -25,3 +25,14 @@ export async function getLeadsPdf() {
   if (!res.ok) throw new Error("Could not generate the PDF.");
   return res.blob();
 }
+
+// One prospect's brief (details + fit + AI analysis) as a PDF. Returns a Blob.
+export async function getProspectBriefPdf(payload) {
+  const res = await fetch("/api/leads/brief.pdf", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: "Bearer " + getAccessToken() },
+    body: JSON.stringify(payload || {}),
+  });
+  if (!res.ok) throw new Error("Could not generate the PDF.");
+  return res.blob();
+}
