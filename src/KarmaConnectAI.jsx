@@ -15,6 +15,7 @@ import { MsgCard } from "./components/MsgCard.jsx";
 import { HistoryView } from "./views/HistoryView.jsx";
 import { ApprovalsView } from "./views/ApprovalsView.jsx";
 import { SettingsView } from "./views/SettingsView.jsx";
+import { UsageView } from "./views/UsageView.jsx";
 import { listHistory, writeHistory, deleteHistory, setLeadStatus, HISTORY_PAGE_SIZE } from "./lib/history.js";
 import { scoreFit } from "./lib/scoring.js";
 import { currentUser } from "./lib/auth.js";
@@ -446,6 +447,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
     { id: "followup", label: "Follow-up Engine", ic: Ic.fup, gate: true, count: results.followup.length },
     { id: "history", label: "History", ic: Ic.hist, count: history.length },
     ...(isAdmin ? [{ id: "approvals", label: "Approvals", ic: Ic.intel, admin: true, count: adminList.filter((a) => a.status === "pending").length }] : []),
+    { id: "usage", label: "Usage & cost", ic: Ic.usage },
     { id: "settings", label: "Settings", ic: Ic.cog },
   ];
 
@@ -587,7 +589,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
                 {n.id === "connection" && <div className="navlbl" style={{ marginTop: 4 }}>Outreach</div>}
                 {n.id === "history" && <div className="navlbl" style={{ marginTop: 4 }}>Library</div>}
                 {n.id === "approvals" && <div className="navlbl" style={{ marginTop: 4 }}>Admin</div>}
-                {n.id === "settings" && <div className="navlbl" style={{ marginTop: 4 }}>Account</div>}
+                {n.id === "usage" && <div className="navlbl" style={{ marginTop: 4 }}>Account</div>}
                 <button className={"nav" + (view === n.id ? " on" : "") + (locked ? " lock" : "")} onClick={() => { if (!locked) setView(n.id); }}>
                   {n.ic}{n.label}
                   {n.count > 0 && <span className="ct">{n.count}</span>}
@@ -939,6 +941,8 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
           {view === "approvals" && isAdmin && (
             <ApprovalsView adminList={adminList} onRefresh={loadAdminList} onDecide={doDecide} />
           )}
+
+          {view === "usage" && <UsageView />}
 
           {view === "settings" && (
             <SettingsView user={me} isAdmin={isAdmin} askConfirm={askConfirm} showToast={showToast} />

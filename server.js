@@ -508,16 +508,26 @@ app.delete("/api/history/:id", requireUser, async (req, res) => {
 // ─────────────────────────────── Usage ──────────────────────────────
 app.get("/api/usage", requireUser, async (req, res) => {
   try {
-    const { rows } = await q(
-      `select coalesce(sum(input_tokens),0)::bigint as input_tokens,
+    const totalsSql = `select coalesce(sum(input_tokens),0)::bigint as input_tokens,
               coalesce(sum(output_tokens),0)::bigint as output_tokens,
               coalesce(sum(cache_read_tokens),0)::bigint as cache_read_tokens,
               coalesce(sum(cost_usd),0)::numeric as cost_usd,
               count(*)::int as calls
-         from usage where user_id = $1`,
-      [req.userId],
-    );
-    res.json({ totals: rows[0] });
+         from usage where user_id = $1`;
+    const monthSql = `select coalesce(sum(input_tokens),0)::bigint as input_tokens,
+              coalesce(sum(output_tokens),0)::bigint as output_tokens,
+              coalesce(sum(cost_usd),0)::numeric as cost_usd,
+              count(*)::int as calls
+         from usage where user_id = $1 and ts >= date_trunc('month', now())`;
+    const byKindSql = `select kind,
+              coalesce(sum(input_tokens + output_tokens),0)::bigint as tokens,
+              coalesce(sum(cost_usd),0)::numeric as cost_usd,
+              count(*)::int as calls
+         from usage where user_id = $1 group by kind order by cost_usd desc`;
+    const [totals, month, byKind] = await Promise.all([
+      q(totalsSql, [req.userId]), q(monthSql, [req.userId]), q(byKindSql, [req.userId]),
+    ]);
+    res.json({ totals: totals.rows[0], month: month.rows[0], byKind: byKind.rows });
   } catch (e) { res.status(500).json({ error: { message: "Could not load usage." } }); }
 });
 
