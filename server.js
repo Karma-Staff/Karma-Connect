@@ -523,6 +523,36 @@ app.delete("/api/history/:id", requireUser, async (req, res) => {
   } catch (e) { res.status(500).json({ error: { message: "Could not delete." } }); }
 });
 
+// All of the user's leads (minimal fields) for the board + export. Capped for safety.
+app.get("/api/leads/all", requireUser, async (req, res) => {
+  try {
+    const { rows } = await q(
+      "select id, label, sub, status, updated_at, created_at from prospects where user_id = $1 order by updated_at desc limit 1000",
+      [req.userId],
+    );
+    res.json({ rows });
+  } catch (e) { res.status(500).json({ error: { message: "Could not load leads." } }); }
+});
+
+// Pipeline metrics for the dashboard (counts per stage + this week). Deterministic, no AI.
+app.get("/api/stats", requireUser, async (req, res) => {
+  try {
+    const { rows } = await q(
+      `select count(*)::int as total,
+              count(*) filter (where created_at >= now() - interval '7 days')::int as added_week,
+              count(*) filter (where status = 'new')::int as s_new,
+              count(*) filter (where status = 'connected')::int as s_connected,
+              count(*) filter (where status = 'replied')::int as s_replied,
+              count(*) filter (where status = 'meeting')::int as s_meeting,
+              count(*) filter (where status = 'won')::int as s_won,
+              count(*) filter (where status = 'lost')::int as s_lost
+         from prospects where user_id = $1`,
+      [req.userId],
+    );
+    res.json({ stats: rows[0] });
+  } catch (e) { res.status(500).json({ error: { message: "Could not load stats." } }); }
+});
+
 // ─────────────────────────────── Usage ──────────────────────────────
 app.get("/api/usage", requireUser, async (req, res) => {
   try {

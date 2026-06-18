@@ -17,6 +17,7 @@ import { ApprovalsView } from "./views/ApprovalsView.jsx";
 import { SettingsView } from "./views/SettingsView.jsx";
 import { UsageView } from "./views/UsageView.jsx";
 import { AdminMembersView } from "./views/AdminMembersView.jsx";
+import { DashboardView } from "./views/DashboardView.jsx";
 import { listHistory, writeHistory, deleteHistory, setLeadStatus, HISTORY_PAGE_SIZE } from "./lib/history.js";
 import { scoreFit } from "./lib/scoring.js";
 import { currentUser } from "./lib/auth.js";
@@ -440,6 +441,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
   }
 
   const NAV = [
+    { id: "dashboard", label: "Dashboard", ic: Ic.dash },
     { id: "hub", label: "Prospect Hub", ic: Ic.hub },
     { id: "intel", label: "Intelligence", ic: Ic.intel, gate: true },
     { id: "connection", label: "Connection Requests", ic: Ic.conn, gate: true, count: results.connection.length },
@@ -949,6 +951,8 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
           {view === "members" && isAdmin && (
             <AdminMembersView meId={me && me.id} askConfirm={askConfirm} showToast={showToast} />
           )}
+
+          {view === "dashboard" && <DashboardView onGoStage={(st) => { setHistStatus(st); setView("history"); }} />}
 
           {view === "usage" && <UsageView />}
 
