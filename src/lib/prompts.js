@@ -50,6 +50,7 @@ CRITICAL OUTPUT RULES:
 - Every string value must be properly JSON-escaped. No unescaped quotes or newlines inside strings.
 - Keep every array item under 12 words. Keep "persona" under 40 words.
 - All arrays must have exactly the count specified — no more, no fewer.
+- For "hooks" (connection angles), prefer clearly recent signals (about the last 1-2 weeks); never base a hook on an old, stale, or undated post.
 
 Return this exact structure:
 {"persona":"2-3 sentence portrait (under 40 words total)","responsibilities":["item 1","item 2","item 3","item 4"],"painPoints":["item 1","item 2","item 3","item 4"],"goals":["item 1","item 2","item 3"],"hooks":["item 1","item 2","item 3","item 4"],"trends":["item 1","item 2","item 3"],"challenges":["item 1","item 2","item 3"]}`;
