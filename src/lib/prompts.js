@@ -107,24 +107,43 @@ ${ARR} ${n} objects:
 [{"message":"the full formatted message exactly as it should be sent","angle":"2-4 word value angle","personalization":<int 58-96>,"acceptance":<int 45-88>,"reasoning":"one sentence on why it converts"}]`;
 }
 
-export function pFollowup(base) {
-  return base + `\nTASK: No reply after the meeting request. Write a 5-step FOLLOW-UP SEQUENCE. Each step MUST introduce something genuinely NEW — never repeat earlier messages, never use "just checking in" / "following up" / "circling back".
+// The follow-up stages of a Karma Staff engagement (the client interviews and hires our
+// trained candidates). Exported so the UI can offer them. One email is generated per stage.
+export const FOLLOWUP_STAGES = [
+  { v: "post_meeting", label: "After the meeting", intent: "We just had a good intro/discovery meeting. Thank them for their time, briefly reinforce the value of our trained candidates, and propose the clear next step: setting up interviews with one or more of our candidates." },
+  { v: "schedule_interview", label: "Schedule a candidate interview", intent: "They're open to interviewing one of our trained candidates. Make it easy to lock in a date and time; offer specifics and reduce friction so they commit to an interview slot." },
+  { v: "interview_booked", label: "Interview booked — confirm", intent: "A candidate interview is scheduled. Confirm the time, give brief helpful context on the candidate, and set expectations so the interview goes well." },
+  { v: "post_interview", label: "After the interview — get feedback", intent: "The interview has happened. Ask for honest feedback, find out which candidate they're leaning toward, and keep momentum toward a hiring decision." },
+  { v: "selected_go", label: "Candidate chosen — moving ahead", intent: "They've chosen a candidate and want to proceed. Move toward closing: confirm the selection and outline the next steps (offer, paperwork, start date) to make starting smooth." },
+  { v: "selected_timing", label: "Chosen — deciding start date", intent: "They've chosen a candidate but need time to decide the start date. Stay warm and helpful, remove blockers, and gently guide them to commit to a start date." },
+  { v: "closing", label: "Closing the deal", intent: "They've confirmed they'll go ahead with the candidate from a specific start date. Confirm the details and next steps and close the engagement professionally and warmly." },
+];
 
-Steps (in order): 1) Gentle reminder  2) New insight  3) Different angle  4) Industry-specific observation  5) Respectful close-out (graceful, no guilt).
+export function pFollowup(base, stage, transcript) {
+  const s = stage || FOLLOWUP_STAGES[0];
+  const hasT = transcript && transcript.trim();
+  const t = hasT ? `\n\nCALL / MEETING TRANSCRIPT (rely on this heavily — reference specific things they actually said; never contradict or invent):\n"""\n${transcript.trim().slice(0, 12000)}\n"""\n` : "";
+  return base + t + `\nTASK: Write ONE follow-up email for THIS stage of a staffing engagement (Karma Staff places trained candidates with the client, who interviews and hires them).
+STAGE: ${s.label}
+GOAL OF THIS EMAIL: ${s.intent}
 
-MANDATORY FORMAT for every step — follow this exact structure:
+HARD RULES:
+- Output EXACTLY ONE email — not a sequence, not multiple variations.
+- ${hasT ? "Ground it in the transcript: reference at least one specific, real point they made. " : "Use only the known facts above; never invent specifics. "}Natural, warm, concise, human. Never "just checking in".
+- Make the next step crystal clear and easy, matched to the stage goal. Low-pressure.
+- When proposing a time to meet or interview, include the sender's calendar link on its own line; otherwise omit it.
+
+MANDATORY FORMAT:
 Hi [prospect first name],
 
-[body — 2-3 sentences, something genuinely new each time]
+[body — 2-4 short sentences, specific to this stage and (if present) the transcript]
 
-[CALENDAR LINK from sender section on its own line — include on steps 1 through 4 only, omit on step 5 close-out]
+[CALENDAR LINK from the sender section on its own line — only when proposing a time]
 
 Best,
 [SIGN-OFF NAME from sender section]
 [EMAIL from sender section]
 www.karmastaff.com
-
 ${HUMANIZE}
-${ARR} EXACTLY 5 objects in order:
-[{"stage":"Gentle reminder","message":"the full formatted message","fresh":"the new element introduced","reasoning":"why it works"}]`;
+Return ONLY a single JSON object (no markdown): {"stage":"${s.label}","message":"the full email exactly as it should be sent","reasoning":"one sentence on why this fits the stage"}`;
 }

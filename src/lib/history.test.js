@@ -42,14 +42,14 @@ beforeEach(() => {
 
 describe("history backend adapter (authenticated)", () => {
   it("maps API rows to entries on listHistory", async () => {
-    state.rows = [{ id: "a", label: "Jane", sub: "Owner", data: { x: 1 }, updated_at: "2026-01-01T00:00:00Z" }];
+    state.rows = [{ id: "a", label: "Jane", sub: "Owner", status: "meeting", next_action_at: null, next_action_note: "", data: { x: 1 }, updated_at: "2026-01-01T00:00:00Z" }];
     const out = await listHistory("jane@x.com", 0);
-    expect(out).toEqual([{ id: "a", label: "Jane", sub: "Owner", savedAt: "2026-01-01T00:00:00Z", snapshot: { x: 1 } }]);
+    expect(out).toEqual([{ id: "a", label: "Jane", sub: "Owner", status: "meeting", nextActionAt: null, nextActionNote: "", savedAt: "2026-01-01T00:00:00Z", snapshot: { x: 1 } }]);
   });
 
   it("posts mapped entries on writeHistory", async () => {
-    await writeHistory("jane@x.com", [{ id: "a", label: "Jane", sub: "Owner", snapshot: { x: 1 } }]);
-    expect(state.lastPost).toEqual({ entries: [{ id: "a", label: "Jane", sub: "Owner", data: { x: 1 } }] });
+    await writeHistory("jane@x.com", [{ id: "a", label: "Jane", sub: "Owner", status: "won", snapshot: { x: 1 } }]);
+    expect(state.lastPost).toEqual({ entries: [{ id: "a", label: "Jane", sub: "Owner", status: "won", data: { x: 1 } }] });
   });
 
   it("deletes by id on deleteHistory", async () => {
