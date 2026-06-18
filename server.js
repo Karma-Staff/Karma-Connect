@@ -74,6 +74,12 @@ async function ensureSchema() {
     await q("alter table users add column if not exists reset_sent_at timestamptz");
     await q("create index if not exists users_reset_token_idx on users (reset_token)");
     await q("alter table prospects add column if not exists status text not null default 'new'");
+    await q(`create table if not exists lead_notes (
+      id uuid primary key default gen_random_uuid(),
+      user_id uuid not null references users (id) on delete cascade,
+      prospect_id text not null, kind text not null default 'note',
+      body text not null, created_at timestamptz not null default now())`);
+    await q("create index if not exists lead_notes_idx on lead_notes (user_id, prospect_id, created_at desc)");
   } catch (e) { console.error("ensureSchema:", e.message); }
 }
 
@@ -493,6 +499,9 @@ app.post("/api/history/:id/status", requireUser, async (req, res) => {
       [status, req.userId, String(req.params.id)],
     );
     if (!rows[0]) return res.status(404).json({ error: { message: "Lead not found." } });
+    // Auto-log the stage change to the lead's activity timeline.
+    await q("insert into lead_notes (user_id, prospect_id, kind, body) values ($1,$2,'activity',$3)",
+      [req.userId, String(req.params.id), "Stage changed to " + status]).catch(() => {});
     res.json({ ok: true, status: rows[0].status });
   } catch (e) { res.status(500).json({ error: { message: "Could not update status." } }); }
 });
@@ -551,6 +560,38 @@ app.get("/api/stats", requireUser, async (req, res) => {
     );
     res.json({ stats: rows[0] });
   } catch (e) { res.status(500).json({ error: { message: "Could not load stats." } }); }
+});
+
+// ───────────────────────── Lead notes & activity ────────────────────
+app.get("/api/leads/:id/notes", requireUser, async (req, res) => {
+  try {
+    const { rows } = await q(
+      "select id, kind, body, created_at from lead_notes where user_id = $1 and prospect_id = $2 order by created_at desc limit 200",
+      [req.userId, String(req.params.id)],
+    );
+    res.json({ notes: rows });
+  } catch (e) { res.status(500).json({ error: { message: "Could not load notes." } }); }
+});
+
+app.post("/api/leads/:id/notes", requireUser, async (req, res) => {
+  try {
+    const body = String(req.body?.body || "").trim().slice(0, 4000);
+    if (!body) return res.status(400).json({ error: { message: "The note can't be empty." } });
+    const { rows } = await q(
+      "insert into lead_notes (user_id, prospect_id, kind, body) values ($1,$2,'note',$3) returning id, kind, body, created_at",
+      [req.userId, String(req.params.id), body],
+    );
+    res.json({ note: rows[0] });
+  } catch (e) { res.status(500).json({ error: { message: "Could not add the note." } }); }
+});
+
+app.delete("/api/leads/:id/notes/:noteId", requireUser, async (req, res) => {
+  try {
+    // Only user-typed notes are deletable; auto-logged activity is immutable.
+    await q("delete from lead_notes where user_id = $1 and prospect_id = $2 and id = $3 and kind = 'note'",
+      [req.userId, String(req.params.id), String(req.params.noteId)]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: { message: "Could not delete the note." } }); }
 });
 
 // ─────────────────────────────── Usage ──────────────────────────────

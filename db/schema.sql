@@ -94,6 +94,20 @@ create table if not exists lead_approvals (
 );
 create index if not exists lead_approvals_status_idx on lead_approvals (status, requested_at desc);
 
+-- ─────────────────────────────────────────────────────────────────────────────
+-- lead_notes: per-lead notes and activity timeline. kind = 'note' (typed by the
+-- user, deletable) or 'activity' (auto-logged, e.g. a stage change; immutable).
+-- ─────────────────────────────────────────────────────────────────────────────
+create table if not exists lead_notes (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null references users (id) on delete cascade,
+  prospect_id text not null,
+  kind        text not null default 'note',
+  body        text not null,
+  created_at  timestamptz not null default now()
+);
+create index if not exists lead_notes_idx on lead_notes (user_id, prospect_id, created_at desc);
+
 -- Keep updated_at fresh on prospects.
 create or replace function touch_updated_at()
 returns trigger language plpgsql as $$

@@ -2,6 +2,7 @@
 // Presentational: all state + actions come in as props.
 import { useState, useRef, useEffect } from "react";
 import { Ic } from "../components/icons.jsx";
+import { NotesPanel } from "./NotesPanel.jsx";
 
 export const LEAD_STATUSES = [
   { v: "new", label: "New", color: "#9aa7c4" },
@@ -53,6 +54,7 @@ function StatusPicker({ value, onChange }) {
 }
 
 export function HistoryView({ history, historyMore, onOpen, onDelete, onLoadMore, onGoHub, askConfirm, query, status, onSearch, onFilter, onSetStatus }) {
+  const [notesOpen, setNotesOpen] = useState(null); // prospect id whose notes are expanded
   return (
     <div>
       <div className="head"><div className="eyebrow">Saved prospects</div><h2>History</h2><p>Every prospect you save lands here, tied to your account. Track each lead's stage, search, open to restore everything, or remove it.</p></div>
@@ -101,9 +103,11 @@ export function HistoryView({ history, historyMore, onOpen, onDelete, onLoadMore
                 <div className="mact" style={{ alignItems: "center", gap: 8 }}>
                   <label style={{ fontSize: 11, color: "var(--faint)" }}>Stage</label>
                   <StatusPicker value={h.status || "new"} onChange={(v) => onSetStatus(h.id, v)} />
-                  <button className="iconbtn" onClick={() => onOpen(h)} style={{ marginLeft: "auto" }}>Open</button>
+                  <button className="iconbtn" onClick={() => setNotesOpen(notesOpen === h.id ? null : h.id)} style={{ marginLeft: "auto" }}>{notesOpen === h.id ? "Hide notes" : "Notes"}</button>
+                  <button className="iconbtn" onClick={() => onOpen(h)}>Open</button>
                   <button className="iconbtn" onClick={() => askConfirm({ title: "Remove from history?", message: "Remove " + (h.label || "this prospect") + " and everything saved for them. This can't be undone.", confirmLabel: "Delete", danger: true, onConfirm: () => onDelete(h.id) })}>Delete</button>
                 </div>
+                {notesOpen === h.id && <NotesPanel prospectId={h.id} />}
               </div>
             );
           })}
