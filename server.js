@@ -55,12 +55,15 @@ async function q(text, params) {
 }
 
 // ── Allowlist (mirrors the proxy) — optional lock-down to a domain / exact emails ──
+// Registration/sign-in is locked to a single email domain. Defaults to karmastaff.com
+// so the app is never open to the public even if the env var is unset; override with
+// ALLOWED_EMAIL_DOMAIN (or pin exact addresses with ALLOWED_EMAILS).
+const ALLOWED_DOMAIN = (process.env.ALLOWED_EMAIL_DOMAIN || "karmastaff.com").toLowerCase();
 function emailAllowed(email) {
   const e = (email || "").toLowerCase();
   const allowEmails = (process.env.ALLOWED_EMAILS || "").toLowerCase().split(",").map((s) => s.trim()).filter(Boolean);
-  const domain = (process.env.ALLOWED_EMAIL_DOMAIN || "").toLowerCase();
   if (allowEmails.length) return allowEmails.includes(e);
-  return !domain || e.endsWith("@" + domain);
+  return !ALLOWED_DOMAIN || e.endsWith("@" + ALLOWED_DOMAIN);
 }
 
 // Admins can approve leads for the locked engines. Set ADMIN_EMAILS (comma-separated)
@@ -155,7 +158,7 @@ app.post("/api/auth/signup", async (req, res) => {
     const lastName = String(req.body?.lastName || "").trim();
     if (!EMAIL_RE.test(email)) return res.status(400).json({ error: { message: "Enter a valid email address." } });
     if (password.length < 8) return res.status(400).json({ error: { message: "Use a password of at least 8 characters." } });
-    if (!emailAllowed(email)) return res.status(403).json({ error: { message: "This email is not allowed to use Karma Connect." } });
+    if (!emailAllowed(email)) return res.status(403).json({ error: { message: "Registration is limited to @" + ALLOWED_DOMAIN + " email addresses." } });
 
     // Optional admin signup code. Empty = normal member. Non-empty must match ADMIN_SIGNUP_CODE,
     // otherwise reject so the person knows the code was wrong (rather than silently demoting them).
