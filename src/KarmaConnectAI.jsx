@@ -902,7 +902,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
 
           {view === "meeting" && (engineLocked("meeting") ? <ApprovalGate title="Meeting Requests" /> : (
             <div>
-              <div className="head"><div className="eyebrow">Section 03 · Once rapport is built</div><h2>Meeting request generator</h2><p>Value-focused, non-salesy meeting requests that make the ask an easy yes. Choose a length, then generate 10 angles.</p></div>
+              <div className="head"><div className="eyebrow">Section 03 · Once rapport is built</div><h2>Meeting request generator</h2><p>Value-focused, non-salesy meeting requests that make the ask an easy yes. Choose a length, then generate 3 angles.</p></div>
               <ProspectStrip />
               <div className="panel" style={{ marginBottom: 20, borderColor: prospectReply.trim() ? "rgba(82,211,158,.3)" : "var(--border)" }}>
                 <div className="sect-title">Their reply (optional) · paste what the prospect said and the messages will respond to it</div>
@@ -918,12 +918,12 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
               </div>
               <div className="toprow">
                 <div className="seg">{[["short", "Short"], ["standard", "Standard"], ["executive", "Executive"]].map(([v, l]) => <button key={v} className={meetLen === v ? "on" : ""} onClick={() => setMeetLen(v)}>{l}</button>)}</div>
-                <button className="btn primary" onClick={() => generate("meeting_" + meetLen)} disabled={loading["meeting_" + meetLen]}>{loading["meeting_" + meetLen] ? "Generating…" : (results["meeting_" + meetLen].length ? "Regenerate" : "Generate 10")}</button>
+                <button className="btn primary" onClick={() => generate("meeting_" + meetLen)} disabled={loading["meeting_" + meetLen]}>{loading["meeting_" + meetLen] ? "Generating…" : (results["meeting_" + meetLen].length ? "Regenerate" : "Generate 3")}</button>
               </div>
               {errors["meeting_" + meetLen] && <div className="err" style={{ marginBottom: 16 }}>⚠ {errors["meeting_" + meetLen]}</div>}
               {loading["meeting_" + meetLen] && results["meeting_" + meetLen].length === 0 && <GenSkeleton />}
               {!loading["meeting_" + meetLen] && results["meeting_" + meetLen].length === 0 && !errors["meeting_" + meetLen] && (
-                <div className="empty"><div className="eic">{Ic.meet}</div><h3>No {meetLen} meeting requests yet</h3><p>Generate 10 personalized {meetLen} meeting requests for {name}.</p><button className="btn primary" onClick={() => generate("meeting_" + meetLen)}>Generate for {name}</button></div>
+                <div className="empty"><div className="eic">{Ic.meet}</div><h3>No {meetLen} meeting requests yet</h3><p>Generate 3 personalized {meetLen} meeting requests for {name}.</p><button className="btn primary" onClick={() => generate("meeting_" + meetLen)}>Generate for {name}</button></div>
               )}
               {results["meeting_" + meetLen].length > 0 && (
                 <div className="grid2">
