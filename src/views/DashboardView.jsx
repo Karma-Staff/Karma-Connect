@@ -53,7 +53,6 @@ export function DashboardView({ onGoStage }) {
   const reachedMeeting = counts.meeting + counts.won;
   const meetPct = total ? Math.round((reachedMeeting / total) * 100) : 0;
   const winRate = total ? Math.round((counts.won / total) * 100) : 0;
-  const maxCount = Math.max(1, ...Object.values(counts));
 
   return (
     <div className="dash">
@@ -82,8 +81,8 @@ export function DashboardView({ onGoStage }) {
                   const pct = total ? Math.round((c / total) * 100) : 0;
                   return (
                     <div className="funnel-row" key={st.v} onClick={() => onGoStage && onGoStage(st.v)} title={"View " + st.label + " leads"}>
-                      <span className="fl"><span className="fdot" style={{ background: st.color, boxShadow: "0 0 8px " + st.color }} />{st.label}</span>
-                      <div className="funnel-track"><div className="funnel-fill" style={{ width: Math.round((c / maxCount) * 100) + "%", background: "linear-gradient(90deg, " + st.color + "cc, " + st.color + ")", boxShadow: "0 0 10px " + st.color + "66" }} /></div>
+                      <span className="fdot" style={{ background: st.color, boxShadow: "0 0 8px " + st.color }} />
+                      <span className="fl">{st.label}</span>
                       <span className="fc">{c}<small>{pct}%</small></span>
                     </div>
                   );
