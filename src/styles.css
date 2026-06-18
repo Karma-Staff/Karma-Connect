@@ -474,3 +474,30 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
 /* Lift the card whose picker is open so the menu floats above neighbouring cards */
 .kc .mcard{position:relative}
 .kc .mcard:has(.statuspick.open){z-index:30}
+
+/* ── Dashboard ── */
+.kc .dash{display:flex; flex-direction:column; gap:20px}
+.kc .dash-stats{display:grid; grid-template-columns:repeat(4,1fr); gap:14px}
+.kc .dash-tile{position:relative; overflow:hidden; display:flex; align-items:center; gap:15px; min-height:96px; padding:18px;
+  border-radius:16px; border:1px solid var(--border);
+  background:linear-gradient(135deg, rgba(255,255,255,.10), rgba(255,255,255,.02) 45%, rgba(255,255,255,0) 80%), var(--panel);
+  backdrop-filter:blur(20px) saturate(1.5); -webkit-backdrop-filter:blur(20px) saturate(1.5);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.14), inset 0 -1px 1px rgba(0,0,0,.25);
+  transition:transform .22s ease, border-color .22s ease, box-shadow .22s ease}
+.kc .dash-tile:hover{transform:translateY(-3px); border-color:var(--border2);
+  box-shadow:0 26px 50px -26px rgba(0,0,0,.9), inset 0 1px 0 rgba(255,255,255,.26)}
+.kc .dash-tile .tl{font-size:10.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--faint); font-weight:700}
+.kc .dash-tile .tv{font-family:'Lora',serif; font-size:30px; font-weight:800; line-height:1; margin:5px 0 4px; color:var(--text)}
+.kc .dash-tile .ts{font-size:11.5px; color:var(--muted)}
+.kc .dash-accent{width:4px; height:48px; border-radius:4px; flex:0 0 auto}
+.kc .funnel{display:flex; flex-direction:column; gap:11px}
+.kc .funnel-row{display:flex; align-items:center; gap:13px; cursor:pointer; padding:4px; margin:0 -4px; border-radius:10px; transition:background .15s ease}
+.kc .funnel-row:hover{background:rgba(124,150,210,.08)}
+.kc .funnel-row .fl{width:100px; display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--muted); font-weight:600; flex:0 0 auto}
+.kc .funnel-row .fdot{width:8px; height:8px; border-radius:50%; flex:0 0 auto}
+.kc .funnel-track{flex:1; height:12px; border-radius:7px; background:rgba(255,255,255,.05); box-shadow:inset 0 1px 2px rgba(0,0,0,.4); overflow:hidden}
+.kc .funnel-fill{height:100%; border-radius:7px; min-width:2px; transition:width .55s cubic-bezier(.4,0,.2,1)}
+.kc .funnel-row .fc{width:64px; text-align:right; font-size:13px; color:var(--text); font-weight:700; flex:0 0 auto}
+.kc .funnel-row .fc small{color:var(--faint); font-weight:600; font-size:10.5px; margin-left:5px}
+@media(max-width:900px){ .kc .dash-stats{grid-template-columns:repeat(2,1fr)} }
+@media(max-width:520px){ .kc .dash-stats{grid-template-columns:1fr} }

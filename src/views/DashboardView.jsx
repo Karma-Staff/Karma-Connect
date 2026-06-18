@@ -1,14 +1,21 @@
-// Pipeline dashboard: funnel metrics + CSV/JSON export. Deterministic — no AI tokens.
+// Pipeline dashboard: metric tiles + stage funnel + PDF export. Deterministic — no AI tokens.
 import { useState, useEffect } from "react";
 import { getStats, getLeadsPdf } from "../lib/leads.js";
 import { LEAD_STATUSES } from "./HistoryView.jsx";
 
-function Stat({ label, value, sub }) {
+// One metric tile. With `ring` (0-100) it shows a conic progress ring; otherwise a big number
+// with a colored accent stripe — matching the app's glass cards.
+function Tile({ label, value, sub, ring, color }) {
   return (
-    <div className="scorecard" style={{ flexDirection: "column", alignItems: "flex-start", gap: 4 }}>
-      <div className="scl">{label}</div>
-      <div style={{ fontSize: 28, fontWeight: 800, color: "var(--text)", fontFamily: "'Lora',serif" }}>{value}</div>
-      {sub && <div className="scv">{sub}</div>}
+    <div className="dash-tile">
+      {ring != null
+        ? <div className="progring" style={{ "--p": ring, "--c": color }}><span>{value}</span></div>
+        : <span className="dash-accent" style={{ background: color }} />}
+      <div style={{ minWidth: 0 }}>
+        <div className="tl">{label}</div>
+        {ring == null && <div className="tv">{value}</div>}
+        <div className="ts">{sub}</div>
+      </div>
     </div>
   );
 }
@@ -35,63 +42,63 @@ export function DashboardView({ onGoStage }) {
 
   async function exportPdf() {
     setExporting(true);
-    try {
-      downloadBlob("karma-connect-leads.pdf", await getLeadsPdf());
-    } catch (e) { /* ignore */ }
+    try { downloadBlob("karma-connect-leads.pdf", await getLeadsPdf()); } catch (e) { /* ignore */ }
     setExporting(false);
   }
 
   const s = stats || {};
   const total = s.total || 0;
   const counts = { new: s.s_new || 0, connected: s.s_connected || 0, replied: s.s_replied || 0, meeting: s.s_meeting || 0, won: s.s_won || 0, lost: s.s_lost || 0 };
+  const open = counts.new + counts.connected + counts.replied + counts.meeting;
   const reachedMeeting = counts.meeting + counts.won;
+  const meetPct = total ? Math.round((reachedMeeting / total) * 100) : 0;
   const winRate = total ? Math.round((counts.won / total) * 100) : 0;
   const maxCount = Math.max(1, ...Object.values(counts));
 
   return (
-    <div>
-      <div className="head"><div className="eyebrow">Overview</div><h2>Dashboard</h2><p>Your pipeline at a glance — counts by stage, conversion, and exports. All from your saved leads.</p></div>
+    <div className="dash">
+      <div className="head"><div className="eyebrow">Overview</div><h2>Dashboard</h2><p>Your pipeline at a glance — counts by stage, conversion, and a PDF export. All from your saved leads.</p></div>
 
       {loading && <div className="panel" style={{ color: "var(--muted)" }}>Loading…</div>}
       {err && <div className="err">⚠ {err}</div>}
 
       {!loading && !err && (
         <>
-          <div className="scorestrip">
-            <Stat label="Total leads" value={total} sub={(s.added_week || 0) + " added this week"} />
-            <Stat label="Reached a meeting" value={reachedMeeting} sub={total ? Math.round((reachedMeeting / total) * 100) + "% of leads" : "—"} />
-            <Stat label="Win rate" value={winRate + "%"} sub={counts.won + " won · " + counts.lost + " lost"} />
+          <div className="dash-stats">
+            <Tile label="Total leads" value={total} sub={(s.added_week || 0) + " added this week"} color="var(--ai)" />
+            <Tile label="In pipeline" value={open} sub="active, not closed" color="var(--steel)" />
+            <Tile label="Reached meeting" ring={meetPct} value={meetPct + "%"} sub={reachedMeeting + " of " + total + " leads"} color="#E7B74B" />
+            <Tile label="Win rate" ring={winRate} value={winRate + "%"} sub={counts.won + " won · " + counts.lost + " lost"} color="#52d39e" />
           </div>
 
           <div className="panel">
             <div className="sect-title">Pipeline by stage</div>
             {total === 0 ? (
-              <p style={{ color: "var(--muted)", fontSize: 13 }}>No leads yet. Analyze a prospect and it'll show up here.</p>
+              <p style={{ color: "var(--muted)", fontSize: 13 }}>No leads yet. Run AI Analysis on a prospect and it'll show up here.</p>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div className="funnel">
                 {LEAD_STATUSES.map((st) => {
                   const c = counts[st.v] || 0;
+                  const pct = total ? Math.round((c / total) * 100) : 0;
                   return (
-                    <div key={st.v} onClick={() => onGoStage && onGoStage(st.v)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 12 }} title={"View " + st.label + " leads"}>
-                      <span style={{ width: 78, fontSize: 12.5, color: "var(--muted)" }}>{st.label}</span>
-                      <div style={{ flex: 1, height: 14, background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
-                        <div style={{ width: Math.round((c / maxCount) * 100) + "%", height: "100%", background: st.color, opacity: 0.85 }} />
-                      </div>
-                      <span style={{ width: 32, textAlign: "right", fontSize: 13, fontWeight: 700, color: "var(--text)" }}>{c}</span>
+                    <div className="funnel-row" key={st.v} onClick={() => onGoStage && onGoStage(st.v)} title={"View " + st.label + " leads"}>
+                      <span className="fl"><span className="fdot" style={{ background: st.color, boxShadow: "0 0 8px " + st.color }} />{st.label}</span>
+                      <div className="funnel-track"><div className="funnel-fill" style={{ width: Math.round((c / maxCount) * 100) + "%", background: "linear-gradient(90deg, " + st.color + "cc, " + st.color + ")", boxShadow: "0 0 10px " + st.color + "66" }} /></div>
+                      <span className="fc">{c}<small>{pct}%</small></span>
                     </div>
                   );
                 })}
               </div>
             )}
-            <div className="hint" style={{ marginTop: 10 }}>Click a stage to see those leads in History.</div>
+            <div className="hint" style={{ marginTop: 14 }}>Click a stage to open those leads in History.</div>
           </div>
 
-          <div className="panel">
-            <div className="sect-title">Export</div>
-            <p style={{ color: "var(--muted)", fontSize: 13.5, marginBottom: 12 }}>Download a branded PDF of all your leads (name, title/company, stage, dates) with a stage summary.</p>
-            <div className="toprow">
-              <button className="btn primary" onClick={exportPdf} disabled={exporting}>{exporting ? "Preparing…" : "Export PDF"}</button>
+          <div className="panel" style={{ display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
+            <div style={{ flex: "1 1 260px", minWidth: 0 }}>
+              <div className="sect-title" style={{ marginBottom: 8 }}>Export</div>
+              <p style={{ color: "var(--muted)", fontSize: 13.5, margin: 0, lineHeight: 1.6 }}>Download a branded PDF of all your leads — name, title/company, stage and dates, with a stage summary.</p>
             </div>
+            <button className="btn primary" onClick={exportPdf} disabled={exporting}>{exporting ? "Preparing…" : "Export PDF"}</button>
           </div>
         </>
       )}
