@@ -18,3 +18,10 @@ export async function getStats() {
   const data = await get("/api/stats");
   return data.stats || {};
 }
+
+// Branded PDF of all leads (generated server-side). Returns a Blob.
+export async function getLeadsPdf() {
+  const res = await fetch("/api/leads/export.pdf", { headers: { Authorization: "Bearer " + getAccessToken() } });
+  if (!res.ok) throw new Error("Could not generate the PDF.");
+  return res.blob();
+}

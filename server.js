@@ -16,6 +16,7 @@ const crypto = require("node:crypto");
 const express = require("express");
 const compression = require("compression");
 const bcrypt = require("bcryptjs");
+const PDFDocument = require("pdfkit");
 const { Pool } = require("pg");
 const { handleClaude, signJWT, verifyJWT, JWT_ISS } = require("./api/_proxy.cjs");
 
@@ -562,6 +563,62 @@ app.get("/api/stats", requireUser, async (req, res) => {
     );
     res.json({ stats: rows[0] });
   } catch (e) { res.status(500).json({ error: { message: "Could not load stats." } }); }
+});
+
+// Branded PDF export of the user's leads. Streams application/pdf.
+app.get("/api/leads/export.pdf", requireUser, async (req, res) => {
+  try {
+    const { rows } = await q(
+      "select label, sub, status, created_at, updated_at from prospects where user_id = $1 order by updated_at desc limit 1000",
+      [req.userId],
+    );
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", 'attachment; filename="karma-connect-leads.pdf"');
+    const doc = new PDFDocument({ size: "A4", margin: 48 });
+    doc.pipe(res);
+
+    const NAVY = "#0b2545", GOLD = "#b8860b", GREY = "#444", LIGHT = "#888";
+    const STATUS_LABEL = { new: "New", connected: "Connected", replied: "Replied", meeting: "Meeting", won: "Won", lost: "Lost" };
+    const counts = {};
+    for (const r of rows) counts[r.status] = (counts[r.status] || 0) + 1;
+
+    // Header
+    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(20).text("Karma Connect");
+    doc.fillColor(GOLD).font("Helvetica").fontSize(12).text("Lead export");
+    doc.fillColor(LIGHT).fontSize(9).text(new Date().toISOString().slice(0, 10) + "  ·  " + req.email + "  ·  " + rows.length + " leads");
+    doc.moveDown(0.5);
+    doc.moveTo(48, doc.y).lineTo(547, doc.y).strokeColor("#dddddd").lineWidth(1).stroke();
+    doc.moveDown(0.4);
+    const summary = ["new", "connected", "replied", "meeting", "won", "lost"].map((k) => STATUS_LABEL[k] + ": " + (counts[k] || 0)).join("    ");
+    doc.fillColor(GREY).font("Helvetica").fontSize(9.5).text(summary);
+    doc.moveDown(0.6);
+
+    // Table
+    const COLS = [{ x: 48, w: 150, t: "Name" }, { x: 200, w: 210, t: "Title / Company" }, { x: 412, w: 70, t: "Stage" }, { x: 484, w: 63, t: "Updated" }];
+    const header = () => {
+      doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(9);
+      for (const c of COLS) doc.text(c.t, c.x, doc.y, { width: c.w, continued: false });
+      doc.moveDown(0.2);
+      doc.moveTo(48, doc.y).lineTo(547, doc.y).strokeColor("#eeeeee").lineWidth(1).stroke();
+      doc.moveDown(0.25);
+    };
+    header();
+    doc.font("Helvetica").fontSize(9);
+    for (const r of rows) {
+      if (doc.y > 790) { doc.addPage(); header(); doc.font("Helvetica").fontSize(9); }
+      const y = doc.y;
+      doc.fillColor(GREY).text(r.label || "Untitled", COLS[0].x, y, { width: COLS[0].w, ellipsis: true, lineBreak: false });
+      doc.fillColor(LIGHT).text(r.sub || "", COLS[1].x, y, { width: COLS[1].w, ellipsis: true, lineBreak: false });
+      doc.fillColor(GREY).text(STATUS_LABEL[r.status] || r.status || "", COLS[2].x, y, { width: COLS[2].w, lineBreak: false });
+      doc.fillColor(LIGHT).text(new Date(r.updated_at).toISOString().slice(0, 10), COLS[3].x, y, { width: COLS[3].w, lineBreak: false });
+      doc.moveDown(0.55);
+      doc.x = 48;
+    }
+    if (rows.length === 0) doc.fillColor(LIGHT).text("No leads yet.", 48);
+    doc.end();
+  } catch (e) {
+    if (!res.headersSent) res.status(500).json({ error: { message: "Could not generate the PDF." } });
+  }
 });
 
 // Set or clear a lead's follow-up reminder (next-action date + optional note).

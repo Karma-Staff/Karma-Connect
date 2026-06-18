@@ -1,6 +1,6 @@
 // Pipeline dashboard: funnel metrics + CSV/JSON export. Deterministic — no AI tokens.
 import { useState, useEffect } from "react";
-import { getStats, getAllLeads } from "../lib/leads.js";
+import { getStats, getLeadsPdf } from "../lib/leads.js";
 import { LEAD_STATUSES } from "./HistoryView.jsx";
 
 function Stat({ label, value, sub }) {
@@ -13,12 +13,7 @@ function Stat({ label, value, sub }) {
   );
 }
 
-function csvCell(v) {
-  const s = String(v == null ? "" : v);
-  return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
-}
-function download(name, text, type) {
-  const blob = new Blob([text], { type });
+function downloadBlob(name, blob) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url; a.download = name; document.body.appendChild(a); a.click();
@@ -38,22 +33,11 @@ export function DashboardView({ onGoStage }) {
     return () => { alive = false; };
   }, []);
 
-  async function exportLeads(kind) {
+  async function exportPdf() {
     setExporting(true);
     try {
-      const rows = await getAllLeads();
-      if (kind === "json") {
-        download("karma-connect-leads.json", JSON.stringify(rows, null, 2), "application/json");
-      } else {
-        const head = ["name", "title_company", "status", "created", "updated"];
-        const lines = [head.join(",")].concat(rows.map((r) => [
-          csvCell(r.label), csvCell(r.sub), csvCell(r.status),
-          csvCell(new Date(r.created_at).toISOString().slice(0, 10)),
-          csvCell(new Date(r.updated_at).toISOString().slice(0, 10)),
-        ].join(",")));
-        download("karma-connect-leads.csv", lines.join("\n"), "text/csv");
-      }
-    } catch (e) { /* surfaced rarely; ignore */ }
+      downloadBlob("karma-connect-leads.pdf", await getLeadsPdf());
+    } catch (e) { /* ignore */ }
     setExporting(false);
   }
 
@@ -104,10 +88,9 @@ export function DashboardView({ onGoStage }) {
 
           <div className="panel">
             <div className="sect-title">Export</div>
-            <p style={{ color: "var(--muted)", fontSize: 13.5, marginBottom: 12 }}>Download all your leads (name, title/company, stage, dates).</p>
+            <p style={{ color: "var(--muted)", fontSize: 13.5, marginBottom: 12 }}>Download a branded PDF of all your leads (name, title/company, stage, dates) with a stage summary.</p>
             <div className="toprow">
-              <button className="btn primary" onClick={() => exportLeads("csv")} disabled={exporting}>{exporting ? "Preparing…" : "Export CSV"}</button>
-              <button className="btn ghost" onClick={() => exportLeads("json")} disabled={exporting}>Export JSON</button>
+              <button className="btn primary" onClick={exportPdf} disabled={exporting}>{exporting ? "Preparing…" : "Export PDF"}</button>
             </div>
           </div>
         </>
