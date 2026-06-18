@@ -222,6 +222,7 @@ const resendLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 6, message: "To
 const forgotLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 6, message: "Too many reset requests. Please try again later.", keyFn: (req) => "forgot:" + req.ip + ":" + reqEmail(req) });
 const resetLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 15, message: "Too many attempts. Please try again later.", keyFn: (req) => "reset:" + req.ip });
 const promoteLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 8, message: "Too many attempts. Please wait a few minutes and try again.", keyFn: (req) => "promote:" + (req.userId || req.ip) });
+const passwordLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, message: "Too many attempts. Please wait a few minutes and try again.", keyFn: (req) => "pwchange:" + (req.userId || req.ip) });
 
 // A real bcrypt hash to compare against when the email doesn't exist, so a missing-user
 // sign-in takes the same time as a real one (no timing-based account enumeration — L3).
@@ -426,6 +427,23 @@ app.post("/api/auth/promote", requireUser, promoteLimiter, async (req, res) => {
   } catch (e) { res.status(500).json({ error: { message: "Could not update your role." } }); }
 });
 
+// Change password while signed in (current password required).
+app.post("/api/auth/password", requireUser, passwordLimiter, async (req, res) => {
+  try {
+    const current = String(req.body?.currentPassword || "");
+    const next = String(req.body?.newPassword || "");
+    if (next.length < 8) return res.status(400).json({ error: { message: "Use a new password of at least 8 characters." } });
+    const { rows } = await q("select password_hash from users where id = $1", [req.userId]);
+    const user = rows[0];
+    if (!user) return res.status(404).json({ error: { message: "Account not found." } });
+    if (!(await bcrypt.compare(current, user.password_hash))) {
+      return res.status(403).json({ error: { message: "Your current password is incorrect." } });
+    }
+    await q("update users set password_hash = $1 where id = $2", [await bcrypt.hash(next, 12), req.userId]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: { message: "Could not change the password." } }); }
+});
+
 // Delete the signed-in user's own account (password-confirmed). Cascades to their
 // prospects / usage / approvals via the schema's ON DELETE CASCADE.
 app.delete("/api/auth/account", requireUser, async (req, res) => {
@@ -597,6 +615,43 @@ app.post("/api/approvals/:id/decide", requireUser, requireAdmin, async (req, res
     if (!rows[0]) return res.status(404).json({ error: { message: "Request not found." } });
     res.json({ approval: rows[0] });
   } catch (e) { res.status(500).json({ error: { message: "Could not save the decision." } }); }
+});
+
+// ───────────────────────────── Admin: members ───────────────────────
+// List all members with their role and lifetime usage.
+app.get("/api/admin/users", requireUser, requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await q(
+      `select u.id, u.email, u.first_name, u.last_name, u.is_admin, u.email_verified, u.created_at,
+              coalesce(sum(us.cost_usd),0)::numeric as cost_usd, count(us.id)::int as calls
+         from users u left join usage us on us.user_id = u.id
+        group by u.id order by u.created_at desc limit 500`,
+    );
+    res.json({ users: rows });
+  } catch (e) { res.status(500).json({ error: { message: "Could not load members." } }); }
+});
+
+// Grant or revoke admin on a member. Can't revoke your own admin (avoid lock-out).
+app.post("/api/admin/users/:id/role", requireUser, requireAdmin, async (req, res) => {
+  try {
+    const makeAdmin = req.body?.isAdmin === true;
+    const id = String(req.params.id);
+    if (id === req.userId && !makeAdmin) return res.status(400).json({ error: { message: "You can't remove your own admin access." } });
+    const { rows } = await q("update users set is_admin = $1 where id = $2 returning id, is_admin", [makeAdmin, id]);
+    if (!rows[0]) return res.status(404).json({ error: { message: "User not found." } });
+    res.json({ ok: true, isAdmin: rows[0].is_admin });
+  } catch (e) { res.status(500).json({ error: { message: "Could not update the role." } }); }
+});
+
+// Remove a member (cascades their data). Use Settings to delete your own account.
+app.delete("/api/admin/users/:id", requireUser, requireAdmin, async (req, res) => {
+  try {
+    const id = String(req.params.id);
+    if (id === req.userId) return res.status(400).json({ error: { message: "Use Settings to delete your own account." } });
+    const { rowCount } = await q("delete from users where id = $1", [id]);
+    if (!rowCount) return res.status(404).json({ error: { message: "User not found." } });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: { message: "Could not remove the user." } }); }
 });
 
 // ─────────────────────────── Anthropic proxy ────────────────────────

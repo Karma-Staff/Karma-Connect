@@ -1,6 +1,6 @@
 // Profile & account settings: see your role, upgrade to admin with the code, delete account.
 import { useState } from "react";
-import { promoteToAdmin, deleteAccount } from "../lib/auth.js";
+import { promoteToAdmin, deleteAccount, changePassword } from "../lib/auth.js";
 
 export function SettingsView({ user, isAdmin, askConfirm, showToast }) {
   const [code, setCode] = useState("");
@@ -10,6 +10,29 @@ export function SettingsView({ user, isAdmin, askConfirm, showToast }) {
   const [pw, setPw] = useState("");
   const [dBusy, setDBusy] = useState(false);
   const [dErr, setDErr] = useState("");
+  // Change password
+  const [curPw, setCurPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [newPw2, setNewPw2] = useState("");
+  const [cBusy, setCBusy] = useState(false);
+  const [cMsg, setCMsg] = useState("");
+  const [cErr, setCErr] = useState("");
+
+  async function doChangePassword() {
+    setCMsg(""); setCErr("");
+    if (newPw.length < 8) { setCErr("Use a new password of at least 8 characters."); return; }
+    if (newPw !== newPw2) { setCErr("The two new passwords don't match."); return; }
+    setCBusy(true);
+    try {
+      await changePassword(curPw, newPw);
+      setCurPw(""); setNewPw(""); setNewPw2("");
+      setCMsg("Password changed.");
+      if (showToast) showToast("Password changed");
+    } catch (e) {
+      setCErr((e && e.message) || "Could not change the password.");
+    }
+    setCBusy(false);
+  }
 
   const fullName = [user?.firstName, user?.lastName].filter(Boolean).join(" ") || "—";
 
@@ -62,6 +85,20 @@ export function SettingsView({ user, isAdmin, askConfirm, showToast }) {
           Role: <b style={{ color: isAdmin ? "#52d39e" : "var(--ice)" }}>{isAdmin ? "Admin" : "Member"}</b>
           {isAdmin ? " — you can approve leads and use every engine." : " — you can work leads through connection requests."}
         </div>
+      </div>
+
+      <div className="panel">
+        <div className="sect-title">Change password</div>
+        <div className="fgrid">
+          <div className="f"><label>Current password</label><input type="password" autoComplete="current-password" value={curPw} onChange={(e) => setCurPw(e.target.value)} placeholder="Current password" /></div>
+          <div className="f"><label>New password</label><input type="password" autoComplete="new-password" value={newPw} onChange={(e) => setNewPw(e.target.value)} placeholder="At least 8 characters" /></div>
+          <div className="f"><label>Confirm new password</label><input type="password" autoComplete="new-password" value={newPw2} onChange={(e) => setNewPw2(e.target.value)} placeholder="Re-enter new password" /></div>
+        </div>
+        <div className="toprow" style={{ marginTop: 14 }}>
+          <button className="btn primary" onClick={doChangePassword} disabled={cBusy}>{cBusy ? "Working…" : "Change password"}</button>
+        </div>
+        {cMsg && <div className="reason" style={{ marginTop: 12 }}><b>Done</b> · {cMsg}</div>}
+        {cErr && <div className="err" style={{ marginTop: 12 }}>⚠ {cErr}</div>}
       </div>
 
       {!isAdmin && (

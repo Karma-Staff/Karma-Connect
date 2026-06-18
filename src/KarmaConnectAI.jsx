@@ -16,6 +16,7 @@ import { HistoryView } from "./views/HistoryView.jsx";
 import { ApprovalsView } from "./views/ApprovalsView.jsx";
 import { SettingsView } from "./views/SettingsView.jsx";
 import { UsageView } from "./views/UsageView.jsx";
+import { AdminMembersView } from "./views/AdminMembersView.jsx";
 import { listHistory, writeHistory, deleteHistory, setLeadStatus, HISTORY_PAGE_SIZE } from "./lib/history.js";
 import { scoreFit } from "./lib/scoring.js";
 import { currentUser } from "./lib/auth.js";
@@ -446,7 +447,10 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
     { id: "meeting", label: "Meeting Requests", ic: Ic.meet, gate: true },
     { id: "followup", label: "Follow-up Engine", ic: Ic.fup, gate: true, count: results.followup.length },
     { id: "history", label: "History", ic: Ic.hist, count: history.length },
-    ...(isAdmin ? [{ id: "approvals", label: "Approvals", ic: Ic.intel, admin: true, count: adminList.filter((a) => a.status === "pending").length }] : []),
+    ...(isAdmin ? [
+      { id: "approvals", label: "Approvals", ic: Ic.intel, admin: true, count: adminList.filter((a) => a.status === "pending").length },
+      { id: "members", label: "Members", ic: Ic.conn, admin: true },
+    ] : []),
     { id: "usage", label: "Usage & cost", ic: Ic.usage },
     { id: "settings", label: "Settings", ic: Ic.cog },
   ];
@@ -940,6 +944,10 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
 
           {view === "approvals" && isAdmin && (
             <ApprovalsView adminList={adminList} onRefresh={loadAdminList} onDecide={doDecide} />
+          )}
+
+          {view === "members" && isAdmin && (
+            <AdminMembersView meId={me && me.id} askConfirm={askConfirm} showToast={showToast} />
           )}
 
           {view === "usage" && <UsageView />}

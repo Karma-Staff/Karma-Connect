@@ -100,6 +100,19 @@ export async function promoteToAdmin(adminCode) {
   return data;
 }
 
+// Change password while signed in (current password required).
+export async function changePassword(currentPassword, newPassword) {
+  const res = await fetch("/api/auth/password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}) },
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
+  let data = {};
+  try { data = await res.json(); } catch (e) { /* ignore */ }
+  if (!res.ok) throw new Error(data?.error?.message || "Could not change the password.");
+  return data;
+}
+
 // Permanently delete the signed-in account (password-confirmed). Signs out on success.
 export async function deleteAccount(password) {
   const res = await fetch("/api/auth/account", {
