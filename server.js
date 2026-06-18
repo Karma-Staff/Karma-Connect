@@ -92,7 +92,7 @@ function baseUrl(req) {
 }
 
 async function sendVerificationEmail(email, firstName, link) {
-  const hi = firstName ? "Hi " + firstName + "," : "Hi,";
+  const hi = firstName ? "Hi " + escapeHtml(firstName) + "," : "Hi,";
   const html = `<div style="font-family:Inter,Segoe UI,Arial,sans-serif;max-width:480px;margin:0 auto;color:#0b2545">
     <h2 style="color:#0b2545">Confirm your email</h2>
     <p>${hi}</p>
@@ -113,11 +113,75 @@ async function sendVerificationEmail(email, firstName, link) {
 
 const app = express();
 app.disable("x-powered-by");
+// Behind Render's proxy: trust it so req.ip is the real client IP and req.secure is correct.
+app.set("trust proxy", 1);
+
+// ── HTTP security headers (L4) ──
+// CSP allows our own assets + Google Fonts (index.html links them) and inline styles (the app
+// injects a <style> block and uses style attributes). HSTS/CSP only in prod; in dev Vite serves
+// the HTML (this server only handles /api there), so HMR is unaffected.
+const CSP = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "object-src 'none'",
+  "frame-ancestors 'none'",
+  "img-src 'self' data:",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' https://fonts.gstatic.com data:",
+  "connect-src 'self'",
+].join("; ");
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  if (!DEV) {
+    res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+    res.setHeader("Content-Security-Policy", CSP);
+  }
+  next();
+});
 
 // /api/claude needs the RAW body string (the proxy parses + forwards it verbatim).
 app.use("/api/claude", express.text({ type: () => true, limit: "4mb" }));
 // Everything else is JSON.
 app.use(express.json({ limit: "2mb" }));
+
+// ── Lightweight in-memory rate limiter for the auth endpoints (M2) ──
+// Single-instance friendly (one Render dyno). Throttles online password brute-force and
+// signup/resend abuse (which would otherwise spam Resend). Runs after express.json, so
+// req.body is available to the key function.
+const rlStore = new Map(); // key -> { count, resetAt }
+function rateLimit({ windowMs, max, keyFn, message }) {
+  return (req, res, next) => {
+    const now = Date.now();
+    const key = keyFn(req);
+    let e = rlStore.get(key);
+    if (!e || now > e.resetAt) { e = { count: 0, resetAt: now + windowMs }; rlStore.set(key, e); }
+    e.count++;
+    if (e.count > max) {
+      res.setHeader("Retry-After", String(Math.ceil((e.resetAt - now) / 1000)));
+      return res.status(429).json({ error: { message: message || "Too many requests. Please slow down and try again shortly." } });
+    }
+    next();
+  };
+}
+setInterval(() => { const now = Date.now(); for (const [k, e] of rlStore) if (now > e.resetAt) rlStore.delete(k); }, 60000).unref();
+
+const reqEmail = (req) => String((req.body && req.body.email) || "").toLowerCase();
+const signinLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 12, message: "Too many sign-in attempts. Please wait a few minutes and try again.", keyFn: (req) => "signin:" + req.ip + ":" + reqEmail(req) });
+const signupLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 8, message: "Too many sign-up attempts from this network. Please try again later.", keyFn: (req) => "signup:" + req.ip });
+const resendLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 6, message: "Too many requests. Please try again later.", keyFn: (req) => "resend:" + req.ip + ":" + reqEmail(req) });
+
+// A real bcrypt hash to compare against when the email doesn't exist, so a missing-user
+// sign-in takes the same time as a real one (no timing-based account enumeration — L3).
+const DUMMY_HASH = bcrypt.hashSync("not-a-real-password-placeholder", 12);
+
+// Escape user-supplied text before embedding it in email HTML (L5).
+function escapeHtml(s) {
+  return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
 
 // ── Auth helpers ──
 function tokenFor(user) {
@@ -149,7 +213,7 @@ async function requireAdmin(req, res, next) {
 }
 
 // ─────────────────────────────── Auth ───────────────────────────────
-app.post("/api/auth/signup", async (req, res) => {
+app.post("/api/auth/signup", signupLimiter, async (req, res) => {
   try {
     if (!JWT_SECRET) return res.status(500).json({ error: { message: "Server not configured (missing AUTH_JWT_SECRET)." } });
     const email = String(req.body?.email || "").trim().toLowerCase();
@@ -198,7 +262,7 @@ app.post("/api/auth/signup", async (req, res) => {
   } catch (e) { console.error("signup error:", (e && e.stack) || e); res.status(500).json({ error: { message: "Could not create the account. Try again." } }); }
 });
 
-app.post("/api/auth/signin", async (req, res) => {
+app.post("/api/auth/signin", signinLimiter, async (req, res) => {
   try {
     if (!JWT_SECRET) return res.status(500).json({ error: { message: "Server not configured (missing AUTH_JWT_SECRET)." } });
     const email = String(req.body?.email || "").trim().toLowerCase();
@@ -209,7 +273,7 @@ app.post("/api/auth/signin", async (req, res) => {
     const { rows } = await q("select * from users where email = $1", [email]);
     const user = rows[0];
     // Compare even when the user is missing (timing-safe-ish: avoid leaking which emails exist).
-    const ok = user ? await bcrypt.compare(password, user.password_hash) : await bcrypt.compare(password, "$2a$12$0000000000000000000000000000000000000000000000000000");
+    const ok = await bcrypt.compare(password, user ? user.password_hash : DUMMY_HASH);
     if (!user || !ok) return res.status(401).json({ error: { message: "Wrong email or password." } });
     if (emailVerifyOn && !user.email_verified) {
       return res.status(403).json({ error: { message: "Please confirm your email first — check your inbox for the link.", needsVerification: true } });
@@ -237,7 +301,7 @@ app.get("/api/auth/verify", async (req, res) => {
 
 // Re-send the confirmation email for an unverified account. Always replies the same way
 // (don't reveal whether the email exists).
-app.post("/api/auth/resend", async (req, res) => {
+app.post("/api/auth/resend", resendLimiter, async (req, res) => {
   const done = () => res.json({ ok: true, message: "If that account exists and is unconfirmed, a new confirmation email is on its way." });
   try {
     if (!emailVerifyOn) return done();

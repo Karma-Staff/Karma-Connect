@@ -1,37 +1,57 @@
-# Run Karma Connect on another device (the easy way)
+# Running Karma Connect locally
 
-No commands to type. Follow these steps on the new device.
+Karma Connect is a Vite + React client with an Express backend (`server.js`) backed by
+PostgreSQL. One command runs both together.
 
-## 1. Install Node.js (one time)
-Download and install the **LTS** version from **https://nodejs.org** (click the big button, open the installer, keep clicking Next/Install). This is the only thing you install by hand.
+## 1. Prerequisites
+- **Node.js 20+** (https://nodejs.org — LTS).
+- **PostgreSQL** — either a local install, or a hosted database URL (e.g. Render Postgres).
 
-## 2. Download the project from GitHub
-1. Go to **https://github.com/Takdang-Tenzin-Woesel/Karma-Connect**
-2. Click the green **`< > Code`** button → **Download ZIP**
-3. **Unzip** the downloaded file (double-click it). You'll get a folder named `Karma-Connect-main`.
+## 2. Install dependencies
+```bash
+npm install
+```
 
-> No Git needed — the ZIP contains the whole project.
+## 3. Configure `.env`
+Create a `.env` file in the project root (it is gitignored — never commit it):
+```bash
+ANTHROPIC_API_KEY=sk-ant-...           # required (the AI proxy)
+DATABASE_URL=postgresql://user:pass@host:5432/dbname
+PGSSL=off                              # 'off' for local Postgres; omit for hosted (SSL)
+AUTH_JWT_SECRET=<64+ random hex chars> # node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 
-## 3. Double-click the setup file inside that folder
-- **On Windows:** double-click **`setup.bat`**
-- **On Mac:** double-click **`setup.command`**
-  *(If Mac says it can't open it: right-click → Open → Open. Or open Terminal, type `bash `, drag the `setup.command` file onto the window, press Enter.)*
+# Optional
+RESEND_API_KEY=re_...                  # enables email confirmation on signup
+RESEND_FROM=Karma Connect <karmaconnect@karmastaff.com>
+APP_URL=http://localhost:3000          # canonical URL used in email links
+ADMIN_EMAILS=you@karmastaff.com        # comma-separated admins
+ADMIN_SIGNUP_CODE=<shared secret>      # signups entering this code become admins
+ALLOWED_EMAIL_DOMAIN=karmastaff.com    # who may register (defaults to karmastaff.com)
+```
 
-The setup will:
-1. Check Node.js is installed
-2. Install everything automatically
-3. Ask you to **paste your Anthropic API key** (starts with `sk-ant-...`) — paste it and press Enter
-4. Start the app
+## 4. Initialise the database (one time)
+```bash
+npm run db:init        # applies db/schema.sql to DATABASE_URL
+```
 
-## 4. Open the app
-When it says something like `Local: http://localhost:5173`, open that link in your browser. That's the app.
+## 5. Run it
+```bash
+npm run dev            # starts the Express API and the Vite client together
+```
+Open **http://localhost:3000**. The Vite client proxies `/api/*` to the Express server.
 
-To stop it later, click the black setup window and press **Control + C**. To start it again another day, just double-click the setup file again (it remembers your key).
+## Other commands
+| Command | What it does |
+|---|---|
+| `npm run build` | Build the production client into `dist/` |
+| `npm start` | Run the production server (serves `dist/` + the API) |
+| `npm test` | Run the unit tests (vitest) |
+| `npm run lint` | Lint the client source |
 
----
+## Deploying
+Push to the deployment branch; Render builds (`npm run build`) and runs `npm start`.
+Set the same environment variables (above) in the Render dashboard. See `DEPLOY.md` for details.
 
 ### Where do I get the Anthropic API key?
-From the person who set this up, or from **https://console.anthropic.com** → API Keys. Paste the same key you use on your current device. Keep it private — never post it publicly.
-
-### Want zero setup on every device instead?
-Deploy the app once (see `DEPLOY.md`) and every device just opens a web link — nothing to install. Ask and I'll walk you through it.
+From whoever administers the app, or **https://console.anthropic.com → API Keys**. Keep it
+private and never commit it.

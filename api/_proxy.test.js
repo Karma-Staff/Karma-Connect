@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
-const { computeCost, COST, signJWT, verifyJWT, JWT_ISS } = require("./_proxy.cjs");
+const { computeCost, COST, signJWT, verifyJWT, JWT_ISS, sanitizeBody } = require("./_proxy.cjs");
 
 describe("computeCost", () => {
   it("computes cost from per-1k constants (sonnet)", () => {
@@ -58,5 +58,46 @@ describe("signJWT / verifyJWT", () => {
   it("rejects a token from a different issuer", () => {
     const token = signJWT({ sub: "u1" }, secret, 60);
     expect(verifyJWT(token, secret, "some-other-issuer")).toBeNull();
+  });
+});
+
+describe("sanitizeBody (proxy input caps — M4)", () => {
+  it("rejects a model that isn't on the allowlist", () => {
+    const r = sanitizeBody({ model: "claude-opus-4-8", max_tokens: 100 });
+    expect(r.ok).toBe(false);
+    expect(r.status).toBe(400);
+  });
+
+  it("allows the permitted models", () => {
+    expect(sanitizeBody({ model: "claude-sonnet-4-6", max_tokens: 100 }).ok).toBe(true);
+    expect(sanitizeBody({ model: "claude-haiku-4-5", max_tokens: 100 }).ok).toBe(true);
+  });
+
+  it("clamps max_tokens to the ceiling", () => {
+    const r = sanitizeBody({ model: "claude-sonnet-4-6", max_tokens: 999999 });
+    expect(r.ok).toBe(true);
+    expect(r.body.max_tokens).toBe(8000);
+  });
+
+  it("defaults max_tokens when missing or invalid", () => {
+    expect(sanitizeBody({ model: "claude-sonnet-4-6" }).body.max_tokens).toBe(1024);
+  });
+
+  it("caps web-search uses and the number of tools", () => {
+    const r = sanitizeBody({
+      model: "claude-sonnet-4-6",
+      max_tokens: 100,
+      tools: [
+        { type: "web_search_20250305", name: "web_search", max_uses: 50 },
+        { type: "web_search_20250305", name: "b", max_uses: 1 },
+        { type: "web_search_20250305", name: "c", max_uses: 1 },
+      ],
+    });
+    expect(r.body.tools.length).toBe(2); // MAX_TOOLS
+    expect(r.body.tools[0].max_uses).toBe(4); // MAX_SEARCH_USES
+  });
+
+  it("rejects a non-object body", () => {
+    expect(sanitizeBody(null).ok).toBe(false);
   });
 });
