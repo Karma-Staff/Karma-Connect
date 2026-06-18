@@ -78,6 +78,42 @@ export async function signIn({ email, password }) {
 
 export function signOut() { setSession(null); }
 
+// Update just the stored user object (keeps the current token) and notify listeners.
+function setUser(u) {
+  if (!u) return;
+  user = u;
+  try { localStorage.setItem(USER_KEY, JSON.stringify(user)); } catch (e) { /* ignore */ }
+  notify();
+}
+
+// Self-promote to admin using the signup code. Updates the local session on success.
+export async function promoteToAdmin(adminCode) {
+  const res = await fetch("/api/auth/promote", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}) },
+    body: JSON.stringify({ adminCode: adminCode || "" }),
+  });
+  let data = {};
+  try { data = await res.json(); } catch (e) { /* ignore */ }
+  if (!res.ok) throw new Error(data?.error?.message || "Could not update your role.");
+  setUser(data.user);
+  return data;
+}
+
+// Permanently delete the signed-in account (password-confirmed). Signs out on success.
+export async function deleteAccount(password) {
+  const res = await fetch("/api/auth/account", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}) },
+    body: JSON.stringify({ password: password || "" }),
+  });
+  let data = {};
+  try { data = await res.json(); } catch (e) { /* ignore */ }
+  if (!res.ok) throw new Error(data?.error?.message || "Could not delete the account.");
+  signOut();
+  return data;
+}
+
 // Validate the stored token against the server; clears it if rejected. Returns the user or null.
 export async function refreshUser() {
   if (!token) return null;

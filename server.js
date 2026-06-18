@@ -220,6 +220,7 @@ const signupLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 8, message: "To
 const resendLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 6, message: "Too many requests. Please try again later.", keyFn: (req) => "resend:" + req.ip + ":" + reqEmail(req) });
 const forgotLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 6, message: "Too many reset requests. Please try again later.", keyFn: (req) => "forgot:" + req.ip + ":" + reqEmail(req) });
 const resetLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 15, message: "Too many attempts. Please try again later.", keyFn: (req) => "reset:" + req.ip });
+const promoteLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 8, message: "Too many attempts. Please wait a few minutes and try again.", keyFn: (req) => "promote:" + (req.userId || req.ip) });
 
 // A real bcrypt hash to compare against when the email doesn't exist, so a missing-user
 // sign-in takes the same time as a real one (no timing-based account enumeration — L3).
@@ -410,6 +411,34 @@ app.get("/api/auth/me", requireUser, async (req, res) => {
     if (!rows[0]) return res.status(401).json({ error: { message: "Please sign in again." } });
     res.json({ user: publicUser(rows[0]) });
   } catch (e) { res.status(500).json({ error: { message: "Could not load your account." } }); }
+});
+
+// Self-promote to admin with the signup code — for someone who created a normal account.
+app.post("/api/auth/promote", requireUser, promoteLimiter, async (req, res) => {
+  try {
+    const expected = process.env.ADMIN_SIGNUP_CODE || "";
+    if (!expected) return res.status(400).json({ error: { message: "Admin promotion isn't configured. Contact your administrator." } });
+    if (String(req.body?.adminCode || "") !== expected) return res.status(403).json({ error: { message: "Invalid admin code." } });
+    const { rows } = await q("update users set is_admin = true where id = $1 returning *", [req.userId]);
+    if (!rows[0]) return res.status(404).json({ error: { message: "Account not found." } });
+    res.json({ user: publicUser(rows[0]) });
+  } catch (e) { res.status(500).json({ error: { message: "Could not update your role." } }); }
+});
+
+// Delete the signed-in user's own account (password-confirmed). Cascades to their
+// prospects / usage / approvals via the schema's ON DELETE CASCADE.
+app.delete("/api/auth/account", requireUser, async (req, res) => {
+  try {
+    const password = String(req.body?.password || "");
+    const { rows } = await q("select password_hash from users where id = $1", [req.userId]);
+    const user = rows[0];
+    if (!user) return res.status(404).json({ error: { message: "Account not found." } });
+    if (!(await bcrypt.compare(password, user.password_hash))) {
+      return res.status(403).json({ error: { message: "Password is incorrect." } });
+    }
+    await q("delete from users where id = $1", [req.userId]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: { message: "Could not delete the account." } }); }
 });
 
 // ───────────────────────────── History ──────────────────────────────
