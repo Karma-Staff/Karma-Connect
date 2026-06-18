@@ -1,5 +1,4 @@
 import { useState, useEffect, Fragment } from "react";
-import { CSS } from "./styles.js";
 import { SYSTEM } from "./lib/brand.js";
 import { SENDERS, senderOffer } from "./lib/senders.js";
 import { anthropicMsg, callClaude, CLAUDE_FAST_MODEL } from "./lib/claude.js";
@@ -532,7 +531,6 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
 
   return (
     <div className="kc">
-      <style>{CSS}</style>
       <div className="app">
         <aside className="side">
           <div className="brand">

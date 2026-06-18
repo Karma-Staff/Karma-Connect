@@ -1,5 +1,6 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
+import './styles.css'
 import KarmaConnectAI from './KarmaConnectAI.jsx'
 import { AuthGate } from './components/AuthGate.jsx'
 

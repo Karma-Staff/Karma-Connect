@@ -1,5 +1,4 @@
-// All app styling, injected once via a <style> tag in the root component.
-export const CSS = `
+/* Karma Connect app styles. Scoped under .kc; imported once in main.jsx. */
 html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
 .kc *{box-sizing:border-box;margin:0;padding:0}
 .kc{
@@ -448,4 +447,3 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
 /* Glassier ghost buttons + sidebar. */
 .kc .btn.ghost{background:rgba(255,255,255,.09)}
 .kc .side{background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(7,24,85,.20)); box-shadow:inset -1px 0 0 rgba(255,255,255,.08), 0 0 60px -20px rgba(0,0,0,.6)}
-`;
