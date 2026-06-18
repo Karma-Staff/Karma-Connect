@@ -40,6 +40,9 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
     headline: "", about: "", experience: "", website: "", companyDesc: "", news: "",
     notes: "", mutual: "", research: "", pain: "", growth: "", staffing: "", ops: "",
   };
+  // Full results shape — restored results are merged onto this so every key always exists
+  // (older saved state from before a key was added won't crash on `.length`).
+  const EMPTY_RESULTS = { connection: [], relationship: [], meeting_short: [], meeting_standard: [], meeting_executive: [], followup: [], followupSeq: [] };
   const [view, setView] = useState(saved.view || "hub");
   const [prospect, setProspect] = useState({ ...EMPTY_PROSPECT, ...(saved.prospect || {}) });
   const [sender, setSender] = useState(saved.sender || "nordon");
@@ -53,7 +56,7 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   const [parseMsg, setParseMsg] = useState("");
   const [parseErr, setParseErr] = useState("");
   const [analysis, setAnalysis] = useState(saved.analysis || null);
-  const [results, setResults] = useState(saved.results || { connection: [], relationship: [], meeting_short: [], meeting_standard: [], meeting_executive: [], followup: [], followupSeq: [] });
+  const [results, setResults] = useState({ ...EMPTY_RESULTS, ...(saved.results || {}) });
   const [loading, setLoading] = useState({});
   const [errors, setErrors] = useState({});
   const [regen, setRegen] = useState({});
@@ -160,7 +163,7 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   function doReset() {
     setProspect({ ...EMPTY_PROSPECT });
     setAnalysis(null);
-    setResults({ connection: [], relationship: [], meeting_short: [], meeting_standard: [], meeting_executive: [], followup: [], followupSeq: [] });
+    setResults({ ...EMPTY_RESULTS });
     setFavs({}); setCoUrl(""); setRawPaste(""); setProspectReply(""); setTranscript(""); setFuMode("sequence"); setFuStage("post_meeting"); setView("hub");
     setEnrichMsg(""); setEnrichErr(""); setParseMsg(""); setParseErr("");
     setCurrentEntryId(null);
@@ -214,7 +217,7 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
     setOffer(s.offer || senderOffer(SENDERS[0]));
     setCoUrl(s.coUrl || "");
     setAnalysis(s.analysis || null);
-    setResults(s.results || { connection: [], relationship: [], meeting_short: [], meeting_standard: [], meeting_executive: [], followup: [], followupSeq: [] });
+    setResults({ ...EMPTY_RESULTS, ...(s.results || {}) });
     setFavs(s.favs || {});
     setMeetLen(s.meetLen || "standard");
     setProspectReply(s.prospectReply || "");
