@@ -16,10 +16,9 @@ const crypto = require("node:crypto");
 const express = require("express");
 const compression = require("compression");
 const bcrypt = require("bcryptjs");
-const { Pool } = require("pg");
 const { rateLimit } = require("./server/ratelimit.cjs");
 const { streamLeadsPdf, streamProspectBriefPdf } = require("./server/pdf.cjs");
-const { handleClaude, signJWT, verifyJWT, JWT_ISS } = require("./api/_proxy.cjs");
+const { handleClaude } = require("./api/_proxy.cjs");
 
 // ── Minimal .env loader (only for local dev; Render injects real env vars) ──
 (function loadDotenv() {
@@ -41,111 +40,19 @@ const { handleClaude, signJWT, verifyJWT, JWT_ISS } = require("./api/_proxy.cjs"
 
 const DEV = process.argv.includes("--dev") || process.env.NODE_ENV === "development";
 const PORT = parseInt(process.env.PORT || (DEV ? "8787" : "3000"), 10);
-const JWT_SECRET = process.env.AUTH_JWT_SECRET || "";
 const EMAIL_RE = /\S+@\S+\.\S+/;
 
-// ── Postgres ──
-const DATABASE_URL = process.env.DATABASE_URL || "";
-// Render Postgres requires SSL; local Postgres usually doesn't (set PGSSL=off).
-const pool = DATABASE_URL
-  ? new Pool({
-      connectionString: DATABASE_URL,
-      ssl: process.env.PGSSL === "off" ? false : { rejectUnauthorized: false },
-      // Bound the pool so we never exhaust the database's connection limit (per instance).
-      max: parseInt(process.env.PG_POOL_MAX || "10", 10),
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 10000,
-      keepAlive: true,
-    })
-  : null;
-// A dropped idle connection emits 'error' on the pool — handle it so it can't crash the process.
-if (pool) pool.on("error", (e) => console.error("pg pool error:", e.message));
-const dbOn = !!pool;
-
-async function q(text, params) {
-  if (!dbOn) throw new Error("Database not configured (DATABASE_URL missing).");
-  return pool.query(text, params);
-}
-
-// Apply newer idempotent columns at boot so the live DB stays current without a manual
-// `npm run db:init` after each deploy. Safe to run every start (add column if not exists).
-async function ensureSchema() {
-  if (!dbOn) return;
-  try {
-    await q("alter table users add column if not exists reset_token text");
-    await q("alter table users add column if not exists reset_sent_at timestamptz");
-    await q("create index if not exists users_reset_token_idx on users (reset_token)");
-    await q("alter table prospects add column if not exists status text not null default 'new'");
-    await q("alter table prospects add column if not exists next_action_at timestamptz");
-    await q("alter table prospects add column if not exists next_action_note text");
-    await q(`create table if not exists lead_notes (
-      id uuid primary key default gen_random_uuid(),
-      user_id uuid not null references users (id) on delete cascade,
-      prospect_id text not null, kind text not null default 'note',
-      body text not null, created_at timestamptz not null default now())`);
-    await q("create index if not exists lead_notes_idx on lead_notes (user_id, prospect_id, created_at desc)");
-    // Indexes for the newer query patterns (status filter, reminders, usage-by-kind).
-    await q("create index if not exists prospects_status_idx on prospects (user_id, status)");
-    await q("create index if not exists prospects_next_action_idx on prospects (user_id, next_action_at)");
-    await q("create index if not exists usage_user_kind_idx on usage (user_id, kind)");
-    // Usage rollup: pre-aggregated per user/day/kind so the dashboard + admin reads never
-    // scan the ever-growing raw `usage` table. Maintained incrementally on each AI call.
-    await q(`create table if not exists usage_daily (
-      user_id uuid not null references users (id) on delete cascade,
-      day date not null,
-      kind text not null default 'ai',
-      input_tokens bigint not null default 0,
-      output_tokens bigint not null default 0,
-      cache_read_tokens bigint not null default 0,
-      cost_usd numeric(14,5) not null default 0,
-      calls integer not null default 0,
-      primary key (user_id, day, kind))`);
-    await q("create index if not exists usage_daily_user_idx on usage_daily (user_id, day)");
-    // One-time backfill from existing raw rows (no-op once the rollup has any data).
-    await q(`insert into usage_daily (user_id, day, kind, input_tokens, output_tokens, cache_read_tokens, cost_usd, calls)
-      select user_id, ts::date, coalesce(kind,'ai'),
-             sum(input_tokens), sum(output_tokens), sum(cache_read_tokens), sum(cost_usd), count(*)
-        from usage where not exists (select 1 from usage_daily)
-       group by user_id, ts::date, coalesce(kind,'ai')
-      on conflict (user_id, day, kind) do nothing`);
-  } catch (e) { console.error("ensureSchema:", e.message); }
-}
-
-// ── Allowlist (mirrors the proxy) — optional lock-down to a domain / exact emails ──
-// Registration/sign-in is locked to a single email domain. Defaults to karmastaff.com
-// so the app is never open to the public even if the env var is unset; override with
-// ALLOWED_EMAIL_DOMAIN (or pin exact addresses with ALLOWED_EMAILS).
-const ALLOWED_DOMAIN = (process.env.ALLOWED_EMAIL_DOMAIN || "karmastaff.com").toLowerCase();
-function emailAllowed(email) {
-  const e = (email || "").toLowerCase();
-  const allowEmails = (process.env.ALLOWED_EMAILS || "").toLowerCase().split(",").map((s) => s.trim()).filter(Boolean);
-  if (allowEmails.length) return allowEmails.includes(e);
-  return !ALLOWED_DOMAIN || e.endsWith("@" + ALLOWED_DOMAIN);
-}
-
-// Admins can approve leads for the locked engines. Set ADMIN_EMAILS (comma-separated)
-// in the server env. Recomputed from email on every request, so the list can change
-// without users needing to log in again.
-function isAdminEmail(email) {
-  const e = (email || "").toLowerCase();
-  const admins = (process.env.ADMIN_EMAILS || "").toLowerCase().split(",").map((s) => s.trim()).filter(Boolean);
-  return admins.includes(e);
-}
+// ── Layers (required after the .env loader above) ──
+// Data-access (pool, q, ensureSchema, usage rollup) and auth (JWT, allowlist, middleware)
+// live in their own modules so server.js stays a thin HTTP/routing layer.
+const { pool, dbOn, q, ensureSchema, writeUsageRow } = require("./server/db.cjs");
+const { JWT_SECRET, ALLOWED_DOMAIN, DUMMY_HASH, emailAllowed, tokenFor, publicUser, baseUrl, requireUser, requireAdmin } = require("./server/auth.cjs");
 
 // ── Email verification via Resend (optional, env-gated) ──
 // If RESEND_API_KEY is set, new signups must confirm their email before they can sign in.
 // If it's not configured (e.g. local dev), users are created already-verified (no friction).
 // Email senders + verify/reset config (Resend). Required here, after the .env loader above.
 const { emailVerifyOn, VERIFY_TTL_HOURS, RESET_TTL_HOURS, sendVerificationEmail, sendResetEmail } = require("./server/email.cjs");
-
-// Public base URL for links in emails. Prefer APP_URL; otherwise derive from the request
-// (honours Render's x-forwarded-proto so links are https in production).
-function baseUrl(req) {
-  if (process.env.APP_URL) return process.env.APP_URL.replace(/\/$/, "");
-  const proto = String(req.headers["x-forwarded-proto"] || (req.secure ? "https" : "http")).split(",")[0];
-  return proto + "://" + req.headers.host;
-}
-
 
 const app = express();
 app.disable("x-powered-by");
@@ -197,38 +104,6 @@ const resetLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 15, message: "To
 const promoteLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 8, message: "Too many attempts. Please wait a few minutes and try again.", keyFn: (req) => "promote:" + (req.userId || req.ip) });
 const passwordLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, message: "Too many attempts. Please wait a few minutes and try again.", keyFn: (req) => "pwchange:" + (req.userId || req.ip) });
 
-// A real bcrypt hash to compare against when the email doesn't exist, so a missing-user
-// sign-in takes the same time as a real one (no timing-based account enumeration — L3).
-const DUMMY_HASH = bcrypt.hashSync("not-a-real-password-placeholder", 12);
-
-// ── Auth helpers ──
-function tokenFor(user) {
-  return signJWT({ sub: user.id, email: user.email, first_name: user.first_name, last_name: user.last_name }, JWT_SECRET);
-}
-function publicUser(u) {
-  return { id: u.id, email: u.email, firstName: u.first_name || "", lastName: u.last_name || "", isAdmin: u.is_admin === true || isAdminEmail(u.email) };
-}
-// Express middleware: require a valid login token; attaches req.userId / req.email.
-function requireUser(req, res, next) {
-  if (!JWT_SECRET) return res.status(500).json({ error: { message: "Server not configured (missing AUTH_JWT_SECRET)." } });
-  const h = req.headers.authorization || "";
-  const token = h.startsWith("Bearer ") ? h.slice(7) : "";
-  const claims = token ? verifyJWT(token, JWT_SECRET, JWT_ISS) : null;
-  if (!claims || !claims.sub) return res.status(401).json({ error: { message: "Please sign in again." } });
-  req.userId = claims.sub;
-  req.email = claims.email || "";
-  next();
-}
-// Require an admin (for approving leads). Runs after requireUser. Admin = on the ADMIN_EMAILS
-// config list, OR flagged is_admin in the DB (granted via the admin signup code).
-async function requireAdmin(req, res, next) {
-  if (isAdminEmail(req.email)) return next();
-  try {
-    const { rows } = await q("select is_admin from users where id = $1", [req.userId]);
-    if (rows[0] && rows[0].is_admin) return next();
-  } catch (e) { /* fall through to 403 */ }
-  return res.status(403).json({ error: { message: "Admins only." } });
-}
 
 // ─────────────────────────────── Auth ───────────────────────────────
 app.post("/api/auth/signup", signupLimiter, async (req, res) => {
@@ -630,28 +505,6 @@ app.get("/api/usage", requireUser, async (req, res) => {
     res.json({ totals: totals.rows[0], month: month.rows[0], byKind: byKind.rows });
   } catch (e) { res.status(500).json({ error: { message: "Could not load usage." } }); }
 });
-
-// Persist one usage row (called by the proxy core after a successful Anthropic call).
-async function writeUsageRow(row) {
-  if (!dbOn) return;
-  const k = row.kind || "ai";
-  await q(
-    "insert into usage (user_id, kind, input_tokens, output_tokens, cache_read_tokens, cost_usd) values ($1,$2,$3,$4,$5,$6)",
-    [row.user_id, k, row.input_tokens, row.output_tokens, row.cache_read_tokens, row.cost_usd],
-  );
-  // Maintain the rollup incrementally so reads never scan the raw table.
-  await q(
-    `insert into usage_daily (user_id, day, kind, input_tokens, output_tokens, cache_read_tokens, cost_usd, calls)
-     values ($1, current_date, $2, $3, $4, $5, $6, 1)
-     on conflict (user_id, day, kind) do update set
-       input_tokens = usage_daily.input_tokens + excluded.input_tokens,
-       output_tokens = usage_daily.output_tokens + excluded.output_tokens,
-       cache_read_tokens = usage_daily.cache_read_tokens + excluded.cache_read_tokens,
-       cost_usd = usage_daily.cost_usd + excluded.cost_usd,
-       calls = usage_daily.calls + 1`,
-    [row.user_id, k, row.input_tokens, row.output_tokens, row.cache_read_tokens, row.cost_usd],
-  ).catch((e) => console.error("usage_daily rollup:", e.message));
-}
 
 // ───────────────────────────── Lead approvals ───────────────────────
 // Member requests approval for a lead (to unlock relationship / meeting / follow-up).
