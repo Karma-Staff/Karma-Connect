@@ -449,7 +449,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
     { id: "history", label: "History", ic: Ic.hist, count: history.length },
     ...(isAdmin ? [
       { id: "approvals", label: "Approvals", ic: Ic.intel, admin: true, count: adminList.filter((a) => a.status === "pending").length },
-      { id: "members", label: "Members", ic: Ic.conn, admin: true },
+      { id: "members", label: "Members", ic: <KarmaMark color="currentColor" w={18} />, admin: true },
     ] : []),
     { id: "usage", label: "Usage & cost", ic: Ic.usage },
     { id: "settings", label: "Settings", ic: Ic.cog },
