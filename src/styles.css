@@ -36,8 +36,8 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
 .kc .mark{width:44px; height:44px; border-radius:12px; background:linear-gradient(150deg,#071855,#16385A);
   display:flex; align-items:center; justify-content:center; flex:0 0 44px;
   box-shadow:0 8px 22px -8px rgba(7,24,85,.9), inset 0 0 0 1px rgba(255,207,0,.25)}
-.kc .brand h1{font-family:'Lora',serif; font-size:17px; font-weight:700; letter-spacing:-.01em; line-height:1.1}
-.kc .brand h1 b{color:var(--yellow); font-weight:700}
+.kc .brand h1{font-family:'Manrope',ui-sans-serif,system-ui,sans-serif; font-size:17px; font-weight:800; letter-spacing:-.02em; line-height:1.1}
+.kc .brand h1 b{color:var(--yellow); font-weight:800}
 .kc .brand span{font-size:10px; color:var(--faint); letter-spacing:.16em; text-transform:uppercase; font-weight:700}
 .kc .navlbl{font-size:10px; letter-spacing:.18em; text-transform:uppercase; color:var(--faint); padding:14px 10px 6px; font-weight:700}
 .kc .nav{display:flex; align-items:center; gap:11px; padding:10px 11px; border-radius:11px;

@@ -26,8 +26,8 @@ const AUTH_CSS = `
 .kcauth .brand .mk{width:62px; height:62px; margin:0 auto 16px; border-radius:18px; display:flex; align-items:center; justify-content:center;
   background:linear-gradient(150deg,#0a1c44,#16385A); border:1px solid rgba(124,92,255,.3);
   box-shadow:0 18px 50px -18px rgba(124,92,255,.6), inset 0 1px 0 rgba(255,255,255,.16)}
-.kcauth .brand h1{font-size:27px; font-weight:700; letter-spacing:-.02em}
-.kcauth .brand h1 b{background:linear-gradient(135deg,#FFD83A,#E7B74B); -webkit-background-clip:text; background-clip:text; color:transparent; font-weight:700}
+.kcauth .brand h1{font-family:'Manrope',ui-sans-serif,system-ui,sans-serif; font-size:27px; font-weight:800; letter-spacing:-.02em}
+.kcauth .brand h1 b{background:linear-gradient(135deg,#FFD83A,#E7B74B); -webkit-background-clip:text; background-clip:text; color:transparent; font-weight:800}
 .kcauth .brand p{margin-top:7px; font-size:13px; font-weight:500; color:#8fa0c4; letter-spacing:.04em}
 .kcauth .card{position:relative; padding:34px 36px; border-radius:20px;
   background:linear-gradient(150deg, rgba(255,255,255,.07), rgba(255,255,255,.02) 42%, rgba(255,255,255,.012) 100%);
