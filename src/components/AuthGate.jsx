@@ -345,7 +345,7 @@ export function AuthGate({ children }) {
         <Backdrop />
         <div className="center">
           <div className="brand">
-            <div className="mk"><KarmaMark color="#fff" w={28} /></div>
+            <div className="mk"><KarmaMark color="#fff" w={38} /></div>
             <h1>Karma <b>Connect</b></h1>
             <p>AI-Powered Prospect Intelligence</p>
           </div>
@@ -408,7 +408,7 @@ export function AuthGate({ children }) {
             </svg>
             )}
             <div className="logo">
-              <div className="mk"><KarmaMark color="#fff" w={40} /></div>
+              <div className="mk"><KarmaMark color="#fff" w={56} /></div>
               <h1>Karma <b>Connect</b></h1>
             </div>
           </div>
@@ -417,7 +417,7 @@ export function AuthGate({ children }) {
       )}
       <div className="center">
         <div className="brand">
-          <div className="mk"><KarmaMark color="#fff" w={28} /></div>
+          <div className="mk"><KarmaMark color="#fff" w={38} /></div>
           <h1>Karma <b>Connect</b></h1>
           <p>AI-Powered Prospect Intelligence</p>
         </div>

@@ -6,12 +6,13 @@ export function KarmaMark({ color = "#fff", w = 24 }) {
   return (
     <svg width={w} height={w * (84 / 134)} viewBox="-4 -4 134 84" fill="none" aria-hidden="true">
       <g fill={color}>
-        <rect x="1"  y="52" width="20" height="21" />
+        <rect x="0"  y="52" width="20" height="21" />
         <rect x="23" y="34" width="20" height="39" />
-        <rect x="44" y="16" width="20" height="57" />
-        <rect x="65" y="0"  width="20" height="73" />
-        {/* k = open chevron: upper arm + lower leg meet the stem, with the white notch between */}
-        <path d="M121 26 L85 47.5 L121 70" fill="none" stroke={color} strokeWidth="16" strokeLinejoin="miter" strokeLinecap="butt" strokeMiterlimit="12" />
+        <rect x="46" y="16" width="20" height="57" />
+        <rect x="69" y="0"  width="20" height="73" />
+        {/* k = open chevron at the stem's weight (20), vertex on the stem edge so the arm/leg
+            blend into the body; upper arm + lower leg with the white notch between. */}
+        <path d="M121 26 L89 47.5 L121 70" fill="none" stroke={color} strokeWidth="20" strokeLinejoin="miter" strokeLinecap="butt" strokeMiterlimit="12" />
       </g>
     </svg>
   );

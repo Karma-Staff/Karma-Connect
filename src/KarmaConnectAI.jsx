@@ -503,7 +503,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
     { id: "reminders", label: "Reminders", ic: Ic.fup, count: remindersDue },
     ...(isAdmin ? [
       { id: "approvals", label: "Approvals", ic: Ic.intel, admin: true, count: adminList.filter((a) => a.status === "pending").length },
-      { id: "members", label: "Members", ic: <KarmaMark color="currentColor" w={18} />, admin: true },
+      { id: "members", label: "Members", ic: <KarmaMark color="currentColor" w={20} />, admin: true },
     ] : []),
     { id: "usage", label: "Usage & cost", ic: Ic.usage },
     { id: "settings", label: "Settings", ic: Ic.cog },
@@ -645,7 +645,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
       <div className="app">
         <aside className="side">
           <div className="brand">
-            <span className="mark"><KarmaMark color="#fff" w={22} /></span>
+            <span className="mark"><KarmaMark color="#fff" w={30} /></span>
             <div><h1>Karma <b>Connect</b></h1><span>AI Prospecting</span></div>
           </div>
           <div className="navlbl">Workspace</div>
@@ -1086,7 +1086,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
           )}
           </div>
           <div className="appfoot">
-            <KarmaMark color="#5f72a0" w={15} />
+            <KarmaMark color="#5f72a0" w={18} />
             <span>Karma <b>Connect</b> · AI-Powered Prospect Intelligence</span>
             <span className="sp">{analysis ? "Profile active" : "Awaiting analysis"}</span>
           </div>
