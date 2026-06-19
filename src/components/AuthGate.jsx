@@ -40,12 +40,20 @@ const AUTH_CSS = `
 .kcauth .sub{text-align:center; color:#9aa7c4; font-size:13.5px; margin-top:8px; margin-bottom:24px; line-height:1.5}
 .kcauth label{display:block; font-size:12px; font-weight:600; color:#aeb9d6; margin:0 0 7px 2px}
 .kcauth .field{position:relative; margin-bottom:15px}
-.kcauth .field .ic{position:absolute; left:14px; top:50%; transform:translateY(-50%); color:#5f72a0; display:flex; pointer-events:none}
-.kcauth .field .ic svg{width:17px; height:17px}
-.kcauth .field input{width:100%; height:48px; padding:0 44px 0 42px; border-radius:13px; font-size:14px; color:#eef2fb; outline:none;
+.kcauth .field .ic{position:absolute; left:14px; top:50%; transform:translateY(-50%); color:#9fb2e0; display:flex; pointer-events:none; z-index:2}
+.kcauth .field .ic svg{width:18px; height:18px}
+.kcauth .field input{position:relative; z-index:1; width:100%; height:48px; padding:0 44px 0 42px; border-radius:13px; font-size:14px; color:#eef2fb; outline:none;
   background:rgba(3,9,22,.55); border:1px solid rgba(140,160,220,.18); transition:border .18s, box-shadow .18s, background .18s; font-family:inherit}
 .kcauth .field input::placeholder{color:#4d5d84}
 .kcauth .field input:focus{border-color:rgba(124,92,255,.6); background:rgba(3,9,22,.7); box-shadow:0 0 0 4px rgba(124,92,255,.16)}
+.kcauth .field:focus-within .ic{color:#c3d2f7}
+/* Stop the browser autofill from painting an opaque (light) background over the field and hiding the icon. */
+.kcauth .field input:-webkit-autofill,
+.kcauth .field input:-webkit-autofill:hover,
+.kcauth .field input:-webkit-autofill:focus{
+  -webkit-text-fill-color:#eef2fb; caret-color:#eef2fb;
+  -webkit-box-shadow:0 0 0 1000px #0a1730 inset; box-shadow:0 0 0 1000px #0a1730 inset;
+  transition:background-color 9999s ease-in-out 0s;}
 .kcauth .field .eye{position:absolute; right:10px; top:50%; transform:translateY(-50%); background:none; border:none; color:#5f72a0; cursor:pointer; padding:6px; display:flex; border-radius:8px}
 .kcauth .field .eye:hover{color:#cfe0f6}
 .kcauth .row2{display:grid; grid-template-columns:1fr 1fr; gap:12px}
