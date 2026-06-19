@@ -10,9 +10,9 @@ export function KarmaMark({ color = "#fff", w = 24 }) {
         <rect x="23" y="34" width="20" height="39" />
         <rect x="46" y="16" width="20" height="57" />
         <rect x="69" y="0"  width="20" height="73" />
-        {/* k = open chevron at the stem's weight (20), vertex on the stem edge so the arm/leg
-            blend into the body; upper arm + lower leg with the white notch between. */}
-        <path d="M121 26 L89 47.5 L121 70" fill="none" stroke={color} strokeWidth="20" strokeLinejoin="miter" strokeLinecap="butt" strokeMiterlimit="12" />
+        {/* k arm + leg as two separate strokes that START INSIDE the stem (flat ends hidden
+            in the stem fill), so they blend into the body with no mitre spike. Notch between. */}
+        <path d="M79 47.5 L121 26 M79 47.5 L121 70" fill="none" stroke={color} strokeWidth="20" strokeLinecap="butt" />
       </g>
     </svg>
   );

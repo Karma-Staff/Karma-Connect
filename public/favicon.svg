@@ -16,7 +16,7 @@
     <rect x="23" y="34" width="20" height="39"/>
     <rect x="46" y="16" width="20" height="57"/>
     <rect x="69" y="0"  width="20" height="73"/>
-    <path d="M121 26 L89 47.5 L121 70" fill="none" stroke="#ffffff" stroke-width="20" stroke-linejoin="miter" stroke-linecap="butt" stroke-miterlimit="12"/>
+    <path d="M79 47.5 L121 26 M79 47.5 L121 70" fill="none" stroke="#ffffff" stroke-width="20" stroke-linecap="butt"/>
   </g>
   <!-- "Connect": a gold network linking the bar tops and rising into the k -->
   <g transform="translate(10 18) scale(0.35)">
