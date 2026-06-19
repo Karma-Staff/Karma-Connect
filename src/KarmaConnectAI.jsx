@@ -39,6 +39,7 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
     firstName: "", lastName: "", company: "", title: "", industry: "Property Restoration", location: "",
     headline: "", about: "", experience: "", website: "", companyDesc: "", news: "",
     notes: "", mutual: "", research: "", pain: "", growth: "", staffing: "", ops: "",
+    context: "",
   };
   // Full results shape — restored results are merged onto this so every key always exists
   // (older saved state from before a key was added won't crash on `.length`).
@@ -801,6 +802,13 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
                     <Field k="title" label="Job title" ph="e.g. Owner / Operations Director" />
                     <Field k="industry" label="Industry" ph="e.g. Property Restoration" />
                     <Field k="location" label="Location" ph="e.g. Dallas, TX" />
+                  </div>
+                </div>
+                <div className="panel">
+                  <div className="sect-title">Context for the AI</div>
+                  <div className="f full">
+                    <label>Tell the AI what you already know about this lead — how you met, a referral, something they said, their priorities, anything to make the outreach feel personal. Used in every message and the analysis.</label>
+                    <textarea value={prospect.context} placeholder={"e.g. Met briefly at the Dallas restoration expo — he mentioned they're slammed after the spring storms and short on field crews. Warm intro from Sarah at ServiceMaster."} onChange={(e) => set("context", e.target.value)} style={{ minHeight: 110 }} />
                   </div>
                 </div>
                 <div className="panel">

@@ -34,6 +34,9 @@ export function buildContext(p, offer, analysis, org) {
   s += L("Company website", p.website); s += L("Company description", p.companyDesc); s += L("Recent news / signals", p.news);
   s += L("Personal notes", p.notes); s += L("Mutual interests", p.mutual); s += L("Additional research", p.research);
   s += L("Known pain points", p.pain); s += L("Growth objectives", p.growth); s += L("Staffing challenges", p.staffing); s += L("Operational challenges", p.ops);
+  if (p.context && String(p.context).trim()) {
+    s += "\nCONTEXT FROM THE USER (what the salesperson knows about this lead — treat as high-priority, accurate first-hand knowledge; weave it in naturally and never contradict it):\n" + String(p.context).trim() + "\n";
+  }
   s += "\nSENDER (you are reaching out on behalf of):\n" + offer.trim() + "\n";
   if (org && org.trim()) s += "\nORGANIZATIONAL KNOWLEDGE (admin-provided — use when relevant, never contradict it):\n" + org.trim() + "\n";
   if (analysis) s += "\nYOUR INTELLIGENCE PROFILE OF THIS PROSPECT:\n" + JSON.stringify(analysis) + "\n";
