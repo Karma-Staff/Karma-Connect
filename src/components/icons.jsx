@@ -4,7 +4,7 @@
 // + the solid filled "k" wedge). viewBox/coords are the real pixel proportions.
 export function KarmaMark({ color = "#fff", w = 24 }) {
   return (
-    <svg width={w} height={w * (186 / 312)} viewBox="0 0 312 186" fill="none" aria-hidden="true">
+    <svg width={w} height={w * (216 / 332)} viewBox="-6 -6 332 216" fill="none" aria-hidden="true">
       <g fill={color}>
         <rect x="0"   y="139" width="49" height="47" />
         <rect x="56"  y="93"  width="49" height="93" />
