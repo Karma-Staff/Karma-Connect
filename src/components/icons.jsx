@@ -11,7 +11,7 @@ export function KarmaMark({ color = "#fff", w = 24 }) {
         <rect x="112" y="47"  width="48" height="139" />
         <rect x="167" y="0"   width="49" height="186" />
         {/* k = open chevron: upper arm + lower leg meet the stem, with the white notch between */}
-        <path d="M305 66 L216 121 L305 185" fill="none" stroke={color} strokeWidth="26" strokeLinejoin="miter" strokeLinecap="butt" strokeMiterlimit="12" />
+        <path d="M305 66 L216 121 L305 185" fill="none" stroke={color} strokeWidth="20" strokeLinejoin="miter" strokeLinecap="butt" strokeMiterlimit="12" />
       </g>
     </svg>
   );
