@@ -16,17 +16,17 @@
     <rect x="56"  y="93"  width="49" height="93"/>
     <rect x="112" y="47"  width="48" height="139"/>
     <rect x="167" y="0"   width="49" height="186"/>
-    <path d="M305 66 L216 125.5 L305 185" fill="none" stroke="#ffffff" stroke-width="46" stroke-linejoin="miter" stroke-linecap="butt" stroke-miterlimit="12"/>
+    <path d="M285 75 L216 125.5 L285 176" fill="none" stroke="#ffffff" stroke-width="46" stroke-linejoin="miter" stroke-linecap="butt" stroke-miterlimit="12"/>
   </g>
   <!-- "Connect": a gold network linking the bar tops and rising into the k -->
   <g transform="translate(10 19) scale(0.141)">
-    <polyline points="24.5,139 80.5,93 136,47 191.5,0 305,66" fill="none" stroke="url(#kcgold)" stroke-width="13" stroke-linejoin="round" stroke-linecap="round"/>
+    <polyline points="24.5,139 80.5,93 136,47 191.5,0 285,75" fill="none" stroke="url(#kcgold)" stroke-width="13" stroke-linejoin="round" stroke-linecap="round"/>
     <g fill="url(#kcgold)">
       <circle cx="24.5"  cy="139" r="15"/>
       <circle cx="80.5"  cy="93"  r="15"/>
       <circle cx="136"   cy="47"  r="15"/>
       <circle cx="191.5" cy="0"   r="15"/>
-      <circle cx="305"   cy="66"  r="15"/>
+      <circle cx="285"   cy="75"  r="15"/>
     </g>
   </g>
 </svg>
