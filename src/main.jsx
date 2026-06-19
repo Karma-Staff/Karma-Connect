@@ -3,6 +3,10 @@ import ReactDOM from 'react-dom/client'
 import './styles.css'
 import KarmaConnectAI from './KarmaConnectAI.jsx'
 import { AuthGate } from './components/AuthGate.jsx'
+import { startIdleLogout } from './lib/idle.js'
+
+// Security: sign out an unattended session after 30 minutes of inactivity.
+startIdleLogout()
 
 // Catches any render-time error so the user sees a recovery screen, not a blank page.
 class ErrorBoundary extends React.Component {

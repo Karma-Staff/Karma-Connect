@@ -191,14 +191,18 @@ export function AuthGate({ children }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // After the email-confirmation link redirects back with ?verified=1 / ?verified=0.
+  // After the email-confirmation link redirects back with ?verified=1 / ?verified=0,
+  // or after an inactivity auto-logout redirects with ?timeout=1.
   useEffect(() => {
-    let v;
-    try { v = new URLSearchParams(window.location.search).get("verified"); } catch (e) { return; }
-    if (v == null) return;
+    let params;
+    try { params = new URLSearchParams(window.location.search); } catch (e) { return; }
+    const v = params.get("verified");
     if (v === "1") setNotice("Email confirmed. You can sign in now.");
-    else { setErr("That confirmation link is invalid or has expired. Sign in to get a new one."); setShowResend(true); }
-    try { window.history.replaceState({}, "", window.location.pathname); } catch (e) {}
+    else if (v === "0") { setErr("That confirmation link is invalid or has expired. Sign in to get a new one."); setShowResend(true); }
+    if (params.get("timeout") === "1") setNotice("You were signed out after 30 minutes of inactivity. Please sign in again.");
+    if (v != null || params.get("timeout") != null) {
+      try { window.history.replaceState({}, "", window.location.pathname); } catch (e) {}
+    }
   }, []);
 
   // After a password-reset email link redirects back with ?reset=<token>, show the set-new-password form.
