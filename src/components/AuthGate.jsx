@@ -7,7 +7,7 @@ const LS_KEY = "kc_email";
 const EMAIL_RE = /\S+@\S+\.\S+/;
 
 const AUTH_CSS = `
-.kcauth{position:fixed; inset:0; overflow:hidden; display:flex; align-items:center; justify-content:center; padding:28px;
+.kcauth{position:fixed; inset:0; overflow-x:hidden; overflow-y:auto; display:flex; align-items:flex-start; justify-content:center; padding:28px;
   color:#eef2fb; letter-spacing:-.01em;
   font-family:'Inter',ui-sans-serif,system-ui,-apple-system,'SF Pro Display','Segoe UI',sans-serif;
   background:
@@ -20,7 +20,7 @@ const AUTH_CSS = `
 .kcauth .pdot{position:absolute; width:4px; height:4px; border-radius:50%; background:rgba(160,140,255,.8); box-shadow:0 0 10px rgba(124,92,255,.9); animation:kcfloat 7s ease-in-out infinite}
 .kcauth .pdot.g{background:rgba(231,183,75,.85); box-shadow:0 0 10px rgba(231,183,75,.9)}
 @keyframes kcfloat{0%,100%{transform:translateY(-6px); opacity:.5}50%{transform:translateY(8px); opacity:1}}
-.kcauth .center{position:relative; z-index:2; width:100%; max-width:540px; animation:kcrise .6s cubic-bezier(.22,1,.36,1) both}
+.kcauth .center{position:relative; z-index:2; width:100%; max-width:540px; margin:auto; animation:kcrise .6s cubic-bezier(.22,1,.36,1) both}
 @keyframes kcrise{from{opacity:0; transform:translateY(16px)}to{opacity:1; transform:none}}
 .kcauth .brand{text-align:center; margin-bottom:26px}
 .kcauth .brand .mk{width:62px; height:62px; margin:0 auto 16px; border-radius:18px; display:flex; align-items:center; justify-content:center;
