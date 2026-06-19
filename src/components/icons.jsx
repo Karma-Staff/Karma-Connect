@@ -4,14 +4,14 @@
 // + the solid filled "k" wedge). viewBox/coords are the real pixel proportions.
 export function KarmaMark({ color = "#fff", w = 24 }) {
   return (
-    <svg width={w} height={w * (216 / 332)} viewBox="-6 -6 332 216" fill="none" aria-hidden="true">
+    <svg width={w} height={w * (84 / 134)} viewBox="-4 -4 134 84" fill="none" aria-hidden="true">
       <g fill={color}>
-        <rect x="0"   y="139" width="49" height="47" />
-        <rect x="56"  y="93"  width="49" height="93" />
-        <rect x="112" y="47"  width="48" height="139" />
-        <rect x="167" y="0"   width="49" height="186" />
+        <rect x="1"  y="52" width="20" height="21" />
+        <rect x="23" y="34" width="20" height="39" />
+        <rect x="44" y="16" width="20" height="57" />
+        <rect x="65" y="0"  width="20" height="73" />
         {/* k = open chevron: upper arm + lower leg meet the stem, with the white notch between */}
-        <path d="M285 75 L216 125.5 L285 176" fill="none" stroke={color} strokeWidth="46" strokeLinejoin="miter" strokeLinecap="butt" strokeMiterlimit="12" />
+        <path d="M121 26 L85 47.5 L121 70" fill="none" stroke={color} strokeWidth="16" strokeLinejoin="miter" strokeLinecap="butt" strokeMiterlimit="12" />
       </g>
     </svg>
   );
