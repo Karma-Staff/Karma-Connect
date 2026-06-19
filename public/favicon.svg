@@ -10,23 +10,23 @@
     </linearGradient>
   </defs>
   <rect width="64" height="64" rx="14" fill="url(#kcbg)"/>
-  <g transform="translate(8 16) scale(0.40)">
-    <!-- Karma Staff mark: three ascending bars + a bold k, in white -->
-    <g fill="#ffffff">
-      <rect x="4"  y="52" width="16" height="24"/>
-      <rect x="26" y="38" width="16" height="38"/>
-      <rect x="48" y="22" width="16" height="54"/>
-      <rect x="68" y="2"  width="16" height="74"/>
-    </g>
-    <path d="M112 24 L84 50 L112 76" fill="none" stroke="#ffffff" stroke-width="18" stroke-linejoin="miter" stroke-linecap="butt" stroke-miterlimit="10"/>
-    <!-- "Connect": a gold network linking the bar tops and rising into the k -->
-    <polyline points="12,52 34,38 56,22 76,2 112,24" fill="none" stroke="url(#kcgold)" stroke-width="5" stroke-linejoin="round" stroke-linecap="round"/>
+  <!-- Karma Staff mark, traced 1:1 (bars + stem + filled k wedge), scaled into the tile -->
+  <g transform="translate(10 19) scale(0.141)" fill="#ffffff">
+    <rect x="0"   y="139" width="49" height="47"/>
+    <rect x="56"  y="93"  width="49" height="93"/>
+    <rect x="112" y="47"  width="48" height="139"/>
+    <rect x="167" y="0"   width="49" height="186"/>
+    <polygon points="216,115 256,66 311,66 311,186 256,186 216,126"/>
+  </g>
+  <!-- "Connect": a gold network linking the bar tops and rising into the k -->
+  <g transform="translate(10 19) scale(0.141)">
+    <polyline points="24.5,139 80.5,93 136,47 191.5,0 256,66" fill="none" stroke="url(#kcgold)" stroke-width="13" stroke-linejoin="round" stroke-linecap="round"/>
     <g fill="url(#kcgold)">
-      <circle cx="12"  cy="52" r="6.5"/>
-      <circle cx="34"  cy="38" r="6.5"/>
-      <circle cx="56"  cy="22" r="6.5"/>
-      <circle cx="76"  cy="2"  r="6.5"/>
-      <circle cx="112" cy="24" r="6.5"/>
+      <circle cx="24.5"  cy="139" r="15"/>
+      <circle cx="80.5"  cy="93"  r="15"/>
+      <circle cx="136"   cy="47"  r="15"/>
+      <circle cx="191.5" cy="0"   r="15"/>
+      <circle cx="256"   cy="66"  r="15"/>
     </g>
   </g>
 </svg>
