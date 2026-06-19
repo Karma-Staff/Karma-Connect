@@ -10,9 +10,9 @@ export function KarmaMark({ color = "#fff", w = 24 }) {
         <rect x="23" y="34" width="20" height="39" />
         <rect x="46" y="16" width="20" height="57" />
         <rect x="69" y="0"  width="20" height="73" />
-        {/* k arm + leg as two separate strokes that START INSIDE the stem (flat ends hidden
-            in the stem fill), so they blend into the body with no mitre spike. Notch between. */}
-        <path d="M79 47.5 L121 26 M79 47.5 L121 70" fill="none" stroke={color} strokeWidth="20" strokeLinecap="butt" />
+        {/* k arm + leg: two short, clean diagonals starting inside the stem (flat ends hidden
+            in the stem fill) so they blend in. Simple, symmetric, with the notch between. */}
+        <path d="M80 46 L112 26 M80 46 L112 66" fill="none" stroke={color} strokeWidth="18" strokeLinecap="butt" />
       </g>
     </svg>
   );
