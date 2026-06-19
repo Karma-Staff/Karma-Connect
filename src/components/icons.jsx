@@ -9,7 +9,7 @@ export function KarmaMark({ color = "#fff", w = 24 }) {
       <rect x="26" y="38" width="16" height="38" fill={color} />
       <rect x="48" y="22" width="16" height="54" fill={color} />
       <rect x="68" y="2"  width="16" height="74" fill={color} />
-      <path d="M114 4 L84 39 L114 76" fill="none" stroke={color} strokeWidth="18" strokeLinejoin="miter" strokeLinecap="butt" strokeMiterlimit="10" />
+      <path d="M112 24 L84 50 L112 76" fill="none" stroke={color} strokeWidth="18" strokeLinejoin="miter" strokeLinecap="butt" strokeMiterlimit="10" />
     </svg>
   );
 }
