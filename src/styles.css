@@ -142,6 +142,8 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
   background:rgba(74,134,200,.16); border:1px solid rgba(74,134,200,.34); color:var(--ice)}
 .kc .chip.idx{background:rgba(255,255,255,.05); border-color:var(--border); color:var(--faint); min-width:30px; text-align:center}
 .kc .mbody{font-size:14px; line-height:1.62; color:#e0e8f5; white-space:pre-wrap}
+.kc .msubj{font-size:14px; font-weight:700; color:#f2f6ff; margin-bottom:10px; padding:9px 12px; border-radius:9px; background:rgba(255,255,255,.045); border:1px solid var(--border)}
+.kc .msubj-l{display:block; font-size:10px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); margin-bottom:3px}
 .kc .charc{font-size:11px; color:var(--faint); font-weight:600; margin-left:auto}
 .kc .charc.over{color:#ff8a8a}
 .kc .scores{display:flex; gap:18px}

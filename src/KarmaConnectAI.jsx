@@ -6,7 +6,7 @@ import { safeJSON } from "./lib/json.js";
 import { cleanMessages, stripLinkedInNoise } from "./lib/text.js";
 import {
   COMPANY_SYSTEM, companyResearchPrompt, buildContext,
-  pAnalysis, pConnection, pRelationship, pMeeting, pFollowup, pFollowupSequence,
+  pAnalysis, pConnection, pInmail, pRelationship, pMeeting, pFollowup, pFollowupSequence,
   STAGES_ANALYZE, STAGES_GEN, FOLLOWUP_STAGES,
 } from "./lib/prompts.js";
 import { KarmaMark, Ic, CopyIc, StarIc } from "./components/icons.jsx";
@@ -43,7 +43,7 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   };
   // Full results shape — restored results are merged onto this so every key always exists
   // (older saved state from before a key was added won't crash on `.length`).
-  const EMPTY_RESULTS = { connection: [], relationship: [], meeting_short: [], meeting_standard: [], meeting_executive: [], followup: [], followupSeq: [] };
+  const EMPTY_RESULTS = { connection: [], inmail: [], relationship: [], meeting_short: [], meeting_standard: [], meeting_executive: [], followup: [], followupSeq: [] };
   const [view, setView] = useState(saved.view || "hub");
   const [prospect, setProspect] = useState({ ...EMPTY_PROSPECT, ...(saved.prospect || {}) });
   const [sender, setSender] = useState(saved.sender || "nordon");
@@ -63,6 +63,7 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   const [regen, setRegen] = useState({});
   const [favs, setFavs] = useState(saved.favs || {});
   const [meetLen, setMeetLen] = useState(saved.meetLen || "standard");
+  const [connMode, setConnMode] = useState(saved.connMode || "note"); // "note" (invite note) | "inmail" (premium message to non-connections)
   const [prospectReply, setProspectReply] = useState(saved.prospectReply || "");
   const [fuMode, setFuMode] = useState(saved.fuMode || "sequence"); // "sequence" (LinkedIn 5-step) | "email" (after-meeting, admin-only)
   const [fuStage, setFuStage] = useState(saved.fuStage || "post_meeting"); // follow-up stage (email mode)
@@ -125,9 +126,9 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   // Persist work to localStorage so a refresh never loses (or re-bills) it.
   useEffect(() => {
     try {
-      localStorage.setItem(STATE_KEY, JSON.stringify({ view, prospect, sender, offer, coUrl, analysis, results, favs, meetLen, prospectReply, fuMode, fuStage, transcript, currentEntryId }));
+      localStorage.setItem(STATE_KEY, JSON.stringify({ view, prospect, sender, offer, coUrl, analysis, results, favs, meetLen, connMode, prospectReply, fuMode, fuStage, transcript, currentEntryId }));
     } catch (e) {}
-  }, [view, prospect, sender, offer, coUrl, analysis, results, favs, meetLen, prospectReply, fuMode, fuStage, transcript, currentEntryId, STATE_KEY]);
+  }, [view, prospect, sender, offer, coUrl, analysis, results, favs, meetLen, connMode, prospectReply, fuMode, fuStage, transcript, currentEntryId, STATE_KEY]);
 
   // Auto-save the current prospect to history once analysis has run, then keep it in sync
   // (debounced) as messages are generated/edited. No manual "Save" needed.
@@ -426,10 +427,11 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
     setLoading((l) => ({ ...l, analysis: false }));
   }
 
-  const TARGET = { connection: 3, relationship: 3, meeting_short: 3, meeting_standard: 3, meeting_executive: 3 };
+  const TARGET = { connection: 3, inmail: 3, relationship: 3, meeting_short: 3, meeting_standard: 3, meeting_executive: 3 };
   function builderFor(kind, n, avoid) {
     const base = buildContext(prospect, offer, analysis, "");
     if (kind === "connection") return pConnection(base, n, avoid);
+    if (kind === "inmail") return pInmail(base, n, avoid);
     if (kind === "relationship") return pRelationship(base, n, avoid);
     if (kind.indexOf("meeting_") === 0) return pMeeting(base, n, kind.split("_")[1], avoid, prospectReply);
     return "";
@@ -458,7 +460,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
         const isMeeting = kind.indexOf("meeting_") === 0;
         // Right-sized output cap to fit all `target` items in ONE call (sized for 5, with margin
         // so JSON never truncates — a truncated parse would force a costly full retry).
-        const cap = isMeeting ? 2800 : kind === "relationship" ? 2200 : 1800;
+        const cap = isMeeting || kind === "inmail" ? 2800 : kind === "relationship" ? 2200 : 1800;
         let acc = [], guard = 0;
         // Ask for ALL remaining items in a single call (collapses the old 2-4 call loop).
         // The loop only repeats if the model returned fewer than requested.
@@ -933,7 +935,17 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
             </div>
           )}
 
-          {view === "connection" && <SectionGenerator kind="connection" eyebrow="Section 01 · Most important" title="LinkedIn connection requests" blurb="Personalized invite notes under 300 characters. No pitch, no selling, no meeting ask — the only goal is an accepted connection that feels genuinely personal." charLimit={300} />}
+          {view === "connection" && (
+            <div>
+              <div className="seg" style={{ marginBottom: 18 }}>
+                <button className={connMode === "note" ? "on" : ""} onClick={() => setConnMode("note")}>Connection note</button>
+                <button className={connMode === "inmail" ? "on" : ""} onClick={() => setConnMode("inmail")}>InMail message</button>
+              </div>
+              {connMode === "note"
+                ? <SectionGenerator kind="connection" eyebrow="Section 01 · Most important" title="LinkedIn connection requests" blurb="Personalized invite notes under 300 characters. No pitch, no selling, no meeting ask — the only goal is an accepted connection that feels genuinely personal." charLimit={300} />
+                : <SectionGenerator kind="inmail" eyebrow="Section 01 · For people who didn't accept" title="LinkedIn InMail messages" blurb="Premium messages you can send without being connected (when they ignored your invite). A subject line plus a personalized note — here you can introduce who you are and why you're reaching out, customized for them." charLimit={1900} />}
+            </div>
+          )}
           {view === "relationship" && (engineLocked("relationship")
             ? <ApprovalGate title="Relationship Builder" />
             : <SectionGenerator kind="relationship" eyebrow="Section 02 · After they accept" title="Post-connection relationship builder" blurb="Relationship-first openers that start a real conversation and demonstrate relevance — built to earn a reply, not to pitch." />)}

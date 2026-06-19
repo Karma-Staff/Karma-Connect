@@ -29,6 +29,7 @@ export function cleanMessages(parsed) {
     if (!item || typeof item !== "object") return item;
     const out = { ...item };
     if (typeof out.message === "string") out.message = stripHyphens(out.message);
+    if (typeof out.subject === "string") out.subject = stripHyphens(out.subject);
     if (typeof out.reasoning === "string") out.reasoning = stripHyphens(out.reasoning);
     if (typeof out.fresh === "string") out.fresh = stripHyphens(out.fresh);
     if (typeof out.persona === "string") out.persona = stripHyphens(out.persona);

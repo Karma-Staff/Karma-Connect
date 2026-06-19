@@ -63,6 +63,19 @@ export function pConnection(base, n, avoid) {
   return base + `\nTASK: Write ${n} DISTINCT LinkedIn CONNECTION REQUEST notes (the short note on an invite).\nHARD RULES:\n- Each note MUST be 300 characters or fewer (keep a safe margin).\n- NEVER pitch, sell, mention services/staffing, or ask for a meeting or call. The ONLY goal is an accepted, personal-feeling connection.\n- Each note uses a clearly DIFFERENT angle.\n${avoid && avoid.length ? "- Do NOT reuse these angles: " + avoid.join("; ") + "\n" : ""}${HUMANIZE}\n${ARR} ${n} objects:\n[{"message":"the note","angle":"2-4 word label","personalization":<int 58-96>,"acceptance":<int 58-95>,"reasoning":"one sentence on why it lands"}]`;
 }
 
+export function pInmail(base, n, avoid) {
+  return base + `\nTASK: Write ${n} DISTINCT LinkedIn INMAIL messages (the premium message sent to someone you are NOT connected with — they may have ignored a connection request). Each has a SUBJECT LINE and a BODY.
+CONTEXT: Unlike a connection note, here you ARE allowed to introduce who you are, who you're reaching out on behalf of, and why it's relevant to them. This is a real first-touch outreach message, not just an icebreaker. Keep it warm, human, and specific, not a hard pitch.
+HARD RULES:
+- SUBJECT: under 60 characters, specific and curiosity-driven. NEVER generic ("Quick question", "Reaching out", "Connecting"). Make it about THEM or a concrete value, no clickbait.
+- BODY: 4-7 sentences (roughly 90-160 words). Open with a genuine, personalized reason for reaching out (their role, company, a recent signal, or the user-provided context). Briefly say who you are / who you represent and the single most relevant reason it's worth their time. End with ONE low-friction ask (a quick reply or a short call), never pushy.
+- Reference real, specific details from the prospect data. Never fabricate facts. Prefer clearly recent signals (about the last 1-2 weeks); never lean on stale, undated posts.
+- Each message uses a clearly DIFFERENT angle and subject.
+${avoid && avoid.length ? "- Do NOT reuse these angles: " + avoid.join("; ") + "\n" : ""}${HUMANIZE}
+${ARR} ${n} objects:
+[{"subject":"the subject line","message":"the InMail body","angle":"2-4 word label","personalization":<int 58-96>,"acceptance":<int 50-90>,"reasoning":"one sentence on why it lands"}]`;
+}
+
 export function pRelationship(base, n, avoid) {
   return base + `\nTASK: The prospect just ACCEPTED the connection. Write ${n} DISTINCT first messages that build a relationship.\nHARD RULES:\n- Build rapport, start a real conversation. NO pitching, NO selling, NO meeting ask.\n- Reference role / company / industry / background in a way that invites a reply. 2-4 sentences. Different conversational style each.\n${avoid && avoid.length ? "- Do NOT reuse these styles/angles: " + avoid.join("; ") + "\n" : ""}${HUMANIZE}\n${ARR} ${n} objects:\n[{"message":"the message","angle":"2-4 word style label","personalization":<int 58-96>,"acceptance":<int 55-92>,"reasoning":"one sentence on why it earns a reply"}]`;
 }
