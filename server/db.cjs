@@ -60,7 +60,43 @@ async function ensureSchema() {
         from usage where not exists (select 1 from usage_daily)
        group by user_id, ts::date, coalesce(kind,'ai')
       on conflict (user_id, day, kind) do nothing`);
+    // Team activity feed: one row per noteworthy member action. Powers the admin Team view.
+    await q(`create table if not exists activity (
+      id uuid primary key default gen_random_uuid(),
+      user_id uuid not null references users (id) on delete cascade,
+      kind text not null,
+      prospect_id text,
+      label text,
+      detail text,
+      created_at timestamptz not null default now())`);
+    await q("create index if not exists activity_created_idx on activity (created_at desc)");
+    await q("create index if not exists activity_user_idx on activity (user_id, created_at desc)");
+    await q("create index if not exists activity_kind_idx on activity (kind, created_at desc)");
+    // One-time backfill so the feed isn't empty on first deploy: seed lead_added from existing
+    // prospects and stage_changed from the auto-logged notes. Each guarded by its own kind.
+    await q(`insert into activity (user_id, kind, prospect_id, label, created_at)
+      select user_id, 'lead_added', id, label, created_at from prospects
+       where not exists (select 1 from activity where kind = 'lead_added')`);
+    await q(`insert into activity (user_id, kind, prospect_id, label, detail, created_at)
+      select n.user_id, 'stage_changed', n.prospect_id, p.label,
+             lower(replace(n.body, 'Stage changed to ', '')), n.created_at
+        from lead_notes n left join prospects p on p.id = n.prospect_id and p.user_id = n.user_id
+       where n.kind = 'activity' and n.body like 'Stage changed to %'
+         and not exists (select 1 from activity where kind = 'stage_changed')`);
   } catch (e) { console.error("ensureSchema:", e.message); }
+}
+
+// Append a team-activity event. Best-effort and fire-and-forget — never blocks or fails a request.
+async function logActivity(userId, kind, opts = {}) {
+  if (!dbOn || !userId || !kind) return;
+  try {
+    await q(
+      "insert into activity (user_id, kind, prospect_id, label, detail) values ($1,$2,$3,$4,$5)",
+      [userId, kind, opts.prospectId || null,
+       opts.label ? String(opts.label).slice(0, 200) : null,
+       opts.detail ? String(opts.detail).slice(0, 80) : null],
+    );
+  } catch (e) { console.error("logActivity:", e.message); }
 }
 
 // Persist one usage row (called by the proxy after a successful Anthropic call) and roll it
@@ -85,4 +121,4 @@ async function writeUsageRow(row) {
   ).catch((e) => console.error("usage_daily rollup:", e.message));
 }
 
-module.exports = { pool, dbOn, q, ensureSchema, writeUsageRow };
+module.exports = { pool, dbOn, q, ensureSchema, writeUsageRow, logActivity };

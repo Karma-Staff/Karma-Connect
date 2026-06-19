@@ -26,3 +26,8 @@ export async function setUserRole(id, isAdmin) {
 export async function removeUser(id) {
   return adminFetch("/api/admin/users/" + encodeURIComponent(id), { method: "DELETE" });
 }
+
+// Team activity feed + windowed leaderboard (admin-only). Returns { feed, leaderboard, days }.
+export async function fetchTeamActivity(days = 7) {
+  return adminFetch("/api/admin/activity?days=" + encodeURIComponent(days));
+}

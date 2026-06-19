@@ -17,6 +17,7 @@ import { ApprovalsView } from "./views/ApprovalsView.jsx";
 import { SettingsView } from "./views/SettingsView.jsx";
 import { UsageView } from "./views/UsageView.jsx";
 import { AdminMembersView } from "./views/AdminMembersView.jsx";
+import { TeamActivityView } from "./views/TeamActivityView.jsx";
 import { DashboardView } from "./views/DashboardView.jsx";
 import { BoardView } from "./views/BoardView.jsx";
 import { RemindersView } from "./views/RemindersView.jsx";
@@ -506,6 +507,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
     { id: "reminders", label: "Reminders", ic: Ic.fup, count: remindersDue },
     ...(isAdmin ? [
       { id: "approvals", label: "Approvals", ic: Ic.intel, admin: true, count: adminList.filter((a) => a.status === "pending").length },
+      { id: "team", label: "Team activity", ic: Ic.team, admin: true },
       { id: "members", label: "Members", ic: <KarmaMark color="currentColor" w={20} />, admin: true },
     ] : []),
     { id: "usage", label: "Usage & cost", ic: Ic.usage },
@@ -1092,6 +1094,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
           {view === "members" && isAdmin && (
             <AdminMembersView meId={me && me.id} askConfirm={askConfirm} showToast={showToast} />
           )}
+          {view === "team" && isAdmin && <TeamActivityView />}
 
           {view === "dashboard" && <DashboardView onGoStage={(st) => { setHistStatus(st); setView("history"); }} />}
 

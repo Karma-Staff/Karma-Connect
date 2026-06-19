@@ -45,7 +45,7 @@ const EMAIL_RE = /\S+@\S+\.\S+/;
 // ── Layers (required after the .env loader above) ──
 // Data-access (pool, q, ensureSchema, usage rollup) and auth (JWT, allowlist, middleware)
 // live in their own modules so server.js stays a thin HTTP/routing layer.
-const { pool, dbOn, q, ensureSchema, writeUsageRow } = require("./server/db.cjs");
+const { pool, dbOn, q, ensureSchema, writeUsageRow, logActivity } = require("./server/db.cjs");
 const { JWT_SECRET, ALLOWED_DOMAIN, DUMMY_HASH, emailAllowed, tokenFor, publicUser, baseUrl, requireUser, requireAdmin } = require("./server/auth.cjs");
 
 // ── Email verification via Resend (optional, env-gated) ──
@@ -332,13 +332,14 @@ app.post("/api/history/:id/status", requireUser, async (req, res) => {
     const status = LEAD_STATUSES.includes(String(req.body?.status || "")) ? String(req.body.status) : null;
     if (!status) return res.status(400).json({ error: { message: "Invalid status." } });
     const { rows } = await q(
-      "update prospects set status = $1 where user_id = $2 and id = $3 returning id, status",
+      "update prospects set status = $1 where user_id = $2 and id = $3 returning id, status, label",
       [status, req.userId, String(req.params.id)],
     );
     if (!rows[0]) return res.status(404).json({ error: { message: "Lead not found." } });
     // Auto-log the stage change to the lead's activity timeline.
     await q("insert into lead_notes (user_id, prospect_id, kind, body) values ($1,$2,'activity',$3)",
       [req.userId, String(req.params.id), "Stage changed to " + status]).catch(() => {});
+    logActivity(req.userId, "stage_changed", { prospectId: String(req.params.id), label: rows[0].label, detail: status });
     res.json({ ok: true, status: rows[0].status });
   } catch (e) { res.status(500).json({ error: { message: "Could not update status." } }); }
 });
@@ -350,13 +351,16 @@ app.post("/api/history", requireUser, async (req, res) => {
     for (const e of entries) {
       if (!e || !e.id) continue;
       const status = LEAD_STATUSES.includes(String(e.status || "")) ? String(e.status) : "new";
-      await q(
+      const { rows } = await q(
         `insert into prospects (id, user_id, label, sub, status, data)
          values ($1,$2,$3,$4,$5,$6)
          on conflict (id) do update set label = excluded.label, sub = excluded.sub, data = excluded.data
-         where prospects.user_id = $2`,
+         where prospects.user_id = $2
+         returning (xmax = 0) as inserted`,
         [String(e.id), req.userId, e.label || "", e.sub || "", status, e.data || {}],
       );
+      // xmax = 0 means this was a fresh INSERT (not an update) — log the new lead once.
+      if (rows[0] && rows[0].inserted) logActivity(req.userId, "lead_added", { prospectId: String(e.id), label: e.label || "" });
     }
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: { message: "Could not save history." } }); }
@@ -525,6 +529,7 @@ app.post("/api/approvals", requireUser, async (req, res) => {
        returning prospect_id, status`,
       [req.userId, prospectId, label, sub],
     );
+    if (rows[0] && rows[0].status === "pending") logActivity(req.userId, "approval_requested", { prospectId, label });
     res.json({ approval: rows[0] });
   } catch (e) { res.status(500).json({ error: { message: "Could not request approval." } }); }
 });
@@ -557,10 +562,12 @@ app.post("/api/approvals/:id/decide", requireUser, requireAdmin, async (req, res
     const decision = req.body?.decision === "approved" ? "approved" : req.body?.decision === "denied" ? "denied" : null;
     if (!decision) return res.status(400).json({ error: { message: "decision must be 'approved' or 'denied'." } });
     const { rows } = await q(
-      "update lead_approvals set status = $1, decided_by = $2, decided_at = now() where id = $3 returning id, status",
+      "update lead_approvals set status = $1, decided_by = $2, decided_at = now() where id = $3 returning id, status, user_id, prospect_id, label",
       [decision, req.email, String(req.params.id)],
     );
     if (!rows[0]) return res.status(404).json({ error: { message: "Request not found." } });
+    // Log under the member whose lead it is, so it shows on their activity timeline.
+    logActivity(rows[0].user_id, "approval_decided", { prospectId: rows[0].prospect_id, label: rows[0].label, detail: decision });
     res.json({ approval: rows[0] });
   } catch (e) { res.status(500).json({ error: { message: "Could not save the decision." } }); }
 });
@@ -600,6 +607,38 @@ app.delete("/api/admin/users/:id", requireUser, requireAdmin, async (req, res) =
     if (!rowCount) return res.status(404).json({ error: { message: "User not found." } });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: { message: "Could not remove the user." } }); }
+});
+
+// ──────────────────────────── Team activity ─────────────────────────
+// Admin-only: a cross-member feed of recent actions plus a windowed leaderboard.
+app.get("/api/admin/activity", requireUser, requireAdmin, async (req, res) => {
+  try {
+    const days = Math.min(90, Math.max(1, parseInt(req.query.days || "7", 10) || 7));
+    const feedSql = `select a.id, a.kind, a.prospect_id, a.label, a.detail, a.created_at,
+              u.first_name, u.last_name, u.email
+         from activity a join users u on u.id = a.user_id
+        order by a.created_at desc limit 80`;
+    // Per-member tallies within the window (leads added / meetings booked / wins / requests).
+    const lbSql = `select u.id, u.first_name, u.last_name, u.email,
+              count(a.*) filter (where a.kind = 'lead_added')::int as added,
+              count(a.*) filter (where a.kind = 'stage_changed' and a.detail = 'meeting')::int as meetings,
+              count(a.*) filter (where a.kind = 'stage_changed' and a.detail = 'won')::int as wins,
+              count(a.*) filter (where a.kind = 'approval_requested')::int as requests
+         from users u
+         left join activity a on a.user_id = u.id and a.created_at >= now() - ($1 || ' days')::interval
+        group by u.id`;
+    // AI calls + cost in the same window, from the rollup.
+    const callsSql = `select user_id, coalesce(sum(calls),0)::int as calls, coalesce(sum(cost_usd),0)::numeric as cost_usd
+         from usage_daily where day >= current_date - ($1::int - 1) group by user_id`;
+    const [feed, lb, calls] = await Promise.all([
+      q(feedSql), q(lbSql, [String(days)]), q(callsSql, [days]),
+    ]);
+    const callsBy = new Map(calls.rows.map((r) => [r.user_id, r]));
+    const leaderboard = lb.rows
+      .map((r) => ({ ...r, calls: (callsBy.get(r.id) || {}).calls || 0, cost_usd: (callsBy.get(r.id) || {}).cost_usd || 0 }))
+      .sort((a, b) => b.added - a.added || b.meetings - a.meetings || b.wins - a.wins);
+    res.json({ feed: feed.rows, leaderboard, days });
+  } catch (e) { res.status(500).json({ error: { message: "Could not load team activity." } }); }
 });
 
 // ─────────────────────────── Anthropic proxy ────────────────────────
