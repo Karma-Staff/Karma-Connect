@@ -4,15 +4,15 @@
 // + the solid filled "k" wedge). viewBox/coords are the real pixel proportions.
 export function KarmaMark({ color = "#fff", w = 24 }) {
   return (
-    <svg width={w} height={w * (81 / 129)} viewBox="-4 -4 129 81" fill="none" aria-hidden="true">
+    <svg width={w} height={w * (86 / 131)} viewBox="-4 -4 131 86" fill="none" aria-hidden="true">
       <g fill={color}>
         <rect x="0"  y="52" width="20" height="21" />
         <rect x="23" y="34" width="20" height="39" />
         <rect x="46" y="16" width="20" height="57" />
         <rect x="69" y="0"  width="20" height="73" />
-        {/* k = the official tapered arm+leg as one filled shape: solid where it meets the stem,
-            pointed at the tips, with the concave notch (white) opening to the right. */}
-        <polygon points="82,30 121,25 106,47 121,71 82,73" />
+        {/* k = two clear diagonal strokes (arm up-right, leg down-right) starting inside the
+            stem so they blend with no spike; the gap between them is the notch. */}
+        <path d="M84 47 L118 24 M84 47 L118 70" fill="none" stroke={color} strokeWidth="17" strokeLinecap="butt" />
       </g>
     </svg>
   );
