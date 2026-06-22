@@ -166,6 +166,13 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
     e.target.value = "";
   }
   function askConfirm(opts) { setConfirmState(opts); }
+  // Close the confirm dialog on Escape (keyboard accessibility).
+  useEffect(() => {
+    if (!confirmState) return;
+    const onKey = (e) => { if (e.key === "Escape") setConfirmState(null); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [confirmState]);
   function doReset() {
     setProspect({ ...EMPTY_PROSPECT });
     setAnalysis(null);
@@ -651,12 +658,14 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
 
   return (
     <div className="kc">
+      <a href="#kc-main" className="skip-link">Skip to main content</a>
       <div className="app">
         <aside className="side">
           <div className="brand">
             <span className="mark"><KarmaMark color="#fff" w={30} /></span>
             <div><h1>Karma <b>Connect</b></h1><span>AI Prospecting</span></div>
           </div>
+          <nav aria-label="Primary">
           <div className="navlbl">Workspace</div>
           {NAV.map((n) => {
             // analysisLock blocks the click (can't use engines before analysis).
@@ -672,14 +681,18 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
                 {n.id === "history" && <div className="navlbl" style={{ marginTop: 4 }}>Library</div>}
                 {n.id === "approvals" && <div className="navlbl" style={{ marginTop: 4 }}>Admin</div>}
                 {n.id === "usage" && <div className="navlbl" style={{ marginTop: 4 }}>Account</div>}
-                <button className={"nav" + (view === n.id ? " on" : "") + (locked ? " lock" : "")} onClick={() => { if (!locked) setView(n.id); }}>
+                <button className={"nav" + (view === n.id ? " on" : "") + (locked ? " lock" : "")} onClick={() => { if (!locked) setView(n.id); }}
+                  aria-current={view === n.id ? "page" : undefined}
+                  aria-disabled={locked || undefined}
+                  title={locked ? "Run AI analysis first to unlock this" : undefined}>
                   {n.ic}{n.label}
-                  {n.count > 0 && <span className="ct">{n.count}</span>}
-                  {showLock && <span className="ct" style={{ color: "var(--faint)" }}>🔒</span>}
+                  {n.count > 0 && <span className="ct" aria-label={n.count + " items"}>{n.count}</span>}
+                  {showLock && <span className="ct" style={{ color: "var(--faint)" }} aria-label="locked">🔒</span>}
                 </button>
               </Fragment>
             );
           })}
+          </nav>
           <div className="sidefoot">
             <div><span className="dot" />{analysis ? "Profile active" : "Awaiting analysis"}</div>
             <div style={{ marginTop: 6, opacity: .85 }}>Sending as <b style={{ color: "var(--ice)" }}>{(SENDERS.find((s) => s.id === sender) || SENDERS[0]).name}</b></div>
@@ -697,13 +710,13 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
           </div>
         </aside>
 
-        <main className="main">
-          {toast && <div className="kctoast">{toast}</div>}
+        <main className="main" id="kc-main" tabIndex={-1}>
+          <div className="kctoast-live" role="status" aria-live="polite">{toast && <div className="kctoast">{toast}</div>}</div>
           {confirmState && (
             <div className="modal-ov" onClick={() => setConfirmState(null)}>
-              <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
-                <h3>
-                  {confirmState.danger && <span className="mi" style={{ background: "rgba(226,74,74,.16)", color: "#ff9a9a", border: "1px solid rgba(226,74,74,.3)" }}>!</span>}
+              <div className="modal" role="dialog" aria-modal="true" aria-labelledby="kc-modal-title" onClick={(e) => e.stopPropagation()}>
+                <h3 id="kc-modal-title">
+                  {confirmState.danger && <span className="mi" style={{ background: "rgba(226,74,74,.16)", color: "#ff9a9a", border: "1px solid rgba(226,74,74,.3)" }} aria-hidden="true">!</span>}
                   {confirmState.title}
                 </h3>
                 <p>{confirmState.message}</p>

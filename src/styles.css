@@ -327,6 +327,12 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
 @media(max-width:920px){ .kc .insightgrid{grid-template-columns:1fr} }
 
 /* ── Phase 3: transitions, accessibility, micro-polish (no token cost) ── */
+/* Skip link: off-screen until a keyboard user tabs to it, then it slides into view. */
+.kc .skip-link{position:fixed; top:10px; left:10px; z-index:200; transform:translateY(-150%); transition:transform .18s ease;
+  background:var(--ai2,#7c5cff); color:#fff; padding:10px 16px; border-radius:10px; font-size:13px; font-weight:700; text-decoration:none;
+  box-shadow:0 10px 30px -10px rgba(0,0,0,.6)}
+.kc .skip-link:focus{transform:none; outline:2px solid #fff; outline-offset:2px}
+.kc .main:focus{outline:none}
 @keyframes fadeup{from{opacity:0; transform:translateY(10px)}to{opacity:1; transform:none}}
 .kc .viewfade{animation:fadeup .34s cubic-bezier(.22,1,.36,1) both}
 .kc button:focus-visible,.kc input:focus-visible,.kc textarea:focus-visible{outline:2px solid var(--ai2); outline-offset:2px; border-radius:10px}
