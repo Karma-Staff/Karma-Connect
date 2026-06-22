@@ -166,13 +166,6 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
     e.target.value = "";
   }
   function askConfirm(opts) { setConfirmState(opts); }
-  // Close the confirm dialog on Escape (keyboard accessibility).
-  useEffect(() => {
-    if (!confirmState) return;
-    const onKey = (e) => { if (e.key === "Escape") setConfirmState(null); };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [confirmState]);
   function doReset() {
     setProspect({ ...EMPTY_PROSPECT });
     setAnalysis(null);
