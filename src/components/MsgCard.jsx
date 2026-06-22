@@ -1,10 +1,13 @@
 import { CopyIc, RegenIc, StarIc } from "./icons.jsx";
+import { flagUnsupported } from "../lib/verify.js";
 
 // One generated message: index/angle chips, optional char counter, score bars, AI-coach note, actions.
-export function MsgCard({ item, idx, kind, charLimit, favOn, onCopy, onRegen, onFav, regening }) {
+export function MsgCard({ item, idx, kind, charLimit, favOn, onCopy, onRegen, onFav, regening, source }) {
   const over = charLimit && item.message && item.message.length > charLimit;
   // InMails carry a subject line; copy it together with the body.
   const copyText = item.subject ? "Subject: " + item.subject + "\n\n" + item.message : item.message;
+  // Zero-token hallucination guard: numbers/names in the message not traceable to the user's data.
+  const flags = source ? flagUnsupported(copyText, source) : [];
   return (
     <div className="mcard">
       <div className="mctop">
@@ -27,6 +30,11 @@ export function MsgCard({ item, idx, kind, charLimit, favOn, onCopy, onRegen, on
         </div>
       )}
       {item.reasoning && <div className="reason"><b>AI Coach</b> · {item.reasoning}</div>}
+      {flags.length > 0 && (
+        <div className="verify" title="These specifics aren't in the data you entered. Double-check them before sending — the AI may have invented them.">
+          ⚠ Verify before sending: {flags.map((f) => f.claim).join(", ")}
+        </div>
+      )}
       <div className="mact">
         <button className="iconbtn" onClick={() => onCopy(copyText)}>{CopyIc} Copy{item.subject ? " all" : ""}</button>
         <button className="iconbtn" onClick={onRegen} disabled={regening}>{RegenIc} {regening ? "…" : "Regenerate"}</button>

@@ -4,6 +4,7 @@ import { SENDERS, senderOffer } from "./lib/senders.js";
 import { anthropicMsg, callClaude, CLAUDE_FAST_MODEL } from "./lib/claude.js";
 import { safeJSON } from "./lib/json.js";
 import { cleanMessages, stripLinkedInNoise } from "./lib/text.js";
+import { flagUnsupported } from "./lib/verify.js";
 import {
   COMPANY_SYSTEM, companyResearchPrompt, buildContext,
   pAnalysis, pConnection, pInmail, pRelationship, pMeeting, pFollowup, pFollowupSequence,
@@ -548,6 +549,9 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
       </div>
     );
   }
+  // Source text the hallucination guard checks generated messages against (same data the
+  // prompts were built from). Cheap string build; recomputed each render is fine.
+  const verifySource = buildContext(prospect, offer, analysis, "");
   function SectionGenerator({ kind, title, eyebrow, blurb, charLimit }) {
     const items = results[kind] || [], isLoad = loading[kind], err = errors[kind];
     return (
@@ -566,7 +570,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
         {items.length > 0 && (
           <div className="grid2">
             {items.map((it, i) => (
-              <MsgCard key={i} item={it} idx={i} kind={kind} charLimit={charLimit}
+              <MsgCard key={i} item={it} idx={i} kind={kind} charLimit={charLimit} source={verifySource}
                 favOn={!!favs[favKey(kind, i, it.message)]} onCopy={copy} onFav={() => toggleFav(kind, i, it.message)}
                 onRegen={() => regenerateOne(kind, i)} regening={!!regen[kind + i]} />
             ))}
@@ -979,7 +983,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
               )}
               {results["meeting_" + meetLen].length > 0 && (
                 <div className="grid2">
-                  {results["meeting_" + meetLen].map((it, i) => { const kind = "meeting_" + meetLen; return <MsgCard key={i} item={it} idx={i} kind="meeting" favOn={!!favs[favKey(kind, i, it.message)]} onCopy={copy} onFav={() => toggleFav(kind, i, it.message)} onRegen={() => regenerateOne(kind, i)} regening={!!regen[kind + i]} />; })}
+                  {results["meeting_" + meetLen].map((it, i) => { const kind = "meeting_" + meetLen; return <MsgCard key={i} item={it} idx={i} kind="meeting" source={verifySource} favOn={!!favs[favKey(kind, i, it.message)]} onCopy={copy} onFav={() => toggleFav(kind, i, it.message)} onRegen={() => regenerateOne(kind, i)} regening={!!regen[kind + i]} />; })}
                   {loading["meeting_" + meetLen] && <div className="mcard" style={{ justifyContent: "center", alignItems: "center", minHeight: 120, color: "var(--muted)", fontSize: 13 }}>Crafting more…</div>}
                 </div>
               )}
@@ -1015,6 +1019,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
                             <div className="mbody" style={{ whiteSpace: "pre-wrap" }}>{st.message}</div>
                             {st.fresh && <div className="reason"><b>New angle</b> · {st.fresh}</div>}
                             {st.reasoning && <div className="reason"><b>AI Coach</b> · {st.reasoning}</div>}
+                            {(() => { const fl = flagUnsupported(st.message, verifySource); return fl.length ? <div className="verify" title="These specifics aren't in the data you entered. Double-check them before sending.">⚠ Verify before sending: {fl.map((f) => f.claim).join(", ")}</div> : null; })()}
                             <div className="mact">
                               <button className="iconbtn" onClick={() => copy(st.message)}>{CopyIc} Copy</button>
                               <button className={"iconbtn fav" + (favs[favKey(kind, i, st.message)] ? " on" : "")} onClick={() => toggleFav(kind, i, st.message)} aria-label={favs[favKey(kind, i, st.message)] ? "Remove from favorites" : "Add to favorites"} aria-pressed={!!favs[favKey(kind, i, st.message)]} style={{ marginLeft: "auto" }}>{StarIc(!!favs[favKey(kind, i, st.message)])}</button>
@@ -1058,6 +1063,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
                   <div className="mctop"><span className="stagehd">{st.stage || "Follow-up"}</span></div>
                   <div className="mbody" style={{ whiteSpace: "pre-wrap" }}>{st.message}</div>
                   {st.reasoning && <div className="reason"><b>Why this fits</b> · {st.reasoning}</div>}
+                  {(() => { const fl = flagUnsupported(st.message, verifySource + "\n" + transcript); return fl.length ? <div className="verify" title="These specifics aren't in your data or the transcript. Double-check them before sending.">⚠ Verify before sending: {fl.map((f) => f.claim).join(", ")}</div> : null; })()}
                   <div className="mact">
                     <button className="iconbtn" onClick={() => copy(st.message)}>{CopyIc} Copy</button>
                     <button className={"iconbtn fav" + (favs[favKey(kind, i, st.message)] ? " on" : "")} onClick={() => toggleFav(kind, i, st.message)} aria-label={favs[favKey(kind, i, st.message)] ? "Remove from favorites" : "Add to favorites"} aria-pressed={!!favs[favKey(kind, i, st.message)]} style={{ marginLeft: "auto" }}>{StarIc(!!favs[favKey(kind, i, st.message)])}</button>
