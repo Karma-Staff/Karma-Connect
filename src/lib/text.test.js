@@ -21,6 +21,19 @@ describe("stripHyphens", () => {
   it("collapses doubled commas and extra spaces", () => {
     expect(stripHyphens("a  —  b")).toBe("a, b");
   });
+
+  it("keeps the blank line between paragraphs (no run-on)", () => {
+    expect(stripHyphens("Hi Jeremy,\n\nGreat to connect.\n\nBest, Sam"))
+      .toBe("Hi Jeremy,\n\nGreat to connect.\n\nBest, Sam");
+  });
+
+  it("keeps single line breaks but collapses horizontal whitespace", () => {
+    expect(stripHyphens("Line one\nLine    two")).toBe("Line one\nLine two");
+  });
+
+  it("caps 3+ blank lines at one and normalizes CRLF", () => {
+    expect(stripHyphens("a  \r\n\r\n\r\n\r\nb")).toBe("a\n\nb");
+  });
 });
 
 describe("cleanMessages", () => {
