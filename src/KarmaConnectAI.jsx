@@ -7,12 +7,13 @@ import { cleanMessages, stripLinkedInNoise } from "./lib/text.js";
 import { flagUnsupported } from "./lib/verify.js";
 import {
   COMPANY_SYSTEM, companyResearchPrompt, buildContext,
-  pAnalysis, pConnection, pInmail, pRelationship, pMeeting, pFollowup, pFollowupSequence,
+  pAnalysis, pConnection, pInmail, pRefine, pRelationship, pMeeting, pFollowup, pFollowupSequence,
   STAGES_ANALYZE, STAGES_GEN, FOLLOWUP_STAGES,
 } from "./lib/prompts.js";
 import { KarmaMark, Ic, CopyIc, StarIc } from "./components/icons.jsx";
 import { Loader } from "./components/Loader.jsx";
 import { MsgCard } from "./components/MsgCard.jsx";
+import { RefineBox } from "./components/RefineBox.jsx";
 import { HistoryView } from "./views/HistoryView.jsx";
 import { ApprovalsView } from "./views/ApprovalsView.jsx";
 import { SettingsView } from "./views/SettingsView.jsx";
@@ -494,6 +495,23 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
     } catch (e) { showToast("Regenerate failed — try again"); }
     setRegen((r) => ({ ...r, [rk]: false }));
   }
+  // Refine ONE message with a user instruction, keeping it aligned with the original.
+  // Used by every section (RefineBox under each card). Returns a promise the box awaits.
+  async function refineOne(kind, i, instruction) {
+    if (!instruction || !instruction.trim()) return;
+    const orig = (results[kind] || [])[i];
+    if (!orig) return;
+    const refineKind = kind.indexOf("meeting_") === 0 ? "meeting" : kind === "followupSeq" ? "followup" : kind;
+    const cap = kind.indexOf("meeting_") === 0 || kind === "inmail" ? 1600 : 1100;
+    try {
+      const prompt = pRefine(buildContext(prospect, offer, analysis, ""), refineKind, orig.message, instruction, { subject: orig.subject });
+      const txt = await callClaude(SYSTEM, prompt, false, cap);
+      let arr = safeJSON(txt); if (!Array.isArray(arr)) arr = [arr]; arr = cleanMessages(arr);
+      const item = arr.find((x) => x && x.message);
+      if (item) { setResults((r) => { const c = [...r[kind]]; c[i] = { ...c[i], ...item }; return { ...r, [kind]: c }; }); showToast("Message refined"); }
+      else showToast("Refine failed — try again");
+    } catch (e) { showToast("Refine failed — try again"); }
+  }
 
   const NAV = [
     { id: "dashboard", label: "Dashboard", ic: Ic.dash },
@@ -572,7 +590,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
             {items.map((it, i) => (
               <MsgCard key={i} item={it} idx={i} kind={kind} charLimit={charLimit} source={verifySource}
                 favOn={!!favs[favKey(kind, i, it.message)]} onCopy={copy} onFav={() => toggleFav(kind, i, it.message)}
-                onRegen={() => regenerateOne(kind, i)} regening={!!regen[kind + i]} />
+                onRegen={() => regenerateOne(kind, i)} onRefine={(instr) => refineOne(kind, i, instr)} regening={!!regen[kind + i]} />
             ))}
             {isLoad && <div className="mcard" style={{ justifyContent: "center", alignItems: "center", minHeight: 120, color: "var(--muted)", fontSize: 13 }}>Crafting more…</div>}
           </div>
@@ -989,7 +1007,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
               )}
               {results["meeting_" + meetLen].length > 0 && (
                 <div className="grid2">
-                  {results["meeting_" + meetLen].map((it, i) => { const kind = "meeting_" + meetLen; return <MsgCard key={i} item={it} idx={i} kind="meeting" source={verifySource} favOn={!!favs[favKey(kind, i, it.message)]} onCopy={copy} onFav={() => toggleFav(kind, i, it.message)} onRegen={() => regenerateOne(kind, i)} regening={!!regen[kind + i]} />; })}
+                  {results["meeting_" + meetLen].map((it, i) => { const kind = "meeting_" + meetLen; return <MsgCard key={i} item={it} idx={i} kind="meeting" source={verifySource} favOn={!!favs[favKey(kind, i, it.message)]} onCopy={copy} onFav={() => toggleFav(kind, i, it.message)} onRegen={() => regenerateOne(kind, i)} onRefine={(instr) => refineOne(kind, i, instr)} regening={!!regen[kind + i]} />; })}
                   {loading["meeting_" + meetLen] && <div className="mcard" style={{ justifyContent: "center", alignItems: "center", minHeight: 120, color: "var(--muted)", fontSize: 13 }}>Crafting more…</div>}
                 </div>
               )}
@@ -1030,6 +1048,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
                               <button className="iconbtn" onClick={() => copy(st.message)}>{CopyIc} Copy</button>
                               <button className={"iconbtn fav" + (favs[favKey(kind, i, st.message)] ? " on" : "")} onClick={() => toggleFav(kind, i, st.message)} aria-label={favs[favKey(kind, i, st.message)] ? "Remove from favorites" : "Add to favorites"} aria-pressed={!!favs[favKey(kind, i, st.message)]} style={{ marginLeft: "auto" }}>{StarIc(!!favs[favKey(kind, i, st.message)])}</button>
                             </div>
+                            <RefineBox onRefine={(instr) => refineOne("followupSeq", i, instr)} />
                           </div>
                         </div>
                       ); })}
@@ -1074,6 +1093,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
                     <button className="iconbtn" onClick={() => copy(st.message)}>{CopyIc} Copy</button>
                     <button className={"iconbtn fav" + (favs[favKey(kind, i, st.message)] ? " on" : "")} onClick={() => toggleFav(kind, i, st.message)} aria-label={favs[favKey(kind, i, st.message)] ? "Remove from favorites" : "Add to favorites"} aria-pressed={!!favs[favKey(kind, i, st.message)]} style={{ marginLeft: "auto" }}>{StarIc(!!favs[favKey(kind, i, st.message)])}</button>
                   </div>
+                  <RefineBox onRefine={(instr) => refineOne("followup", i, instr)} />
                 </div>
               ); })}
               </>

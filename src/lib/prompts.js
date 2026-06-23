@@ -76,6 +76,31 @@ ${ARR} ${n} objects:
 [{"subject":"the subject line","message":"the InMail body","angle":"2-4 word label","personalization":<int 58-96>,"acceptance":<int 50-90>,"reasoning":"one sentence on why it lands"}]`;
 }
 
+// Per-message refine: the user likes a message but wants a specific change. Rewrite THAT
+// message applying their instruction while staying aligned with the original (same intent,
+// angle, tone, and the real details it used). Returns ONE object of the same shape.
+const REFINE_RULES = {
+  connection: "It is a LinkedIn CONNECTION REQUEST note: 300 characters or fewer, NO pitch/selling/meeting ask — only earn an accepted, personal connection.",
+  inmail: "It is a LinkedIn INMAIL to a non-connection: keep a SUBJECT under 60 chars plus a 4-7 sentence body; you may introduce who you are and why you're reaching out.",
+  relationship: "It is a post-connection first message: build rapport and start a conversation, NO pitch or meeting ask.",
+  meeting: "It is a meeting request: value-focused, non-salesy, make the ask an easy yes.",
+  followup: "It is a follow-up message: move things forward without being pushy; never a generic 'just checking in'.",
+};
+
+export function pRefine(base, kind, original, instruction, meta = {}) {
+  const isInmail = kind === "inmail";
+  const rules = REFINE_RULES[kind] || "";
+  let s = base + `\nTASK: The user likes the message below but wants it refined. Rewrite it applying their requested change while STAYING ALIGNED with the original — keep its core intent, angle, tone and the specific real details it referenced. Change only what the instruction asks; do NOT start over or invent new facts.\n`;
+  s += `\nORIGINAL MESSAGE:\n"""\n${meta.subject ? "Subject: " + meta.subject + "\n" : ""}${original}\n"""\n`;
+  s += `\nWHAT THE USER WANTS CHANGED:\n"""\n${String(instruction || "").trim()}\n"""\n`;
+  s += `\nCONSTRAINTS: ${rules}\n${HUMANIZE}\n`;
+  s += `Return ONLY a single valid JSON object (no markdown, no array, no preamble):\n`;
+  s += isInmail
+    ? `{"subject":"the subject line","message":"the refined body","angle":"2-4 word label","personalization":<int 58-96>,"acceptance":<int 50-90>,"reasoning":"one sentence on what you changed"}`
+    : `{"message":"the refined message","angle":"2-4 word label","personalization":<int 58-96>,"acceptance":<int 55-92>,"reasoning":"one sentence on what you changed"}`;
+  return s;
+}
+
 export function pRelationship(base, n, avoid) {
   return base + `\nTASK: The prospect just ACCEPTED the connection. Write ${n} DISTINCT first messages that build a relationship.\nHARD RULES:\n- Build rapport, start a real conversation. NO pitching, NO selling, NO meeting ask.\n- Reference role / company / industry / background in a way that invites a reply. 2-4 sentences. Different conversational style each.\n${avoid && avoid.length ? "- Do NOT reuse these styles/angles: " + avoid.join("; ") + "\n" : ""}${HUMANIZE}\n${ARR} ${n} objects:\n[{"message":"the message","angle":"2-4 word style label","personalization":<int 58-96>,"acceptance":<int 55-92>,"reasoning":"one sentence on why it earns a reply"}]`;
 }

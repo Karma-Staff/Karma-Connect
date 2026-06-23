@@ -1,8 +1,9 @@
 import { CopyIc, RegenIc, StarIc } from "./icons.jsx";
 import { flagUnsupported } from "../lib/verify.js";
+import { RefineBox } from "./RefineBox.jsx";
 
 // One generated message: index/angle chips, optional char counter, score bars, AI-coach note, actions.
-export function MsgCard({ item, idx, kind, charLimit, favOn, onCopy, onRegen, onFav, regening, source }) {
+export function MsgCard({ item, idx, kind, charLimit, favOn, onCopy, onRegen, onFav, onRefine, regening, source }) {
   const over = charLimit && item.message && item.message.length > charLimit;
   // InMails carry a subject line; copy it together with the body.
   const copyText = item.subject ? "Subject: " + item.subject + "\n\n" + item.message : item.message;
@@ -40,6 +41,7 @@ export function MsgCard({ item, idx, kind, charLimit, favOn, onCopy, onRegen, on
         <button className="iconbtn" onClick={onRegen} disabled={regening}>{RegenIc} {regening ? "…" : "Regenerate"}</button>
         <button className={"iconbtn fav" + (favOn ? " on" : "")} onClick={onFav} aria-label={favOn ? "Remove from favorites" : "Add to favorites"} aria-pressed={favOn} style={{ marginLeft: "auto" }}>{StarIc(favOn)}</button>
       </div>
+      {onRefine && <RefineBox onRefine={onRefine} />}
     </div>
   );
 }
