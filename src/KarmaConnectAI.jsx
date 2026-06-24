@@ -15,7 +15,6 @@ import { Loader } from "./components/Loader.jsx";
 import { MsgCard } from "./components/MsgCard.jsx";
 import { RefineBox } from "./components/RefineBox.jsx";
 import { Dropdown } from "./components/Dropdown.jsx";
-import { Tilt } from "./components/Tilt.jsx";
 import { HistoryView } from "./views/HistoryView.jsx";
 import { ApprovalsView } from "./views/ApprovalsView.jsx";
 import { SettingsView } from "./views/SettingsView.jsx";
@@ -641,7 +640,6 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
       <div>
         <div className="head"><div className="eyebrow">Locked · needs admin approval</div><h2>{title}</h2><p>This is an advanced outreach stage. An admin approves each lead before it can move past connection requests.</p></div>
         <ProspectStrip />
-        <Tilt className="gate3d">
         <div className="empty">
           <div className="eic" style={{ fontSize: 30 }}>🔒</div>
           {st === "pending" ? (
@@ -667,7 +665,6 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
             </>
           )}
         </div>
-        </Tilt>
       </div>
     );
   }
