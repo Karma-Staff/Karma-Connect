@@ -14,6 +14,7 @@ import { KarmaMark, Ic, CopyIc, StarIc } from "./components/icons.jsx";
 import { Loader } from "./components/Loader.jsx";
 import { MsgCard } from "./components/MsgCard.jsx";
 import { RefineBox } from "./components/RefineBox.jsx";
+import { Dropdown } from "./components/Dropdown.jsx";
 import { HistoryView } from "./views/HistoryView.jsx";
 import { ApprovalsView } from "./views/ApprovalsView.jsx";
 import { SettingsView } from "./views/SettingsView.jsx";
@@ -616,11 +617,21 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
     const adminName = (a) => [a.first_name, a.last_name].filter(Boolean).join(" ") || a.email;
     const AdminPicker = () => (
       adminOptions.length > 0 ? (
-        <div className="f" style={{ maxWidth: 320, margin: "0 auto 14px", textAlign: "left" }}>
+        <div className="f" style={{ maxWidth: 340, margin: "0 auto 14px", textAlign: "left" }}>
           <label htmlFor="kc-approver">Send the request to</label>
-          <select id="kc-approver" value={chosenAdmin} onChange={(e) => setChosenAdmin(e.target.value)}>
-            {adminOptions.map((a) => <option key={a.id} value={a.id}>{adminName(a)}</option>)}
-          </select>
+          <Dropdown
+            id="kc-approver"
+            value={chosenAdmin}
+            onChange={setChosenAdmin}
+            placeholder="Choose an admin…"
+            options={adminOptions.map((a) => ({ value: a.id, label: adminName(a), email: a.email }))}
+            renderOption={(o) => (
+              <span className="kcdd-admin">
+                <span className="kcdd-av">{(o.label[0] || "?").toUpperCase()}</span>
+                <span className="kcdd-name"><b>{o.label}</b><small>{o.email}</small></span>
+              </span>
+            )}
+          />
           <span className="hint">They'll get an email and see it in Approvals.</span>
         </div>
       ) : null

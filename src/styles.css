@@ -159,6 +159,33 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
 .kc .reason{font-size:12.5px; color:var(--muted); line-height:1.55; border-left:2px solid var(--border2); padding-left:11px}
 .kc .reason b{color:var(--yellow); font-weight:700}
 .kc .verify{font-size:12px; line-height:1.5; color:#ffcf8a; background:rgba(231,160,75,.1); border:1px solid rgba(231,160,75,.32); border-radius:9px; padding:8px 11px; cursor:help}
+/* Custom dropdown (replaces native <select> so the option list matches the theme). */
+.kc .kcdd{position:relative; width:100%}
+.kc .kcdd-trigger{display:flex; align-items:center; gap:10px; width:100%; min-height:46px; padding:9px 12px; cursor:pointer;
+  background:rgba(0,0,0,.3); border:1px solid var(--border); border-radius:12px; color:var(--text); font:inherit; text-align:left;
+  transition:border .16s, box-shadow .16s, background .16s}
+.kc .kcdd-trigger:hover{border-color:var(--steel)}
+.kc .kcdd-trigger.open{border-color:var(--steel); background:rgba(0,0,0,.42); box-shadow:0 0 0 3px rgba(74,134,200,.18)}
+.kc .kcdd-val{flex:1; min-width:0; display:flex; align-items:center}
+.kc .kcdd-ph{color:#41527a}
+.kc .kcdd-chev{display:flex; color:var(--faint); transition:transform .18s ease}
+.kc .kcdd-chev.up{transform:rotate(180deg)}
+.kc .kcdd-menu{position:absolute; z-index:30; top:calc(100% + 6px); left:0; right:0; margin:0; padding:6px; list-style:none;
+  max-height:280px; overflow:auto; border-radius:13px; border:1px solid var(--steel);
+  background:linear-gradient(180deg, rgba(16,32,58,.98), rgba(9,20,38,.98)); -webkit-backdrop-filter:blur(14px); backdrop-filter:blur(14px);
+  box-shadow:0 24px 60px -20px rgba(0,0,0,.75), inset 0 1px 0 rgba(255,255,255,.08); animation:kcddIn .14s ease both}
+@keyframes kcddIn{from{opacity:0; transform:translateY(-6px)}to{opacity:1; transform:none}}
+.kc .kcdd-opt{display:flex; align-items:center; gap:10px; padding:9px 10px; border-radius:9px; cursor:pointer; color:var(--ice); position:relative}
+.kc .kcdd-opt.active{background:rgba(124,92,255,.16)}
+.kc .kcdd-opt.sel{background:rgba(124,92,255,.1)}
+.kc .kcdd-opt.sel.active{background:rgba(124,92,255,.22)}
+.kc .kcdd-check{margin-left:auto; color:var(--ai2); font-weight:800}
+.kc .kcdd-admin{display:flex; align-items:center; gap:10px; min-width:0}
+.kc .kcdd-av{flex:0 0 30px; width:30px; height:30px; border-radius:9px; background:var(--grad); display:flex; align-items:center; justify-content:center;
+  font-family:'Lora',serif; font-weight:800; font-size:12px; color:#fff; box-shadow:inset 0 1px 0 rgba(255,255,255,.3)}
+.kc .kcdd-name{min-width:0; display:flex; flex-direction:column; line-height:1.25}
+.kc .kcdd-name b{font-size:13.5px; font-weight:700; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.kc .kcdd-name small{font-size:11px; color:var(--faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 .kc .refine-toggle{align-self:flex-start; color:var(--faint)}
 .kc .refinebox{display:flex; flex-direction:column; gap:9px; margin-top:2px; padding:11px; border:1px solid var(--steel); border-radius:11px; background:rgba(74,134,200,.07)}
 .kc .refinebox textarea{width:100%; min-height:54px; resize:vertical; border-radius:9px; padding:9px 11px; font-family:inherit; font-size:13px; line-height:1.5; color:var(--text); background:rgba(0,0,0,.38); border:1px solid var(--border); outline:none}
