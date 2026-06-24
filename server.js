@@ -52,7 +52,7 @@ const { JWT_SECRET, ALLOWED_DOMAIN, DUMMY_HASH, emailAllowed, tokenFor, publicUs
 // If RESEND_API_KEY is set, new signups must confirm their email before they can sign in.
 // If it's not configured (e.g. local dev), users are created already-verified (no friction).
 // Email senders + verify/reset config (Resend). Required here, after the .env loader above.
-const { emailVerifyOn, VERIFY_TTL_HOURS, RESET_TTL_HOURS, sendVerificationEmail, sendResetEmail } = require("./server/email.cjs");
+const { emailVerifyOn, VERIFY_TTL_HOURS, RESET_TTL_HOURS, sendVerificationEmail, sendResetEmail, sendApprovalRequestEmail, sendApprovalDecisionEmail } = require("./server/email.cjs");
 
 const app = express();
 app.disable("x-powered-by");
@@ -518,18 +518,38 @@ app.post("/api/approvals", requireUser, async (req, res) => {
     if (!prospectId) return res.status(400).json({ error: { message: "Missing lead id." } });
     const label = String(req.body?.label || "").slice(0, 200);
     const sub = String(req.body?.sub || "").slice(0, 200);
+    // Optional: the admin the member chose to review this request.
+    const assignedAdminId = String(req.body?.assignedAdminId || "").trim() || null;
     // Re-requesting resets a denied lead back to pending; an already-approved lead stays approved.
     const { rows } = await q(
-      `insert into lead_approvals (user_id, prospect_id, label, sub, status, requested_at)
-       values ($1,$2,$3,$4,'pending', now())
+      `insert into lead_approvals (user_id, prospect_id, label, sub, status, assigned_admin_id, requested_at)
+       values ($1,$2,$3,$4,'pending',$5, now())
        on conflict (user_id, prospect_id) do update
-         set label = excluded.label, sub = excluded.sub,
+         set label = excluded.label, sub = excluded.sub, assigned_admin_id = excluded.assigned_admin_id,
              status = case when lead_approvals.status = 'approved' then 'approved' else 'pending' end,
              requested_at = case when lead_approvals.status = 'approved' then lead_approvals.requested_at else now() end
        returning prospect_id, status`,
-      [req.userId, prospectId, label, sub],
+      [req.userId, prospectId, label, sub, assignedAdminId],
     );
-    if (rows[0] && rows[0].status === "pending") logActivity(req.userId, "approval_requested", { prospectId, label });
+    if (rows[0] && rows[0].status === "pending") {
+      logActivity(req.userId, "approval_requested", { prospectId, label });
+      // Email the chosen admin (or all admins if none chosen) that a request is waiting. Best-effort.
+      if (emailVerifyOn) {
+        (async () => {
+          try {
+            const me = await q("select first_name, last_name, email from users where id = $1", [req.userId]);
+            const memberName = me.rows[0] ? ([me.rows[0].first_name, me.rows[0].last_name].filter(Boolean).join(" ") || me.rows[0].email) : (req.email || "A team member");
+            const admins = assignedAdminId
+              ? await q("select first_name, email from users where id = $1 and is_admin = true", [assignedAdminId])
+              : await q("select first_name, email from users where is_admin = true limit 25");
+            const link = baseUrl(req) + "/";
+            for (const a of admins.rows) {
+              await sendApprovalRequestEmail(a.email, { adminName: a.first_name, memberName, leadLabel: label, leadSub: sub, link }).catch(() => {});
+            }
+          } catch (e) { /* email is best-effort */ }
+        })();
+      }
+    }
     res.json({ approval: rows[0] });
   } catch (e) { res.status(500).json({ error: { message: "Could not request approval." } }); }
 });
@@ -568,6 +588,17 @@ app.post("/api/approvals/:id/decide", requireUser, requireAdmin, async (req, res
     if (!rows[0]) return res.status(404).json({ error: { message: "Request not found." } });
     // Log under the member whose lead it is, so it shows on their activity timeline.
     logActivity(rows[0].user_id, "approval_decided", { prospectId: rows[0].prospect_id, label: rows[0].label, detail: decision });
+    // Email the member that their request was decided. Best-effort.
+    if (emailVerifyOn) {
+      (async () => {
+        try {
+          const m = await q("select first_name, last_name, email from users where id = $1", [rows[0].user_id]);
+          if (!m.rows[0]) return;
+          const memberName = [m.rows[0].first_name, m.rows[0].last_name].filter(Boolean).join(" ") || m.rows[0].email;
+          await sendApprovalDecisionEmail(m.rows[0].email, { memberName, leadLabel: rows[0].label, decision, adminName: req.email, link: baseUrl(req) + "/" }).catch(() => {});
+        } catch (e) { /* best-effort */ }
+      })();
+    }
     res.json({ approval: rows[0] });
   } catch (e) { res.status(500).json({ error: { message: "Could not save the decision." } }); }
 });
@@ -607,6 +638,16 @@ app.delete("/api/admin/users/:id", requireUser, requireAdmin, async (req, res) =
     if (!rowCount) return res.status(404).json({ error: { message: "User not found." } });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: { message: "Could not remove the user." } }); }
+});
+
+// Any signed-in user can see the list of admins (to choose who should approve a lead).
+app.get("/api/admins", requireUser, async (req, res) => {
+  try {
+    const { rows } = await q(
+      "select id, first_name, last_name, email from users where is_admin = true order by first_name, email limit 100",
+    );
+    res.json({ admins: rows });
+  } catch (e) { res.status(500).json({ error: { message: "Could not load admins." } }); }
 });
 
 // ──────────────────────────── Team activity ─────────────────────────

@@ -28,7 +28,7 @@ import { setReminder, listReminders } from "./lib/reminders.js";
 import { getProspectBriefPdf } from "./lib/leads.js";
 import { scoreFit } from "./lib/scoring.js";
 import { currentUser } from "./lib/auth.js";
-import { requestApproval, myApprovals, listApprovals, decideApproval } from "./lib/approvals.js";
+import { requestApproval, myApprovals, listApprovals, decideApproval, listAdmins } from "./lib/approvals.js";
 
 export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   // Working draft is namespaced per account so different logins don't clobber each other.
@@ -92,6 +92,8 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   const [approvals, setApprovals] = useState({});   // { prospectId: 'pending'|'approved'|'denied' }
   const [apprBusy, setApprBusy] = useState(false);
   const [adminList, setAdminList] = useState([]);    // admin view: all requests
+  const [adminOptions, setAdminOptions] = useState([]); // member view: admins to choose from
+  const [chosenAdmin, setChosenAdmin] = useState("");   // selected admin id for the request
   const leadStatus = currentEntryId ? approvals[currentEntryId] : undefined;
   const leadApproved = isAdmin || leadStatus === "approved";
   const engineLocked = (id) => APPROVAL_ENGINES.includes(id) && !leadApproved;
@@ -115,13 +117,13 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   // the full request list for the Approvals panel + badge. Also the follow-up due count.
   useEffect(() => {
     refreshApprovals();
-    if (isAdmin) loadAdminList();
+    if (isAdmin) loadAdminList(); else loadAdminOptions();
     loadRemindersDue();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userEmail]);
   // Re-check when opening a locked engine, so an admin's just-granted approval shows up.
   useEffect(() => {
-    if (!isAdmin && APPROVAL_ENGINES.includes(view)) refreshApprovals();
+    if (!isAdmin && APPROVAL_ENGINES.includes(view)) { refreshApprovals(); if (!adminOptions.length) loadAdminOptions(); }
     if (isAdmin && view === "approvals") loadAdminList();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view]);
@@ -251,11 +253,20 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
     try {
       const label = [prospect.firstName, prospect.lastName].filter(Boolean).join(" ") || prospect.company || "Untitled";
       const sub = [prospect.title, prospect.company].filter(Boolean).join(" · ");
-      const a = await requestApproval(currentEntryId, label, sub);
+      const a = await requestApproval(currentEntryId, label, sub, chosenAdmin || null);
       setApprovals((m) => ({ ...m, [currentEntryId]: (a && a.status) || "pending" }));
-      showToast("Approval requested.");
+      const who = adminOptions.find((x) => x.id === chosenAdmin);
+      showToast(who ? "Request sent to " + ([who.first_name, who.last_name].filter(Boolean).join(" ") || who.email) + "." : "Approval requested.");
     } catch (e) { showToast("Could not request approval. Try again."); }
     setApprBusy(false);
+  }
+  // Members: load the list of admins to choose who should review the request.
+  async function loadAdminOptions() {
+    try {
+      const list = await listAdmins();
+      setAdminOptions(list);
+      setChosenAdmin((cur) => cur || (list[0] ? list[0].id : ""));
+    } catch (e) { /* network / none */ }
   }
   async function loadAdminList() {
     try { setAdminList(await listApprovals()); } catch (e) { /* not admin / network */ }
@@ -602,6 +613,18 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
   // Locked-engine panel shown to members until an admin approves the current lead.
   function ApprovalGate({ title }) {
     const st = leadStatus;
+    const adminName = (a) => [a.first_name, a.last_name].filter(Boolean).join(" ") || a.email;
+    const AdminPicker = () => (
+      adminOptions.length > 0 ? (
+        <div className="f" style={{ maxWidth: 320, margin: "0 auto 14px", textAlign: "left" }}>
+          <label htmlFor="kc-approver">Send the request to</label>
+          <select id="kc-approver" value={chosenAdmin} onChange={(e) => setChosenAdmin(e.target.value)}>
+            {adminOptions.map((a) => <option key={a.id} value={a.id}>{adminName(a)}</option>)}
+          </select>
+          <span className="hint">They'll get an email and see it in Approvals.</span>
+        </div>
+      ) : null
+    );
     return (
       <div>
         <div className="head"><div className="eyebrow">Locked · needs admin approval</div><h2>{title}</h2><p>This is an advanced outreach stage. An admin approves each lead before it can move past connection requests.</p></div>
@@ -618,12 +641,14 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
             <>
               <h3>Not approved</h3>
               <p>An admin did not approve this lead for the advanced engines. You can request again if something has changed.</p>
+              <AdminPicker />
               <button className="btn primary" onClick={doRequestApproval} disabled={apprBusy}>{apprBusy ? "Requesting…" : "Request again"}</button>
             </>
           ) : (
             <>
               <h3>Approval required</h3>
               <p>Ask an admin to approve <b>{prospect.firstName || "this lead"}</b> to unlock the Relationship, Meeting and Follow-up engines.</p>
+              <AdminPicker />
               <button className="btn primary" onClick={doRequestApproval} disabled={apprBusy || !currentEntryId}>{apprBusy ? "Requesting…" : "Request approval"}</button>
               {!currentEntryId && <p className="hint">Run AI Analysis first so the lead is saved.</p>}
             </>

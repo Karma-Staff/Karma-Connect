@@ -91,11 +91,13 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
 .kc .f{display:flex; flex-direction:column; gap:6px}
 .kc .f.full{grid-column:1/-1}
 .kc label{font-size:12px; color:var(--muted); font-weight:600}
-.kc input,.kc textarea{background:rgba(0,0,0,.3); border:1px solid var(--border); border-radius:11px;
+.kc input,.kc textarea,.kc select{background:rgba(0,0,0,.3); border:1px solid var(--border); border-radius:11px;
   padding:11px 13px; color:var(--text); font-size:13.5px; font-family:inherit; outline:none; width:100%; resize:vertical;
   transition:border .16s, box-shadow .16s, background .16s}
+.kc select{cursor:pointer; appearance:none; -webkit-appearance:none}
+.kc select option{background:#0c1c34; color:var(--text)}
 .kc input::placeholder,.kc textarea::placeholder{color:#41527a}
-.kc input:focus,.kc textarea:focus{border-color:var(--steel); background:rgba(0,0,0,.42); box-shadow:0 0 0 3px rgba(74,134,200,.18)}
+.kc input:focus,.kc textarea:focus,.kc select:focus{border-color:var(--steel); background:rgba(0,0,0,.42); box-shadow:0 0 0 3px rgba(74,134,200,.18)}
 .kc textarea{min-height:74px; line-height:1.55}
 
 .kc .btn{display:inline-flex; align-items:center; justify-content:center; gap:9px; cursor:pointer;

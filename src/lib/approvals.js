@@ -15,10 +15,16 @@ async function api(path, { method = "GET", body } = {}) {
   return data;
 }
 
-// Member: request approval for a lead. Returns { prospect_id, status }.
-export async function requestApproval(prospectId, label, sub) {
-  const d = await api("/api/approvals", { method: "POST", body: { prospectId, label, sub } });
+// Member: request approval for a lead, optionally addressed to a chosen admin. Returns { prospect_id, status }.
+export async function requestApproval(prospectId, label, sub, assignedAdminId) {
+  const d = await api("/api/approvals", { method: "POST", body: { prospectId, label, sub, assignedAdminId: assignedAdminId || null } });
   return d.approval;
+}
+
+// Any signed-in user: list of admins to choose who should review a request.
+export async function listAdmins() {
+  const d = await api("/api/admins");
+  return d.admins || [];
 }
 
 // Member: map of { prospect_id: status } for the signed-in member's leads.

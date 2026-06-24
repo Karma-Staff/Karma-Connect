@@ -31,6 +31,7 @@ async function ensureSchema() {
     await q("alter table users add column if not exists reset_token text");
     await q("alter table users add column if not exists reset_sent_at timestamptz");
     await q("create index if not exists users_reset_token_idx on users (reset_token)");
+    await q("alter table lead_approvals add column if not exists assigned_admin_id uuid");
     await q("alter table prospects add column if not exists status text not null default 'new'");
     await q("alter table prospects add column if not exists next_action_at timestamptz");
     await q("alter table prospects add column if not exists next_action_note text");
