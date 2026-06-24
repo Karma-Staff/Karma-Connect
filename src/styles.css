@@ -159,6 +159,12 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
 .kc .reason{font-size:12.5px; color:var(--muted); line-height:1.55; border-left:2px solid var(--border2); padding-left:11px}
 .kc .reason b{color:var(--yellow); font-weight:700}
 .kc .verify{font-size:12px; line-height:1.5; color:#ffcf8a; background:rgba(231,160,75,.1); border:1px solid rgba(231,160,75,.32); border-radius:9px; padding:8px 11px; cursor:help}
+/* Cursor-following 3D tilt for glass surfaces (transform set inline by the Tilt component). */
+.kc .tilt3d{transition:transform .2s cubic-bezier(.22,1,.36,1), box-shadow .2s ease; transform-style:preserve-3d; will-change:transform}
+.kc .tilt3d.gate3d .empty{transition:box-shadow .2s ease, border-color .2s ease}
+.kc .tilt3d.gate3d:hover .empty{border-color:rgba(124,92,255,.4);
+  box-shadow:0 30px 70px -28px rgba(124,92,255,.6), 0 10px 30px -16px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.14)}
+
 /* Custom dropdown (replaces native <select> so the option list matches the theme). */
 .kc .kcdd{position:relative; width:100%}
 .kc .kcdd-trigger{display:flex; align-items:center; gap:10px; width:100%; min-height:46px; padding:9px 12px; cursor:pointer;
