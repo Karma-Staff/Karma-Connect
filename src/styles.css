@@ -177,11 +177,13 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
 .kc .kcdd-chev{display:flex; color:var(--faint); transition:transform .18s ease}
 .kc .kcdd-chev.up{transform:rotate(180deg)}
 .kc .kcdd-menu{position:absolute; z-index:30; top:calc(100% + 6px); left:0; right:0; margin:0; padding:6px; list-style:none;
-  max-height:280px; overflow:auto; border-radius:13px; border:1px solid var(--steel);
+  max-height:280px; overflow:auto; border-radius:13px; border:1px solid var(--steel); perspective:600px;
   background:linear-gradient(180deg, rgba(16,32,58,.98), rgba(9,20,38,.98)); -webkit-backdrop-filter:blur(14px); backdrop-filter:blur(14px);
   box-shadow:0 24px 60px -20px rgba(0,0,0,.75), inset 0 1px 0 rgba(255,255,255,.08); animation:kcddIn .14s ease both}
 @keyframes kcddIn{from{opacity:0; transform:translateY(-6px)}to{opacity:1; transform:none}}
-.kc .kcdd-opt{display:flex; align-items:center; gap:10px; padding:9px 10px; border-radius:9px; cursor:pointer; color:var(--ice); position:relative}
+.kc .kcdd-opt{display:flex; align-items:center; gap:10px; padding:9px 10px; border-radius:9px; cursor:pointer; color:var(--ice); position:relative;
+  transform-style:preserve-3d; transition:transform .14s cubic-bezier(.22,1,.36,1), box-shadow .14s ease, background .14s ease}
+.kc .kcdd-opt.active{box-shadow:0 14px 30px -14px rgba(124,92,255,.7), inset 0 0 0 1px rgba(124,92,255,.4)}
 .kc .kcdd-opt.active{background:rgba(124,92,255,.16)}
 .kc .kcdd-opt.sel{background:rgba(124,92,255,.1)}
 .kc .kcdd-opt.sel.active{background:rgba(124,92,255,.22)}
