@@ -96,7 +96,9 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   const [adminOptions, setAdminOptions] = useState([]); // member view: admins to choose from
   const [chosenAdmin, setChosenAdmin] = useState("");   // selected admin id for the request
   const leadStatus = currentEntryId ? approvals[currentEntryId] : undefined;
-  const leadApproved = isAdmin || leadStatus === "approved";
+  // Approval gate DISABLED: Relationship / Meeting / Follow-up are unlocked for everyone, no admin
+  // approval needed. To re-enable, restore: isAdmin || leadStatus === "approved".
+  const leadApproved = true;
   const engineLocked = (id) => APPROVAL_ENGINES.includes(id) && !leadApproved;
   // The after-meeting email mode is admin-only; members are always on the LinkedIn sequence.
   const fuModeEff = isAdmin ? fuMode : "sequence";
