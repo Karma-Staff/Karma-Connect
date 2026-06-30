@@ -99,7 +99,7 @@ export function SettingsView({ user, isAdmin, askConfirm, showToast }) {
           <button className="btn primary" onClick={doChangePassword} disabled={cBusy}>{cBusy ? "Working…" : "Change password"}</button>
           {cMsg && <span style={{ color: "#52d39e", fontSize: 12.5 }}>✓ {cMsg}</span>}
         </div>
-        {cErr && <div className="err" style={{ marginTop: 12 }}>{cErr}</div>}
+        {cErr && <div className="err" style={{ marginTop: 12 }}>⚠ {cErr}</div>}
       </div>
 
       {/* Become an admin */}
@@ -117,7 +117,7 @@ export function SettingsView({ user, isAdmin, askConfirm, showToast }) {
             <button className="btn primary" onClick={promote} disabled={pBusy}>{pBusy ? "Working…" : "Make me an admin"}</button>
             {pMsg && <span style={{ color: "#52d39e", fontSize: 12.5 }}>✓ {pMsg}</span>}
           </div>
-          {pErr && <div className="err" style={{ marginTop: 12 }}>{pErr}</div>}
+          {pErr && <div className="err" style={{ marginTop: 12 }}>⚠ {pErr}</div>}
         </div>
       )}
 
@@ -137,7 +137,7 @@ export function SettingsView({ user, isAdmin, askConfirm, showToast }) {
           </div>
           <button className="btn danger" onClick={confirmDelete} disabled={dBusy}>{dBusy ? "Deleting…" : "Delete my account"}</button>
         </div>
-        {dErr && <div className="err" style={{ marginTop: 12 }}>{dErr}</div>}
+        {dErr && <div className="err" style={{ marginTop: 12 }}>⚠ {dErr}</div>}
       </div>
     </div>
   );

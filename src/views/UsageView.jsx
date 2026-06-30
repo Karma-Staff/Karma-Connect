@@ -37,7 +37,7 @@ export function UsageView() {
       <div className="head"><div className="eyebrow">Account</div><h2>Usage &amp; cost</h2><p>Your AI spend, recorded per call. Updates as you generate. Numbers are estimates from list prices.</p></div>
 
       {loading && <div className="panel" style={{ color: "var(--muted)" }}>Loading usage…</div>}
-      {err && <div className="err">{err}</div>}
+      {err && <div className="err">⚠ {err}</div>}
 
       {!loading && !err && (
         <>

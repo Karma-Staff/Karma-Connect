@@ -75,7 +75,7 @@ export function TeamActivityView() {
         <button className="btn ghost sm" onClick={() => load()}>Refresh</button>
       </div>
 
-      {err && <div className="err">{err}</div>}
+      {err && <div className="err">⚠ {err}</div>}
       {loading && <div className="panel" style={{ color: "var(--muted)" }}>Loading team activity…</div>}
 
       {!loading && !err && (

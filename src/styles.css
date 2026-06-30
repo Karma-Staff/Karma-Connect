@@ -5,7 +5,7 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
   --bg:#081224; --bg2:#071855; --bg3:#0c2150;
   --panel:rgba(255,255,255,.04); --panel2:rgba(255,255,255,.07);
   --border:rgba(74,134,200,.14); --border2:rgba(74,134,200,.26);
-  --text:#eef2fb; --muted:#9aa7c4; --faint:#7886ac;
+  --text:#eef2fb; --muted:#9aa7c4; --faint:#65769e;
   --navy:#071855; --blue:#16385A; --yellow:#FFCF00;
   --steel:#4a86c8; --ice:#cfe0f6;
   --amber:#E7B74B; --ai:#7C5CFF; --ai2:#9b7cff;
@@ -96,8 +96,7 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
   transition:border .16s, box-shadow .16s, background .16s}
 .kc select{cursor:pointer; appearance:none; -webkit-appearance:none}
 .kc select option{background:#0c1c34; color:var(--text)}
-.kc input::placeholder,.kc textarea::placeholder{color:#6f7da6}
-.kc .ct.lockpill{background:none; border:none; padding:0; min-width:0; display:inline-flex; align-items:center}
+.kc input::placeholder,.kc textarea::placeholder{color:#41527a}
 .kc input:focus,.kc textarea:focus,.kc select:focus{border-color:var(--steel); background:rgba(0,0,0,.42); box-shadow:0 0 0 3px rgba(74,134,200,.18)}
 .kc textarea{min-height:74px; line-height:1.55}
 
@@ -159,7 +158,7 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
 .kc .bar.gold i{background:linear-gradient(135deg,#d9a400,#FFCF00)}
 .kc .reason{font-size:12.5px; color:var(--muted); line-height:1.55; border-left:2px solid var(--border2); padding-left:11px}
 .kc .reason b{color:var(--yellow); font-weight:700}
-.kc .verify{display:flex; align-items:flex-start; gap:8px; font-size:12px; line-height:1.5; color:#ffcf8a; background:rgba(231,160,75,.1); border:1px solid rgba(231,160,75,.32); border-radius:9px; padding:8px 11px; cursor:help}
+.kc .verify{font-size:12px; line-height:1.5; color:#ffcf8a; background:rgba(231,160,75,.1); border:1px solid rgba(231,160,75,.32); border-radius:9px; padding:8px 11px; cursor:help}
 /* Custom dropdown (replaces native <select> so the option list matches the theme). */
 .kc .kcdd{position:relative; width:100%}
 .kc .kcdd-trigger{display:flex; align-items:center; gap:10px; width:100%; min-height:46px; padding:9px 12px; cursor:pointer;
@@ -168,17 +167,18 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
 .kc .kcdd-trigger:hover{border-color:var(--steel)}
 .kc .kcdd-trigger.open{border-color:var(--steel); background:rgba(0,0,0,.42); box-shadow:0 0 0 3px rgba(74,134,200,.18)}
 .kc .kcdd-val{flex:1; min-width:0; display:flex; align-items:center}
-.kc .kcdd-ph{color:#6f7da6}
+.kc .kcdd-ph{color:#41527a}
 .kc .kcdd-chev{display:flex; color:var(--faint); transition:transform .18s ease}
 .kc .kcdd-chev.up{transform:rotate(180deg)}
 .kc .kcdd-menu{position:absolute; z-index:30; top:calc(100% + 6px); left:0; right:0; margin:0; padding:6px; list-style:none;
-  max-height:280px; overflow:auto; border-radius:13px; border:1px solid var(--steel);
+  max-height:280px; overflow:auto; border-radius:13px; border:1px solid var(--steel); perspective:600px;
   background:linear-gradient(180deg, rgba(16,32,58,.98), rgba(9,20,38,.98)); -webkit-backdrop-filter:blur(14px); backdrop-filter:blur(14px);
   box-shadow:0 24px 60px -20px rgba(0,0,0,.75), inset 0 1px 0 rgba(255,255,255,.08); animation:kcddIn .14s ease both}
 @keyframes kcddIn{from{opacity:0; transform:translateY(-6px)}to{opacity:1; transform:none}}
 .kc .kcdd-opt{display:flex; align-items:center; gap:10px; padding:9px 10px; border-radius:9px; cursor:pointer; color:var(--ice); position:relative;
-  transition:box-shadow .14s ease, background .14s ease}
-.kc .kcdd-opt.active{background:rgba(124,92,255,.16); box-shadow:inset 0 0 0 1px rgba(124,92,255,.4)}
+  transform-style:preserve-3d; transition:transform .14s cubic-bezier(.22,1,.36,1), box-shadow .14s ease, background .14s ease}
+.kc .kcdd-opt.active{box-shadow:0 14px 30px -14px rgba(124,92,255,.7), inset 0 0 0 1px rgba(124,92,255,.4)}
+.kc .kcdd-opt.active{background:rgba(124,92,255,.16)}
 .kc .kcdd-opt.sel{background:rgba(124,92,255,.1)}
 .kc .kcdd-opt.sel.active{background:rgba(124,92,255,.22)}
 .kc .kcdd-check{margin-left:auto; color:var(--ai2); font-weight:800}
@@ -258,16 +258,7 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
 .kc .pchip .av{width:32px; height:32px; border-radius:9px; background:var(--grad); display:flex; align-items:center; justify-content:center; font-weight:800; font-size:13px; color:#fff; font-family:'Lora',serif}
 .kc .pchip .pn{font-size:13.5px; font-weight:700}
 .kc .pchip .pr{font-size:11.5px; color:var(--muted)}
-.kc .err{display:flex; align-items:flex-start; gap:9px; background:rgba(255,90,90,.08); border:1px solid rgba(255,90,90,.3); color:#ffb3b3; border-radius:12px; padding:13px 16px; font-size:13px}
-/* Inline SVG status icons replacing emoji. Warning triangle injected via mask so it inherits
-   the message's text color; used on .err and .verify (both always warnings). */
-.kc{--warn-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h16.9a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z'/%3E%3Cpath d='M12 9v4'/%3E%3Cpath d='M12 17h.01'/%3E%3C/svg%3E")}
-.kc .err::before,.kc .verify::before{content:""; flex:0 0 auto; width:15px; height:15px; margin-top:1px;
-  background:currentColor; -webkit-mask:var(--warn-mask) center/contain no-repeat; mask:var(--warn-mask) center/contain no-repeat}
-.kc .wic{width:15px; height:15px; flex:0 0 auto; margin-top:1px}
-.kc .lic{width:12px; height:12px}
-.kc .ifire{color:var(--amber); display:inline-flex}
-.kc .spic{width:14px; height:14px}
+.kc .err{background:rgba(255,90,90,.08); border:1px solid rgba(255,90,90,.3); color:#ffb3b3; border-radius:12px; padding:13px 16px; font-size:13px}
 .kc .fa{display:flex; flex-direction:column; gap:16px}
 .kc .hint{font-size:12px; color:var(--yellow); display:flex; gap:7px; align-items:flex-start; margin-top:4px; line-height:1.5}
 .kc .tline{position:relative; padding-left:30px}
@@ -311,7 +302,7 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
   filter:blur(2px); animation:floaty 5s ease-in-out infinite}
 .kc .heroglow .ring1,.kc .heroglow .ring2{position:absolute; border-radius:50%; border:1px solid rgba(124,92,255,.35)}
 .kc .heroglow .ring1{inset:0; animation:spin 14s linear infinite}
-.kc .heroglow .ring2{inset:26px; border-color:rgba(231,183,75,.3)}
+.kc .heroglow .ring2{inset:26px; border-color:rgba(231,183,75,.3); animation:spin 9s linear infinite reverse}
 .kc .heroglow .pdot{position:absolute; width:6px; height:6px; border-radius:50%; background:var(--ai2); box-shadow:0 0 10px var(--ai2)}
 @keyframes floaty{0%,100%{transform:translateY(-3px)}50%{transform:translateY(4px)}}
 
@@ -425,7 +416,11 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
 .kc .iprofile .iblock:nth-child(4){animation-delay:.15s}
 .kc .iprofile .iblock:nth-child(5){animation-delay:.20s}
 
-.kc .heroglow .pdot{opacity:.7}
+.kc .heroglow .pdot{animation:twinkle 3s ease-in-out infinite}
+.kc .heroglow .pdot:nth-child(5){animation-delay:.6s}
+.kc .heroglow .pdot:nth-child(6){animation-delay:1.1s}
+.kc .heroglow .pdot:nth-child(7){animation-delay:1.6s}
+@keyframes twinkle{0%,100%{opacity:.45; transform:scale(.85)}50%{opacity:1; transform:scale(1.15)}}
 
 /* ── In-app confirm modal (replaces native window.confirm) ── */
 .kc .modal-ov{position:fixed; inset:0; z-index:80; display:flex; align-items:center; justify-content:center; padding:24px;
@@ -480,7 +475,7 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
 /* ═══════════════ Liquid glass ═══════════════ */
 /* Thicker frost on every surface. */
 .kc .panel,.kc .mcard,.kc .iblock,.kc .hero,.kc .copilot,.kc .scorecard,.kc .pchip,.kc .modal,.kc .side,.kc .empty,.kc .seg,.kc .btn.ghost,.kc .iconbtn,.kc .kctoast{
-  -webkit-backdrop-filter:blur(16px) saturate(140%); backdrop-filter:blur(16px) saturate(140%)}
+  -webkit-backdrop-filter:blur(34px) saturate(185%); backdrop-filter:blur(34px) saturate(185%)}
 /* Glass panes: rounder, brighter rim, real depth. */
 .kc .panel,.kc .mcard,.kc .iblock,.kc .hero,.kc .copilot{border-radius:22px;
   background:linear-gradient(150deg, rgba(255,255,255,.17), rgba(255,255,255,.055) 40%, rgba(255,255,255,.02) 100%);
@@ -542,8 +537,7 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
 .kc .dash-tile .ts{font-size:11.5px; color:var(--muted)}
 .kc .dash-accent{width:4px; height:48px; border-radius:4px; flex:0 0 auto}
 .kc .funnel{display:flex; flex-direction:column; gap:2px}
-.kc .funnel-row{display:flex; align-items:center; gap:11px; cursor:pointer; padding:9px 10px; margin:0 -10px; border-radius:10px; transition:background .15s ease;
-  width:calc(100% + 20px); background:none; border:none; font:inherit; color:inherit; text-align:left}
+.kc .funnel-row{display:flex; align-items:center; gap:11px; cursor:pointer; padding:9px 10px; margin:0 -10px; border-radius:10px; transition:background .15s ease}
 .kc .funnel-row:hover{background:rgba(124,150,210,.08)}
 .kc .funnel-row .fdot{width:9px; height:9px; border-radius:50%; flex:0 0 auto}
 .kc .funnel-row .fl{font-size:13.5px; color:var(--text); font-weight:500}

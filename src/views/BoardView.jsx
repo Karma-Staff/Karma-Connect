@@ -32,7 +32,7 @@ export function BoardView({ onSetStatus }) {
       <div className="head"><div className="eyebrow">Pipeline</div><h2>Board</h2><p>Drag a lead between stages to update it. Mirrors the status you set anywhere else.</p></div>
 
       {loading && <div className="panel" style={{ color: "var(--muted)" }}>Loading board…</div>}
-      {err && <div className="err">{err}</div>}
+      {err && <div className="err">⚠ {err}</div>}
 
       {!loading && !err && (
         <div style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 8 }}>

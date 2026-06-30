@@ -20,31 +20,6 @@ async function send(to, subject, html) {
   if (!r.ok) { const t = await r.text().catch(() => ""); throw new Error("Resend " + r.status + ": " + t); }
 }
 
-// Outreach send: goes out AS the chosen sender (from/reply-to = their @karmastaff.com address,
-// which must be on the domain verified in Resend). The body is the plain-text message the app
-// generated; we wrap it in minimal HTML and append a CAN-SPAM-style footer (sender identity +
-// reply-to-opt-out). Returns the Resend message id. Throws on failure so the queue can retry/flag.
-async function sendOutreachEmail({ fromName, fromEmail, to, subject, text }) {
-  if (!RESEND_API_KEY) throw new Error("Email sending is not configured (RESEND_API_KEY missing).");
-  if (!fromEmail || !to || !subject) throw new Error("Outreach email needs fromEmail, to and subject.");
-  const from = fromName ? `${fromName} <${fromEmail}>` : fromEmail;
-  const safeBody = escapeHtml(text).replace(/\n/g, "<br>");
-  const footer = `Sent by ${escapeHtml(fromName || fromEmail)}, Karma Staff. ` +
-    `If this isn't relevant, just reply "unsubscribe" and you won't hear from us again.`;
-  const html = `<div style="font-family:Inter,Segoe UI,Arial,sans-serif;max-width:560px;color:#101828;font-size:15px;line-height:1.6">` +
-    `<div>${safeBody}</div>` +
-    `<div style="margin-top:28px;padding-top:14px;border-top:1px solid #e4e7ec;font-size:12px;color:#98a2b3">${footer}</div>` +
-    `</div>`;
-  const r = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: { Authorization: "Bearer " + RESEND_API_KEY, "Content-Type": "application/json" },
-    body: JSON.stringify({ from, to: [to], reply_to: fromEmail, subject, html, text }),
-  });
-  if (!r.ok) { const t = await r.text().catch(() => ""); throw new Error("Resend " + r.status + ": " + t); }
-  const data = await r.json().catch(() => ({}));
-  return data.id || null;
-}
-
 async function sendVerificationEmail(email, firstName, link) {
   const hi = firstName ? "Hi " + escapeHtml(firstName) + "," : "Hi,";
   const html = `<div style="font-family:Inter,Segoe UI,Arial,sans-serif;max-width:480px;margin:0 auto;color:#0b2545">
@@ -113,4 +88,4 @@ async function sendApprovalDecisionEmail(memberEmail, { memberName, leadLabel, d
   await send(memberEmail, (approved ? "Approved: " : "Update on: ") + (leadLabel || "your lead"), html);
 }
 
-module.exports = { emailVerifyOn, VERIFY_TTL_HOURS, RESET_TTL_HOURS, escapeHtml, sendVerificationEmail, sendResetEmail, sendApprovalRequestEmail, sendApprovalDecisionEmail, sendOutreachEmail };
+module.exports = { emailVerifyOn, VERIFY_TTL_HOURS, RESET_TTL_HOURS, escapeHtml, sendVerificationEmail, sendResetEmail, sendApprovalRequestEmail, sendApprovalDecisionEmail };

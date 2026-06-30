@@ -59,7 +59,7 @@ export function DashboardView({ onGoStage }) {
       <div className="head"><div className="eyebrow">Overview</div><h2>Dashboard</h2><p>Your pipeline at a glance — counts by stage, conversion, and a PDF export. All from your saved leads.</p></div>
 
       {loading && <div className="panel" style={{ color: "var(--muted)" }}>Loading…</div>}
-      {err && <div className="err">{err}</div>}
+      {err && <div className="err">⚠ {err}</div>}
 
       {!loading && !err && (
         <>
@@ -80,11 +80,11 @@ export function DashboardView({ onGoStage }) {
                   const c = counts[st.v] || 0;
                   const pct = total ? Math.round((c / total) * 100) : 0;
                   return (
-                    <button type="button" className="funnel-row" key={st.v} onClick={() => onGoStage && onGoStage(st.v)} title={"View " + st.label + " leads"} aria-label={"View " + st.label + " leads (" + c + ", " + pct + "%)"}>
+                    <div className="funnel-row" key={st.v} onClick={() => onGoStage && onGoStage(st.v)} title={"View " + st.label + " leads"}>
                       <span className="fdot" style={{ background: st.color, boxShadow: "0 0 8px " + st.color }} />
                       <span className="fl">{st.label}</span>
                       <span className="fc">{c}<small>{pct}%</small></span>
-                    </button>
+                    </div>
                   );
                 })}
               </div>
