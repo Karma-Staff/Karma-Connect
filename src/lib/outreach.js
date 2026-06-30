@@ -1,0 +1,55 @@
+// Client helper for the outreach send queue. A generated message is queued here; the agent
+// auto-sends approved EMAIL items, while LinkedIn items wait for the human one-click hand-off.
+import { getAccessToken } from "./auth.js";
+
+async function api(path, { method = "GET", body } = {}) {
+  const token = getAccessToken();
+  const res = await fetch(path, {
+    method,
+    headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  let data = {};
+  try { data = await res.json(); } catch (e) {}
+  if (!res.ok) throw new Error(data?.error?.message || ("Request failed (" + res.status + ")."));
+  return data;
+}
+
+// Queue a generated message. channel: "email" | "linkedin".
+//   { prospectId, leadLabel, channel, step, subject, body, toEmail, fromEmail, fromName }
+export async function queueMessage(item) {
+  const d = await api("/api/outreach/queue", { method: "POST", body: item });
+  return d.item;
+}
+
+// List this user's queue. { sendingOn } tells the UI whether the server can auto-send email.
+export async function listQueue({ status = "", channel = "" } = {}) {
+  const qs = new URLSearchParams();
+  if (status) qs.set("status", status);
+  if (channel) qs.set("channel", channel);
+  const d = await api("/api/outreach/queue" + (qs.toString() ? "?" + qs.toString() : ""));
+  return { items: d.items || [], sendingOn: !!d.sendingOn };
+}
+
+// Approve a pending item (email then auto-sends). Pass toEmail/subject to fill them in first.
+export async function approveQueued(id, { toEmail, subject, scheduledAt } = {}) {
+  const d = await api("/api/outreach/queue/" + encodeURIComponent(id) + "/approve", { method: "POST", body: { toEmail, subject, scheduledAt } });
+  return d.item;
+}
+
+// Send an approved email item right now (skip the wait).
+export async function sendQueuedNow(id) {
+  const d = await api("/api/outreach/queue/" + encodeURIComponent(id) + "/send-now", { method: "POST" });
+  return d.item;
+}
+
+// Mark a LinkedIn item sent after the human one-click hand-off.
+export async function markQueuedSent(id) {
+  const d = await api("/api/outreach/queue/" + encodeURIComponent(id) + "/sent", { method: "POST" });
+  return d.item;
+}
+
+export async function skipQueued(id) {
+  await api("/api/outreach/queue/" + encodeURIComponent(id) + "/skip", { method: "POST" });
+  return true;
+}

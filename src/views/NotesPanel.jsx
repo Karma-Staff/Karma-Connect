@@ -43,7 +43,7 @@ export function NotesPanel({ prospectId }) {
           style={{ flex: 1, minHeight: 38, background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 9, padding: "8px 10px", color: "var(--text)", fontSize: 12.5, resize: "vertical" }} />
         <button className="btn primary sm" onClick={add} disabled={busy || !body.trim()}>{busy ? "…" : "Add"}</button>
       </div>
-      {err && <div className="err" style={{ marginTop: 8 }}>⚠ {err}</div>}
+      {err && <div className="err" style={{ marginTop: 8 }}>{err}</div>}
 
       <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 7 }}>
         {notes == null && <div style={{ fontSize: 12, color: "var(--faint)" }}>Loading…</div>}

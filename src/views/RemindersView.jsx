@@ -40,7 +40,7 @@ export function RemindersView({ onChanged }) {
     <div>
       <div className="head"><div className="eyebrow">Follow-ups</div><h2>Reminders</h2><p>Leads with a next-action date. Set a reminder from any lead's Notes panel in History.</p></div>
 
-      {err && <div className="err">⚠ {err}</div>}
+      {err && <div className="err">{err}</div>}
       {rows == null && !err && <div className="panel" style={{ color: "var(--muted)" }}>Loading…</div>}
 
       {rows && rows.length === 0 && (

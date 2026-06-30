@@ -1,9 +1,9 @@
-import { CopyIc, RegenIc, StarIc } from "./icons.jsx";
+import { CopyIc, RegenIc, StarIc, SendIc } from "./icons.jsx";
 import { flagUnsupported } from "../lib/verify.js";
 import { RefineBox } from "./RefineBox.jsx";
 
 // One generated message: index/angle chips, optional char counter, score bars, AI-coach note, actions.
-export function MsgCard({ item, idx, kind, charLimit, favOn, onCopy, onRegen, onFav, onRefine, regening, source }) {
+export function MsgCard({ item, idx, kind, charLimit, favOn, onCopy, onRegen, onFav, onRefine, onQueue, regening, source }) {
   const over = charLimit && item.message && item.message.length > charLimit;
   // InMails carry a subject line; copy it together with the body.
   const copyText = item.subject ? "Subject: " + item.subject + "\n\n" + item.message : item.message;
@@ -33,12 +33,13 @@ export function MsgCard({ item, idx, kind, charLimit, favOn, onCopy, onRegen, on
       {item.reasoning && <div className="reason"><b>AI Coach</b> · {item.reasoning}</div>}
       {flags.length > 0 && (
         <div className="verify" title="These specifics aren't in the data you entered. Double-check them before sending — the AI may have invented them.">
-          ⚠ Verify before sending: {flags.map((f) => f.claim).join(", ")}
+          Verify before sending: {flags.map((f) => f.claim).join(", ")}
         </div>
       )}
       <div className="mact">
         <button className="iconbtn" onClick={() => onCopy(copyText)}>{CopyIc} Copy{item.subject ? " all" : ""}</button>
         <button className="iconbtn" onClick={onRegen} disabled={regening}>{RegenIc} {regening ? "…" : "Regenerate"}</button>
+        {onQueue && <button className="iconbtn" onClick={onQueue} title="Queue this message to send">{SendIc} Queue</button>}
         <button className={"iconbtn fav" + (favOn ? " on" : "")} onClick={onFav} aria-label={favOn ? "Remove from favorites" : "Add to favorites"} aria-pressed={favOn} style={{ marginLeft: "auto" }}>{StarIc(favOn)}</button>
       </div>
       {onRefine && <RefineBox onRefine={onRefine} />}

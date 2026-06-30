@@ -53,6 +53,8 @@ const { JWT_SECRET, ALLOWED_DOMAIN, DUMMY_HASH, emailAllowed, tokenFor, publicUs
 // If it's not configured (e.g. local dev), users are created already-verified (no friction).
 // Email senders + verify/reset config (Resend). Required here, after the .env loader above.
 const { emailVerifyOn, VERIFY_TTL_HOURS, RESET_TTL_HOURS, sendVerificationEmail, sendResetEmail, sendApprovalRequestEmail, sendApprovalDecisionEmail } = require("./server/email.cjs");
+// Outreach queue + the agent tick (auto-sends approved email; LinkedIn is human one-click).
+const outreach = require("./server/outreach.cjs");
 
 const app = express();
 app.disable("x-powered-by");
@@ -682,6 +684,67 @@ app.get("/api/admin/activity", requireUser, requireAdmin, async (req, res) => {
   } catch (e) { res.status(500).json({ error: { message: "Could not load team activity." } }); }
 });
 
+// ───────────────────────── Outreach send queue ──────────────────────
+// Queue a generated message for sending. Email items the user approves are auto-sent by the
+// agent tick; LinkedIn items wait for the human one-click hand-off. Body:
+//   { prospectId, leadLabel, channel, step, subject, body, toEmail, fromEmail, fromName, approved, scheduledAt }
+app.post("/api/outreach/queue", requireUser, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const item = await outreach.enqueue(req.userId, { ...b, approvedBy: b.approved !== false ? req.email : null });
+    res.json({ item });
+  } catch (e) { res.status(400).json({ error: { message: (e && e.message) || "Could not queue the message." } }); }
+});
+
+// List this user's queue (optional ?status= and ?channel= filters).
+app.get("/api/outreach/queue", requireUser, async (req, res) => {
+  try {
+    const items = await outreach.listQueue(req.userId, { status: String(req.query.status || ""), channel: String(req.query.channel || "") });
+    res.json({ items, sendingOn: emailVerifyOn });
+  } catch (e) { res.status(500).json({ error: { message: "Could not load the queue." } }); }
+});
+
+// Approve a pending item (schedules it; email then auto-sends on the next tick).
+app.post("/api/outreach/queue/:id/approve", requireUser, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const item = await outreach.approveItem(req.userId, String(req.params.id), { scheduledAt: b.scheduledAt, toEmail: b.toEmail, subject: b.subject, approvedBy: req.email });
+    if (!item) return res.status(404).json({ error: { message: "Item not found or not approvable." } });
+    res.json({ item });
+  } catch (e) {
+    const code = e && (e.code === "NO_RECIPIENT" || e.code === "NO_SENDER") ? 400 : 500;
+    res.status(code).json({ error: { message: (e && e.message) || "Could not approve the item." } });
+  }
+});
+
+// Send an approved email item immediately (don't wait for the tick).
+app.post("/api/outreach/queue/:id/send-now", requireUser, async (req, res) => {
+  try {
+    if (!emailVerifyOn) return res.status(400).json({ error: { message: "Email sending isn't configured on this server." } });
+    const item = await outreach.sendNow(req.userId, String(req.params.id));
+    if (!item) return res.status(404).json({ error: { message: "Item not found or not sendable." } });
+    res.json({ item });
+  } catch (e) { res.status(500).json({ error: { message: "Could not send the item." } }); }
+});
+
+// Mark a LinkedIn item sent after the human one-click hand-off.
+app.post("/api/outreach/queue/:id/sent", requireUser, async (req, res) => {
+  try {
+    const item = await outreach.markSent(req.userId, String(req.params.id));
+    if (!item) return res.status(404).json({ error: { message: "Item not found." } });
+    res.json({ item });
+  } catch (e) { res.status(500).json({ error: { message: "Could not update the item." } }); }
+});
+
+// Skip / cancel a queued item.
+app.post("/api/outreach/queue/:id/skip", requireUser, async (req, res) => {
+  try {
+    const item = await outreach.skipItem(req.userId, String(req.params.id));
+    if (!item) return res.status(404).json({ error: { message: "Item not found." } });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: { message: "Could not skip the item." } }); }
+});
+
 // ─────────────────────────── Anthropic proxy ────────────────────────
 app.post("/api/claude", async (req, res) => {
   const bodyString = typeof req.body === "string" ? req.body : JSON.stringify(req.body || {});
@@ -718,6 +781,8 @@ if (!DEV) {
 }
 
 ensureSchema(); // apply idempotent column migrations on boot
+// Outreach queue table, then start the agent tick that auto-sends approved email items.
+outreach.ensureOutreachSchema().then(() => outreach.startTick()).catch((e) => console.error("outreach boot:", e.message));
 
 const server = app.listen(PORT, () => {
   console.log(`Karma Connect server on :${PORT} (${DEV ? "dev" : "prod"}, db=${dbOn ? "on" : "OFF"})`);

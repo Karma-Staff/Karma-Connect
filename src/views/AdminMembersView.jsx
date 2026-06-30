@@ -45,7 +45,7 @@ export function AdminMembersView({ meId, askConfirm, showToast }) {
       <div className="toprow"><button className="btn ghost sm" onClick={load}>Refresh</button></div>
 
       {loading && <div className="panel" style={{ color: "var(--muted)" }}>Loading members…</div>}
-      {err && <div className="err">⚠ {err}</div>}
+      {err && <div className="err">{err}</div>}
 
       {!loading && !err && (
         <div className="grid2">

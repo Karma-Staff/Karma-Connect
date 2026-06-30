@@ -7,21 +7,6 @@ const Chevron = (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" width="16" height="16"><path d="M6 9l6 6 6-6" /></svg>
 );
 
-const REDUCE = typeof window !== "undefined" && window.matchMedia
-  ? window.matchMedia("(prefers-reduced-motion: reduce)").matches
-  : false;
-
-// Cursor-following 3D tilt for one option row (written straight to the node, no re-render).
-function optMove(e) {
-  if (REDUCE) return;
-  const el = e.currentTarget;
-  const r = el.getBoundingClientRect();
-  const rx = -(((e.clientY - r.top) / r.height) - 0.5) * 2 * 7;
-  const ry = (((e.clientX - r.left) / r.width) - 0.5) * 2 * 7;
-  el.style.transform = `perspective(500px) rotateX(${rx.toFixed(2)}deg) rotateY(${ry.toFixed(2)}deg) translateZ(8px)`;
-}
-function optLeave(e) { e.currentTarget.style.transform = ""; }
-
 export function Dropdown({ value, onChange, options = [], placeholder = "Select…", renderOption, id }) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
@@ -57,8 +42,6 @@ export function Dropdown({ value, onChange, options = [], placeholder = "Select�
             <li key={o.value} role="option" aria-selected={o.value === value}
               className={"kcdd-opt" + (o.value === value ? " sel" : "") + (i === active ? " active" : "")}
               onMouseEnter={() => setActive(i)}
-              onMouseMove={optMove}
-              onMouseLeave={optLeave}
               onClick={() => { onChange(o.value); setOpen(false); }}>
               {draw(o)}
               {o.value === value && <span className="kcdd-check" aria-hidden="true">✓</span>}

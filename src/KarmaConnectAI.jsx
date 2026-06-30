@@ -10,7 +10,7 @@ import {
   pAnalysis, pConnection, pInmail, pRefine, pRelationship, pMeeting, pFollowup, pFollowupSequence,
   STAGES_ANALYZE, STAGES_GEN, FOLLOWUP_STAGES,
 } from "./lib/prompts.js";
-import { KarmaMark, Ic, CopyIc, StarIc } from "./components/icons.jsx";
+import { KarmaMark, Ic, CopyIc, StarIc, WarnIc, LockIc, SparkIc, SendIc } from "./components/icons.jsx";
 import { Loader } from "./components/Loader.jsx";
 import { MsgCard } from "./components/MsgCard.jsx";
 import { RefineBox } from "./components/RefineBox.jsx";
@@ -24,6 +24,8 @@ import { TeamActivityView } from "./views/TeamActivityView.jsx";
 import { DashboardView } from "./views/DashboardView.jsx";
 import { BoardView } from "./views/BoardView.jsx";
 import { RemindersView } from "./views/RemindersView.jsx";
+import { SendQueueView } from "./views/SendQueueView.jsx";
+import { queueMessage } from "./lib/outreach.js";
 import { listHistory, writeHistory, deleteHistory, setLeadStatus, HISTORY_PAGE_SIZE } from "./lib/history.js";
 import { setReminder, listReminders } from "./lib/reminders.js";
 import { getProspectBriefPdf } from "./lib/leads.js";
@@ -41,7 +43,7 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   });
   const EMPTY_PROSPECT = {
     firstName: "", lastName: "", company: "", title: "", industry: "Property Restoration", location: "",
-    headline: "", about: "", experience: "", website: "", companyDesc: "", news: "",
+    headline: "", about: "", experience: "", website: "", companyDesc: "", news: "", linkedinUrl: "",
     notes: "", mutual: "", research: "", pain: "", growth: "", staffing: "", ops: "",
     context: "",
   };
@@ -96,7 +98,9 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   const [adminOptions, setAdminOptions] = useState([]); // member view: admins to choose from
   const [chosenAdmin, setChosenAdmin] = useState("");   // selected admin id for the request
   const leadStatus = currentEntryId ? approvals[currentEntryId] : undefined;
-  const leadApproved = isAdmin || leadStatus === "approved";
+  // Approval gate DISABLED: Relationship / Meeting / Follow-up are unlocked for everyone, no admin
+  // approval needed. To re-enable, restore: isAdmin || leadStatus === "approved".
+  const leadApproved = true;
   const engineLocked = (id) => APPROVAL_ENGINES.includes(id) && !leadApproved;
   // The after-meeting email mode is admin-only; members are always on the LinkedIn sequence.
   const fuModeEff = isAdmin ? fuMode : "sequence";
@@ -187,10 +191,19 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   function autoSaveCurrent() {
     if (!analysis) return;
     if (!prospect.firstName.trim() && !prospect.company.trim()) return;
-    let id = currentEntryId;
-    if (!id) { id = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : "h" + Date.now(); setCurrentEntryId(id); }
     const label = [prospect.firstName, prospect.lastName].filter(Boolean).join(" ") || prospect.company || "Untitled";
     const sub = [prospect.title, prospect.company].filter(Boolean).join(" · ");
+    let id = currentEntryId;
+    // If the person in the form no longer matches the lead we're linked to, the user started a
+    // new prospect without clicking "New prospect" — save as a NEW row instead of overwriting
+    // the previous lead (which would silently destroy it). Re-analyzing the same person keeps
+    // its id (label unchanged).
+    if (id) {
+      const linked = history.find((h) => h.id === id);
+      if (linked && linked.label && linked.label.trim().toLowerCase() !== label.trim().toLowerCase()) id = null;
+    }
+    if (!id) id = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : "h" + Date.now();
+    if (id !== currentEntryId) setCurrentEntryId(id);
     const status = (history.find((h) => h.id === id) || {}).status || "new"; // keep the lead's stage
     const entry = { id, label, sub, status, savedAt: new Date().toISOString(), snapshot: { prospect, sender, offer, coUrl, analysis, results, favs, meetLen, prospectReply, fuMode, fuStage, transcript } };
     setHistory((cur) => [entry, ...cur.filter((h) => h.id !== id)]);
@@ -281,6 +294,26 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   }
   const favKey = (kind, i, msg) => kind + ":" + i + ":" + (msg || "").slice(0, 24);
   function toggleFav(kind, i, msg) { const k = favKey(kind, i, msg); setFavs((f) => ({ ...f, [k]: !f[k] })); }
+
+  // Queue a generated message to the outreach Send Queue. channel "linkedin" (connection /
+  // relationship / inmail / meeting) waits for the human one-click send; "email" auto-sends
+  // once approved. The lead must be saved first (so we have a prospectId to attach it to).
+  async function queueToSend({ channel, step, subject, body }) {
+    if (!body || !body.trim()) { showToast("Nothing to queue yet."); return; }
+    if (!currentEntryId) { showToast("Run AI Analysis first so the lead is saved."); return; }
+    const label = [prospect.firstName, prospect.lastName].filter(Boolean).join(" ") || prospect.company || "Lead";
+    const s = SENDERS.find((x) => x.id === sender) || SENDERS[0];
+    try {
+      await queueMessage({
+        prospectId: currentEntryId, leadLabel: label, channel, step,
+        subject: subject || "", body,
+        toEmail: channel === "email" ? (prospect.email || "") : "",
+        linkedinUrl: channel === "linkedin" ? (prospect.linkedinUrl || "") : "",
+        fromEmail: s.email, fromName: s.name,
+      });
+      showToast(channel === "email" ? "Queued — set recipient & approve in Send Queue" : "Queued to Send Queue");
+    } catch (e) { showToast((e && e.message) || "Could not queue the message."); }
+  }
 
   // Lightweight COMPANY research — one web-search call. Fills empty company-side fields only.
   // (The person's profile comes from the Deep LinkedIn paste panel below.)
@@ -533,6 +566,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
     { id: "relationship", label: "Relationship Builder", ic: Ic.rel, gate: true, count: results.relationship.length },
     { id: "meeting", label: "Meeting Requests", ic: Ic.meet, gate: true },
     { id: "followup", label: "Follow-up Engine", ic: Ic.fup, gate: true, count: results.followup.length + results.followupSeq.length },
+    { id: "queue", label: "Send Queue", ic: <svg className="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/></svg> },
     { id: "history", label: "History", ic: Ic.hist, count: history.length },
     { id: "board", label: "Board", ic: Ic.board },
     { id: "reminders", label: "Reminders", ic: Ic.fup, count: remindersDue },
@@ -592,7 +626,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
           <button className="btn primary" onClick={() => generate(kind)} disabled={isLoad}>{isLoad ? "Generating…" : items.length ? "Regenerate all" : `Generate ${TARGET[kind] || 5} variations`}</button>
           {items.length > 0 && !isLoad && <span style={{ color: "var(--muted)", fontSize: 13 }}>{items.length} crafted for {name}</span>}
         </div>
-        {err && <div className="err" style={{ marginBottom: 16 }}>⚠ {err}</div>}
+        {err && <div className="err" style={{ marginBottom: 16 }}>{err}</div>}
         {isLoad && items.length === 0 && <GenSkeleton />}
         {!isLoad && items.length === 0 && !err && (
           <div className="empty"><div className="eic">{Ic.conn}</div><h3>No messages yet</h3><p>{blurb}</p><button className="btn primary" onClick={() => generate(kind)}>Generate for {name}</button></div>
@@ -602,7 +636,8 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
             {items.map((it, i) => (
               <MsgCard key={i} item={it} idx={i} kind={kind} charLimit={charLimit} source={verifySource}
                 favOn={!!favs[favKey(kind, i, it.message)]} onCopy={copy} onFav={() => toggleFav(kind, i, it.message)}
-                onRegen={() => regenerateOne(kind, i)} onRefine={(instr) => refineOne(kind, i, instr)} regening={!!regen[kind + i]} />
+                onRegen={() => regenerateOne(kind, i)} onRefine={(instr) => refineOne(kind, i, instr)}
+                onQueue={() => queueToSend({ channel: "linkedin", step: kind, subject: it.subject || "", body: it.message })} regening={!!regen[kind + i]} />
             ))}
             {isLoad && <div className="mcard" style={{ justifyContent: "center", alignItems: "center", minHeight: 120, color: "var(--muted)", fontSize: 13 }}>Crafting more…</div>}
           </div>
@@ -641,7 +676,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
         <div className="head"><div className="eyebrow">Locked · needs admin approval</div><h2>{title}</h2><p>This is an advanced outreach stage. An admin approves each lead before it can move past connection requests.</p></div>
         <ProspectStrip />
         <div className="empty">
-          <div className="eic" style={{ fontSize: 30 }}>🔒</div>
+          <div className="eic"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></div>
           {st === "pending" ? (
             <>
               <h3>Approval requested</h3>
@@ -734,7 +769,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
                   title={locked ? "Run AI analysis first to unlock this" : undefined}>
                   {n.ic}{n.label}
                   {n.count > 0 && <span className="ct" aria-label={n.count + " items"}>{n.count}</span>}
-                  {showLock && <span className="ct" style={{ color: "var(--faint)" }} aria-label="locked">🔒</span>}
+                  {showLock && <span className="ct lockpill" style={{ color: "var(--faint)" }} aria-label="locked">{LockIc}</span>}
                 </button>
               </Fragment>
             );
@@ -827,8 +862,8 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
                   </div>
                   {enriching && <div className="panel" style={{ marginTop: 14 }}><Loader stages={["Reading the company site…", "Searching the web…", "Extracting company facts…"]} /></div>}
                   {enrichMsg && <div className="reason" style={{ marginTop: 12 }}><b>Done</b> · {enrichMsg}</div>}
-                  {enrichErr && <div className="err" style={{ marginTop: 12 }}>⚠ {enrichErr}</div>}
-                  <div className="hint" style={{ marginTop: 10 }}>⚠ For the person's profile (name, title, about, experience), use the Deep LinkedIn paste panel below, that's the most complete and lowest-cost way to import a profile.</div>
+                  {enrichErr && <div className="err" style={{ marginTop: 12 }}>{enrichErr}</div>}
+                  <div className="hint" style={{ marginTop: 10 }}>{WarnIc} For the person's profile (name, title, about, experience), use the Deep LinkedIn paste panel below, that's the most complete and lowest-cost way to import a profile.</div>
                 </div>
 
                 <div className="panel step" style={{ borderColor: "rgba(255,207,0,.22)", background: "rgba(255,207,0,.03)" }}>
@@ -858,7 +893,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
                   </div>
                   {parsing && <div className="panel" style={{ marginTop: 14 }}><Loader stages={["Reading raw paste…","Stripping LinkedIn UI noise…","Extracting profile fields…","Parsing experience history…","Capturing posts and signals…","Structuring all data…"]} /></div>}
                   {parseMsg && <div className="reason" style={{ marginTop: 12 }}><b>Done</b> · {parseMsg}</div>}
-                  {parseErr && <div className="err" style={{ marginTop: 12 }}>⚠ {parseErr}</div>}
+                  {parseErr && <div className="err" style={{ marginTop: 12 }}>{parseErr}</div>}
                 </div>
 
                 <div className="panel">
@@ -882,6 +917,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
                 <div className="panel">
                   <div className="sect-title">Research information</div>
                   <div className="fgrid">
+                    <Field k="linkedinUrl" label="LinkedIn profile URL" ph="https://www.linkedin.com/in/their-handle" full />
                     <Field k="headline" label="LinkedIn headline" ph="Their headline" full />
                     <Field k="about" label="LinkedIn about section" ph="Paste their About text" area full />
                     <Field k="experience" label="LinkedIn experience" ph="Key roles, tenure, background" area full />
@@ -924,7 +960,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
                   <div className="sources">
                     {["Website", "LinkedIn", "Company news", "Public signals", "Your notes"].map((s) => <span key={s} className="srcchip"><span className="sdot" />{s}</span>)}
                   </div>
-                  {!ready && <div className="hint" style={{ marginBottom: 8 }}>⚠ Add at least a first name and a company or title to continue.</div>}
+                  {!ready && <div className="hint" style={{ marginBottom: 8 }}>{WarnIc} Add at least a first name and a company or title to continue.</div>}
                   <div className="toprow" style={{ marginBottom: 0, marginTop: 4 }}>
                     <button className="btn ai" disabled={!ready || loading.analysis} onClick={runAnalysis}>{loading.analysis ? "Analyzing…" : "Run AI Analysis →"}</button>
                     <span style={{ color: "var(--muted)", fontSize: 13 }}>Opportunity fit: {aiConfidence}% — computed from the data above.</span>
@@ -942,12 +978,12 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
                 <div className="copilot">
                   <h4><span className="cdotai" />AI Copilot · Insights found</h4>
                   <div className="insightgrid">
-                    {insights.map((t, i) => <div className="insight" key={i}><span className="ifire">🔥</span><span>{t}</span></div>)}
+                    {insights.map((t, i) => <div className="insight" key={i}><span className="ifire">{SparkIc}</span><span>{t}</span></div>)}
                   </div>
                 </div>
               )}
               {loading.analysis && <div className="panel"><Loader stages={STAGES_ANALYZE} /></div>}
-              {errors.analysis && <div className="err">⚠ {errors.analysis}</div>}
+              {errors.analysis && <div className="err">{errors.analysis}</div>}
               {analysis && !loading.analysis && (
                 <div className="iprofile">
                   <div className="iblock full"><h4>Who they are</h4><p>{analysis.persona}</p></div>
@@ -1036,14 +1072,14 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
                 <div className="seg">{[["short", "Short"], ["standard", "Standard"], ["executive", "Executive"]].map(([v, l]) => <button key={v} className={meetLen === v ? "on" : ""} onClick={() => setMeetLen(v)}>{l}</button>)}</div>
                 <button className="btn primary" onClick={() => generate("meeting_" + meetLen)} disabled={loading["meeting_" + meetLen]}>{loading["meeting_" + meetLen] ? "Generating…" : (results["meeting_" + meetLen].length ? "Regenerate" : "Generate 3")}</button>
               </div>
-              {errors["meeting_" + meetLen] && <div className="err" style={{ marginBottom: 16 }}>⚠ {errors["meeting_" + meetLen]}</div>}
+              {errors["meeting_" + meetLen] && <div className="err" style={{ marginBottom: 16 }}>{errors["meeting_" + meetLen]}</div>}
               {loading["meeting_" + meetLen] && results["meeting_" + meetLen].length === 0 && <GenSkeleton />}
               {!loading["meeting_" + meetLen] && results["meeting_" + meetLen].length === 0 && !errors["meeting_" + meetLen] && (
                 <div className="empty"><div className="eic">{Ic.meet}</div><h3>No {meetLen} meeting requests yet</h3><p>Generate 3 personalized {meetLen} meeting requests for {name}.</p><button className="btn primary" onClick={() => generate("meeting_" + meetLen)}>Generate for {name}</button></div>
               )}
               {results["meeting_" + meetLen].length > 0 && (
                 <div className="grid2">
-                  {results["meeting_" + meetLen].map((it, i) => { const kind = "meeting_" + meetLen; return <MsgCard key={i} item={it} idx={i} kind="meeting" source={verifySource} favOn={!!favs[favKey(kind, i, it.message)]} onCopy={copy} onFav={() => toggleFav(kind, i, it.message)} onRegen={() => regenerateOne(kind, i)} onRefine={(instr) => refineOne(kind, i, instr)} regening={!!regen[kind + i]} />; })}
+                  {results["meeting_" + meetLen].map((it, i) => { const kind = "meeting_" + meetLen; return <MsgCard key={i} item={it} idx={i} kind="meeting" source={verifySource} favOn={!!favs[favKey(kind, i, it.message)]} onCopy={copy} onFav={() => toggleFav(kind, i, it.message)} onRegen={() => regenerateOne(kind, i)} onRefine={(instr) => refineOne(kind, i, instr)} onQueue={() => queueToSend({ channel: "linkedin", step: "meeting", subject: it.subject || "", body: it.message })} regening={!!regen[kind + i]} />; })}
                   {loading["meeting_" + meetLen] && <div className="mcard" style={{ justifyContent: "center", alignItems: "center", minHeight: 120, color: "var(--muted)", fontSize: 13 }}>Crafting more…</div>}
                 </div>
               )}
@@ -1056,7 +1092,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
               <ProspectStrip />
               <div className="seg" style={{ marginBottom: 18 }}>
                 <button className={fuModeEff === "sequence" ? "on" : ""} onClick={() => setFuMode("sequence")}>LinkedIn sequence</button>
-                <button className={fuModeEff === "email" ? "on" : ""} onClick={() => (isAdmin ? setFuMode("email") : showToast("The after-meeting email is for admins only."))}>After-meeting email{!isAdmin && " 🔒"}</button>
+                <button className={fuModeEff === "email" ? "on" : ""} onClick={() => (isAdmin ? setFuMode("email") : showToast("The after-meeting email is for admins only."))}>After-meeting email{!isAdmin && <span style={{ marginLeft: 5, display: "inline-flex", verticalAlign: "-2px" }}>{LockIc}</span>}</button>
               </div>
 
               {fuModeEff === "sequence" ? (
@@ -1065,7 +1101,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
                     <button className="btn primary" onClick={() => generate("followupSeq")} disabled={loading.followupSeq}>{loading.followupSeq ? "Generating…" : (results.followupSeq.length ? "Regenerate sequence" : "Generate 5-step sequence")}</button>
                     <span style={{ color: "var(--muted)", fontSize: 13 }}>A no-reply sequence — each step introduces something new, never "just checking in".</span>
                   </div>
-                  {errors.followupSeq && <div className="err" style={{ marginTop: 16 }}>⚠ {errors.followupSeq}</div>}
+                  {errors.followupSeq && <div className="err" style={{ marginTop: 16 }}>{errors.followupSeq}</div>}
                   {loading.followupSeq && <div className="panel" style={{ marginTop: 16 }}><Loader stages={STAGES_GEN} /></div>}
                   {!loading.followupSeq && results.followupSeq.length === 0 && !errors.followupSeq && (
                     <div className="empty" style={{ marginTop: 16 }}><div className="eic">{Ic.fup}</div><h3>No sequence yet</h3><p>Generate a 5-step follow-up sequence tailored to {name}.</p><button className="btn primary" onClick={() => generate("followupSeq")}>Generate sequence</button></div>
@@ -1079,9 +1115,10 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
                             <div className="mbody" style={{ whiteSpace: "pre-wrap" }}>{st.message}</div>
                             {st.fresh && <div className="reason"><b>New angle</b> · {st.fresh}</div>}
                             {st.reasoning && <div className="reason"><b>AI Coach</b> · {st.reasoning}</div>}
-                            {(() => { const fl = flagUnsupported(st.message, verifySource); return fl.length ? <div className="verify" title="These specifics aren't in the data you entered. Double-check them before sending.">⚠ Verify before sending: {fl.map((f) => f.claim).join(", ")}</div> : null; })()}
+                            {(() => { const fl = flagUnsupported(st.message, verifySource); return fl.length ? <div className="verify" title="These specifics aren't in the data you entered. Double-check them before sending.">Verify before sending: {fl.map((f) => f.claim).join(", ")}</div> : null; })()}
                             <div className="mact">
                               <button className="iconbtn" onClick={() => copy(st.message)}>{CopyIc} Copy</button>
+                              <button className="iconbtn" onClick={() => queueToSend({ channel: "linkedin", step: "followup_" + (i + 1), subject: "", body: st.message })} title="Queue this step to send">{SendIc} Queue</button>
                               <button className={"iconbtn fav" + (favs[favKey(kind, i, st.message)] ? " on" : "")} onClick={() => toggleFav(kind, i, st.message)} aria-label={favs[favKey(kind, i, st.message)] ? "Remove from favorites" : "Add to favorites"} aria-pressed={!!favs[favKey(kind, i, st.message)]} style={{ marginLeft: "auto" }}>{StarIc(!!favs[favKey(kind, i, st.message)])}</button>
                             </div>
                             <RefineBox onRefine={(instr) => refineOne("followupSeq", i, instr)} />
@@ -1114,7 +1151,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
                 <button className="btn primary" onClick={() => generate("followup")} disabled={loading.followup}>{loading.followup ? "Generating…" : (results.followup.length ? "Regenerate email" : "Generate email")}</button>
                 <span style={{ color: "var(--muted)", fontSize: 13 }}>One email for: <b style={{ color: "var(--ice)" }}>{(FOLLOWUP_STAGES.find((s) => s.v === fuStage) || FOLLOWUP_STAGES[0]).label}</b></span>
               </div>
-              {errors.followup && <div className="err" style={{ marginTop: 16 }}>⚠ {errors.followup}</div>}
+              {errors.followup && <div className="err" style={{ marginTop: 16 }}>{errors.followup}</div>}
               {loading.followup && <div className="panel" style={{ marginTop: 16 }}><Loader stages={STAGES_GEN} /></div>}
               {!loading.followup && results.followup.length === 0 && !errors.followup && (
                 <div className="empty" style={{ marginTop: 16 }}><div className="eic">{Ic.fup}</div><h3>No email yet</h3><p>Pick a stage above and generate a tailored follow-up email for {name}.</p></div>
@@ -1124,9 +1161,10 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
                   <div className="mctop"><span className="stagehd">{st.stage || "Follow-up"}</span></div>
                   <div className="mbody" style={{ whiteSpace: "pre-wrap" }}>{st.message}</div>
                   {st.reasoning && <div className="reason"><b>Why this fits</b> · {st.reasoning}</div>}
-                  {(() => { const fl = flagUnsupported(st.message, verifySource + "\n" + transcript); return fl.length ? <div className="verify" title="These specifics aren't in your data or the transcript. Double-check them before sending.">⚠ Verify before sending: {fl.map((f) => f.claim).join(", ")}</div> : null; })()}
+                  {(() => { const fl = flagUnsupported(st.message, verifySource + "\n" + transcript); return fl.length ? <div className="verify" title="These specifics aren't in your data or the transcript. Double-check them before sending.">Verify before sending: {fl.map((f) => f.claim).join(", ")}</div> : null; })()}
                   <div className="mact">
                     <button className="iconbtn" onClick={() => copy(st.message)}>{CopyIc} Copy</button>
+                    <button className="iconbtn" onClick={() => queueToSend({ channel: "email", step: "followup_email", subject: st.subject || st.stage || "Following up", body: st.message })} title="Queue this email to send">{SendIc} Queue</button>
                     <button className={"iconbtn fav" + (favs[favKey(kind, i, st.message)] ? " on" : "")} onClick={() => toggleFav(kind, i, st.message)} aria-label={favs[favKey(kind, i, st.message)] ? "Remove from favorites" : "Add to favorites"} aria-pressed={!!favs[favKey(kind, i, st.message)]} style={{ marginLeft: "auto" }}>{StarIc(!!favs[favKey(kind, i, st.message)])}</button>
                   </div>
                   <RefineBox onRefine={(instr) => refineOne("followup", i, instr)} />
@@ -1169,6 +1207,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
           {view === "board" && <BoardView onSetStatus={setHistoryStatus} />}
 
           {view === "reminders" && <RemindersView onChanged={loadRemindersDue} />}
+          {view === "queue" && <SendQueueView showToast={showToast} />}
 
           {view === "usage" && <UsageView />}
 
