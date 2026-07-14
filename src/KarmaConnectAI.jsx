@@ -31,6 +31,17 @@ import { scoreFit } from "./lib/scoring.js";
 import { currentUser } from "./lib/auth.js";
 import { requestApproval, myApprovals, listApprovals, decideApproval, listAdmins } from "./lib/approvals.js";
 
+// A prospect's identity signature, used to notice when the user has switched to a
+// DIFFERENT person in the same form (without clicking "New Prospect"). Keyed on the
+// person's name when present, else the company — so fixing a company on a named prospect
+// doesn't look like a brand-new person. Empty string means "no identity yet".
+function identityOf(p) {
+  const name = [(p?.firstName || "").trim(), (p?.lastName || "").trim()].filter(Boolean).join(" ").toLowerCase();
+  if (name) return "n:" + name;
+  const co = (p?.company || "").trim().toLowerCase();
+  return co ? "c:" + co : "";
+}
+
 export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   // Working draft is namespaced per account so different logins don't clobber each other.
   const STATE_KEY = "kc_state_v1_" + (userEmail || "anon").toLowerCase();
@@ -83,6 +94,10 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   const [remindersDue, setRemindersDue] = useState(0); // count of overdue/due-today follow-ups (nav badge)
   const [showRubric, setShowRubric] = useState(false);
   const [currentEntryId, setCurrentEntryId] = useState(saved.currentEntryId || null);
+  // Identity of the prospect currently being worked (the "anchor"). When the live form's
+  // identity drifts away from this, the user has started a new person — see the auto-fork
+  // effect below. Restored from saved work so a refresh keeps the anchor aligned.
+  const [anchorIdentity, setAnchorIdentity] = useState(() => (saved.analysis ? identityOf(saved.prospect || {}) : ""));
 
   // ---- Admin approval gate ----
   // Members work a lead through connection freely; Relationship / Meeting / Follow-up stay
@@ -147,6 +162,26 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [analysis, results, favs, prospect, sender, offer, meetLen, prospectReply]);
 
+  // Auto-fork on a new person: if the live form's identity drifts away from the prospect
+  // being worked (the anchor), the user has started a DIFFERENT person without clicking
+  // "New Prospect". The previous one is already saved in History, so we simply detach from
+  // it (clear the entry id) and drop the stale analysis — that both stops the old entry from
+  // being overwritten AND makes the new person save as its own separate entry once analysed.
+  useEffect(() => {
+    if (!analysis) return;                        // only matters once a prospect is analysed/loaded
+    const sig = identityOf(prospect);
+    if (!anchorIdentity) { setAnchorIdentity(sig); return; }   // first analysis — set the anchor
+    if (sig && sig !== anchorIdentity) {
+      setCurrentEntryId(null);                    // detach — next analysis saves as a NEW prospect
+      setAnalysis(null);                          // stop auto-save from overwriting the previous one
+      setResults({ ...EMPTY_RESULTS });
+      setFavs({});
+      setAnchorIdentity("");                      // re-anchors when the new prospect is analysed
+      showToast("New prospect started — previous one is saved in History");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prospect.firstName, prospect.lastName, prospect.company, analysis, anchorIdentity]);
+
   // Close the confirm modal on Escape.
   useEffect(() => {
     if (!confirmState) return;
@@ -179,6 +214,7 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
     setFavs({}); setCoUrl(""); setRawPaste(""); setProspectReply(""); setTranscript(""); setFuMode("sequence"); setFuStage("post_meeting"); setView("hub");
     setEnrichMsg(""); setEnrichErr(""); setParseMsg(""); setParseErr("");
     setCurrentEntryId(null);
+    setAnchorIdentity("");
     showToast("Cleared. Ready for a new prospect.");
   }
   function resetAll() {
@@ -186,15 +222,21 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   }
 
   // ---- Per-account prospect history (auto-saved after analysis) ----
-  function autoSaveCurrent() {
-    if (!analysis) return;
-    if (!prospect.firstName.trim() && !prospect.company.trim()) return;
+  // pros/ana default to the live state, but can be passed explicitly so a freshly-completed
+  // analysis can be persisted immediately (before the debounce and before React re-renders).
+  function autoSaveCurrent(pros = prospect, ana = analysis) {
+    if (!ana) return;
+    if (!pros.firstName.trim() && !pros.company.trim()) return;
     let id = currentEntryId;
+    // Backstop: never overwrite a loaded entry that belongs to a different person — fork instead.
+    const prior = id ? history.find((h) => h.id === id) : null;
+    const priorSig = prior ? identityOf(prior.snapshot?.prospect || {}) : "";
+    if (priorSig && priorSig !== identityOf(pros)) id = null;
     if (!id) { id = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : "h" + Date.now(); setCurrentEntryId(id); }
-    const label = [prospect.firstName, prospect.lastName].filter(Boolean).join(" ") || prospect.company || "Untitled";
-    const sub = [prospect.title, prospect.company].filter(Boolean).join(" · ");
+    const label = [pros.firstName, pros.lastName].filter(Boolean).join(" ") || pros.company || "Untitled";
+    const sub = [pros.title, pros.company].filter(Boolean).join(" · ");
     const status = (history.find((h) => h.id === id) || {}).status || "new"; // keep the lead's stage
-    const entry = { id, label, sub, status, savedAt: new Date().toISOString(), snapshot: { prospect, sender, offer, coUrl, analysis, results, favs, meetLen, prospectReply, fuMode, fuStage, transcript } };
+    const entry = { id, label, sub, status, savedAt: new Date().toISOString(), snapshot: { prospect: pros, sender, offer, coUrl, analysis: ana, results, favs, meetLen, prospectReply, fuMode, fuStage, transcript } };
     setHistory((cur) => [entry, ...cur.filter((h) => h.id !== id)]);
     writeHistory(userEmail, [entry]);
   }
@@ -237,6 +279,7 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
     setFuStage(s.fuStage || "post_meeting");
     setTranscript(s.transcript || "");
     setCurrentEntryId(entry.id);
+    setAnchorIdentity(identityOf(s.prospect || {}));   // anchor to the loaded person, so editing it isn't seen as a switch
     setView(s.analysis ? "intel" : "hub");
     showToast("Loaded " + (entry.label || "prospect"));
   }
@@ -438,6 +481,9 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
         result = await attempt();
       }
       setAnalysis(result);
+      // Persist right away (not just via the debounce) so switching prospects quickly after
+      // an analysis can never lose the one just completed.
+      autoSaveCurrent(prospect, result);
     } catch (e) {
       setErrors((er) => ({ ...er, analysis: (e && e.message) || "Analysis failed. Try again." }));
     }
