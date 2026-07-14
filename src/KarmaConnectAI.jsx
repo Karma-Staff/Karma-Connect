@@ -42,6 +42,12 @@ function identityOf(p) {
   return co ? "c:" + co : "";
 }
 
+// Per-account store of recently-researched companies, so repeat companies can be re-filled
+// from history instead of re-running a web search each time.
+const companyHistKey = (email) => "kc_company_hist_" + (email || "anon").toLowerCase();
+// Stable key for a company: its URL host (or name), lower-cased and trimmed of scheme/slash.
+const companyKey = (url, name) => String(url || name || "").toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/+$/, "").trim();
+
 export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   // Working draft is namespaced per account so different logins don't clobber each other.
   const STATE_KEY = "kc_state_v1_" + (userEmail || "anon").toLowerCase();
@@ -64,6 +70,11 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   const [sender, setSender] = useState(saved.sender || "nordon");
   const [offer, setOffer] = useState(saved.offer || senderOffer(SENDERS[0]));
   const [coUrl, setCoUrl] = useState(saved.coUrl || "");
+  // Recently-researched companies (per account), newest first. Clicking one re-fills the
+  // company fields without spending another web search — most prospects share a few firms.
+  const [companyHistory, setCompanyHistory] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(companyHistKey(userEmail)) || "[]") || []; } catch (e) { return []; }
+  });
   const [enriching, setEnriching] = useState(false);
   const [enrichMsg, setEnrichMsg] = useState("");
   const [enrichErr, setEnrichErr] = useState("");
@@ -329,6 +340,39 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
 
   // Lightweight COMPANY research — one web-search call. Fills empty company-side fields only.
   // (The person's profile comes from the Deep LinkedIn paste panel below.)
+  // ---- Recent-company history (per account) ----
+  // Save a researched company (its resolved fields) so it can be re-applied later for free.
+  function rememberCompany(data) {
+    const key = companyKey(data.url, data.name);
+    if (!key) return;
+    setCompanyHistory((cur) => {
+      const next = [{ ...data, key, at: new Date().toISOString() }, ...cur.filter((c) => c.key !== key)].slice(0, 12);
+      try { localStorage.setItem(companyHistKey(userEmail), JSON.stringify(next)); } catch (e) {}
+      return next;
+    });
+  }
+  // Re-fill the company fields from a saved company (no web search). Leaves the person's
+  // profile fields untouched; sets the URL box so a fresh research is one click away if wanted.
+  function applyCompany(c) {
+    setProspect((prev) => {
+      const next = { ...prev };
+      const put = (k, v) => { if (v) next[k] = v; };
+      put("company", c.name); put("industry", c.industry); put("location", c.location);
+      put("companyDesc", c.companyDesc); put("news", c.news); put("website", c.website || c.url);
+      if (c.research && !String(next.research || "").includes(c.research)) next.research = (next.research ? next.research + "\n\n" : "") + c.research;
+      return next;
+    });
+    if (c.url) setCoUrl(c.url);
+    showToast("Loaded " + (c.name || "company") + " from history");
+  }
+  function forgetCompany(key) {
+    setCompanyHistory((cur) => {
+      const next = cur.filter((c) => c.key !== key);
+      try { localStorage.setItem(companyHistKey(userEmail), JSON.stringify(next)); } catch (e) {}
+      return next;
+    });
+  }
+
   async function enrich() {
     if (!coUrl.trim() && !prospect.company.trim()) {
       setEnrichErr("Add the company website URL or the company name first.");
@@ -341,19 +385,26 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
       const d = Array.isArray(parsed) ? (parsed[0] || {}) : parsed;
       const nv = (v) => (v == null || v === "NOT VERIFIED" ? "" : String(v).trim());
       const joinArr = (a, sep = ", ") => (Array.isArray(a) ? a.map(nv).filter(Boolean).join(sep) : "");
+      // Resolve the company fields once, so we can both fill the form and remember them.
+      const co = {
+        name: nv(d.company) || prospect.company.trim(),
+        industry: nv(d.industry),
+        location: nv(d.location),
+        website: nv(d.website) || coUrl.trim(),
+        companyDesc: [nv(d.companyDesc), joinArr(d.services)].filter(Boolean).join(" | "),
+        news: joinArr((d.recentNews || []).slice(0, 3), " | "),
+      };
+      const note = [nv(d.summary), nv(d.employeeCount) ? "Employees: " + nv(d.employeeCount) : ""].filter(Boolean).join(" ");
+      co.research = note ? "Company research: " + note : "";
       setProspect((prev) => {
         const next = { ...prev };
         const fill = (k, val) => { if (val && !String(next[k] || "").trim()) next[k] = val; };
-        fill("company", nv(d.company));
-        fill("industry", nv(d.industry));
-        fill("website", nv(d.website) || coUrl);
-        fill("location", nv(d.location));
-        fill("companyDesc", [nv(d.companyDesc), joinArr(d.services)].filter(Boolean).join(" | "));
-        fill("news", joinArr((d.recentNews || []).slice(0, 3), " | "));
-        const note = [nv(d.summary), nv(d.employeeCount) ? "Employees: " + nv(d.employeeCount) : ""].filter(Boolean).join(" ");
-        if (note) next.research = (next.research ? next.research + "\n\n" : "") + "Company research: " + note;
+        fill("company", co.name); fill("industry", co.industry); fill("website", co.website);
+        fill("location", co.location); fill("companyDesc", co.companyDesc); fill("news", co.news);
+        if (co.research) next.research = (next.research ? next.research + "\n\n" : "") + co.research;
         return next;
       });
+      rememberCompany({ url: coUrl.trim() || co.website, ...co });
       setEnrichMsg("Company research done. Filled the empty company fields I could verify. For the person's profile, use the Deep LinkedIn paste below.");
     } catch (e) {
       setEnrichErr((e && e.message) || "Couldn't research the company. You can still fill the fields manually.");
@@ -869,6 +920,17 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
                   <div className="fgrid">
                     <div className="f"><label>Company website URL</label><input value={coUrl} placeholder="https://company.com" onChange={(e) => setCoUrl(e.target.value)} /></div>
                   </div>
+                  {companyHistory.length > 0 && (
+                    <div className="cohist">
+                      <span className="cohist-l">Recent</span>
+                      {companyHistory.map((c) => (
+                        <button key={c.key} type="button" className="chip cochip" title={"Load " + (c.name || c.url) + " from history"} onClick={() => applyCompany(c)}>
+                          {c.name || c.url}
+                          <span className="cochip-x" role="button" tabIndex={-1} aria-label="Remove from history" onClick={(e) => { e.stopPropagation(); forgetCompany(c.key); }}>×</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   <div className="toprow" style={{ marginTop: 14 }}>
                     <button className="btn primary" onClick={enrich} disabled={enriching || (!coUrl && !prospect.company.trim())}>{enriching ? "Researching…" : "Research company & fill ↓"}</button>
                     <span style={{ color: "var(--muted)", fontSize: 12.5 }}>One quick web-search pass on the company. Fills empty company fields only, never overwrites what you typed.</span>
