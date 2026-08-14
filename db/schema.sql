@@ -131,6 +131,96 @@ create table if not exists lead_notes (
 );
 create index if not exists lead_notes_idx on lead_notes (user_id, prospect_id, created_at desc);
 
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Drip campaigns: a named, ordered sequence of outreach steps that leads are enrolled
+-- into and advanced through. Execution is human-in-the-loop (a "send queue"); these
+-- tables hold the orchestration and per-lead position. No LinkedIn is automated.
+-- ─────────────────────────────────────────────────────────────────────────────
+create table if not exists campaigns (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null references users (id) on delete cascade,
+  name       text not null,
+  sender_id  text not null default '',      -- which Karma Staff sender voice (see senders.js)
+  status     text not null default 'active', -- active | archived
+  created_at timestamptz not null default now()
+);
+create index if not exists campaigns_user_idx on campaigns (user_id, created_at desc);
+
+-- One ordered step of a campaign. message_type maps to an existing AI generator
+-- (connection | relationship | inmail | meeting | followup); channel is linkedin | email.
+create table if not exists campaign_steps (
+  id           uuid primary key default gen_random_uuid(),
+  campaign_id  uuid not null references campaigns (id) on delete cascade,
+  step_order   int  not null,                 -- 0-based position
+  channel      text not null default 'linkedin',
+  message_type text not null default 'connection',
+  delay_days   int  not null default 0,       -- days to wait before this step
+  unique (campaign_id, step_order)
+);
+create index if not exists campaign_steps_idx on campaign_steps (campaign_id, step_order);
+
+-- One lead enrolled in one campaign. current_step points at the step due next;
+-- next_step_at is when it's due. status: active | completed | stopped.
+create table if not exists campaign_enrollments (
+  id           uuid primary key default gen_random_uuid(),
+  campaign_id  uuid not null references campaigns (id) on delete cascade,
+  prospect_id  text not null references prospects (id) on delete cascade,
+  user_id      uuid not null references users (id) on delete cascade,
+  current_step int  not null default 0,
+  status       text not null default 'active',
+  next_step_at timestamptz,
+  enrolled_at  timestamptz not null default now(),
+  last_step_at timestamptz,
+  unique (campaign_id, prospect_id)
+);
+create index if not exists campaign_enroll_camp_idx on campaign_enrollments (campaign_id, status);
+create index if not exists campaign_enroll_due_idx on campaign_enrollments (user_id, status, next_step_at);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- message_sends: A/B testing. One row each time a user marks a generated message as
+-- sent. Joined back to the prospect's pipeline status to compute reply/meeting rates
+-- per message angle and per sender — so the winning angles surface over time.
+-- ─────────────────────────────────────────────────────────────────────────────
+create table if not exists message_sends (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null references users (id) on delete cascade,
+  prospect_id text references prospects (id) on delete set null,
+  kind        text not null,                    -- connection | relationship | inmail | meeting | followup
+  angle       text not null default '',         -- the message's angle label (the A/B variant)
+  sender_id   text not null default '',         -- which sender voice was used
+  message     text not null default '',         -- the actual sent text (so the coach can learn wording)
+  personalization int,                          -- the message's self-scores at send time
+  acceptance  int,
+  created_at  timestamptz not null default now()
+);
+create index if not exists message_sends_user_idx on message_sends (user_id, created_at desc);
+create index if not exists message_sends_prospect_idx on message_sends (prospect_id);
+
+-- coach_playbook: distilled "what works" guidance per message kind, learned from the account's
+-- own results (winners vs the rest) and injected into future generation. One row per (user, kind).
+create table if not exists coach_playbook (
+  user_id     uuid not null references users (id) on delete cascade,
+  kind        text not null,
+  playbook    text not null default '',
+  sample_size int  not null default 0,
+  updated_at  timestamptz not null default now(),
+  primary key (user_id, kind)
+);
+
+-- coach_changes: append-only log of every playbook update (automatic or manual), with the
+-- before/after text, so the user can see exactly what the coach changed to their messaging.
+create table if not exists coach_changes (
+  id            uuid primary key default gen_random_uuid(),
+  user_id       uuid not null references users (id) on delete cascade,
+  kind          text not null,
+  source        text not null default 'auto',   -- auto | manual
+  prev_playbook text not null default '',
+  playbook      text not null default '',
+  sample_size   int  not null default 0,
+  created_at    timestamptz not null default now()
+);
+create index if not exists coach_changes_idx on coach_changes (user_id, created_at desc);
+
 -- Keep updated_at fresh on prospects.
 create or replace function touch_updated_at()
 returns trigger language plpgsql as $$

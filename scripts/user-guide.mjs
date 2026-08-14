@@ -124,7 +124,7 @@ h2("Admin-side / setup problems");
 qa("Nobody can approve leads (no Approvals panel for anyone).", "No admin is configured. Set ADMIN_EMAILS or ADMIN_SIGNUP_CODE in Render, save (the service restarts), then the admin signs out and back in.");
 qa("I'm an admin but don't see \"Approvals\".", "Sign out, hard refresh (Ctrl+Shift+R), and sign back in so the app re-reads your admin status.");
 qa("Signup fails with \"Could not create the account.\"", "Usually the database tables aren't set up. The operator runs the one-time schema setup (npm run db:init) against the database.");
-qa("Confirmation emails never send.", "Email isn't configured: set RESEND_API_KEY (and RESEND_FROM) in Render, and verify your sending domain in Resend.");
+qa("Confirmation emails never send.", "Email isn't configured: set GATEWAY_URL, GATEWAY_TOKEN and MAIL_FROM in Render, and ask an admin to allowlist your MAIL_FROM address on the mail gateway.");
 qa("The whole site won't load.", "Check the hosting dashboard (Render) - the service may be redeploying or asleep on the free tier (first load can take ~30s). Logs there show any error.");
 
 doc.moveDown(0.6);

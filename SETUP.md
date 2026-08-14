@@ -21,8 +21,9 @@ PGSSL=off                              # 'off' for local Postgres; omit for host
 AUTH_JWT_SECRET=<64+ random hex chars> # node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 
 # Optional
-RESEND_API_KEY=re_...                  # enables email confirmation on signup
-RESEND_FROM=Karma Connect <karmaconnect@karmastaff.com>
+GATEWAY_URL=https://<gateway-host>     # internal mail gateway; enables email confirmation on signup
+GATEWAY_TOKEN=<per-client bearer token> # issued by an admin; keep out of source control
+MAIL_FROM=Karma Connect <karmaconnect@karmastaff.com>  # must be allowlisted for the token
 APP_URL=http://localhost:3000          # canonical URL used in email links
 ADMIN_EMAILS=you@karmastaff.com        # comma-separated admins
 ADMIN_SIGNUP_CODE=<shared secret>      # signups entering this code become admins

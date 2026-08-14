@@ -48,10 +48,10 @@ const EMAIL_RE = /\S+@\S+\.\S+/;
 const { pool, dbOn, q, ensureSchema, writeUsageRow, logActivity } = require("./server/db.cjs");
 const { JWT_SECRET, ALLOWED_DOMAIN, DUMMY_HASH, emailAllowed, tokenFor, publicUser, baseUrl, requireUser, requireAdmin } = require("./server/auth.cjs");
 
-// ── Email verification via Resend (optional, env-gated) ──
-// If RESEND_API_KEY is set, new signups must confirm their email before they can sign in.
+// ── Email verification via the internal mail gateway (optional, env-gated) ──
+// If GATEWAY_URL + GATEWAY_TOKEN are set, new signups must confirm their email before they can sign in.
 // If it's not configured (e.g. local dev), users are created already-verified (no friction).
-// Email senders + verify/reset config (Resend). Required here, after the .env loader above.
+// Email senders + verify/reset config. Required here, after the .env loader above.
 const { emailVerifyOn, VERIFY_TTL_HOURS, RESET_TTL_HOURS, sendVerificationEmail, sendResetEmail, sendApprovalRequestEmail, sendApprovalDecisionEmail } = require("./server/email.cjs");
 
 const app = express();
@@ -132,7 +132,7 @@ app.post("/api/auth/signup", signupLimiter, async (req, res) => {
 
     const hash = await bcrypt.hash(password, 12);
     // When email verification is on, create the user unverified with a one-time token.
-    // When it's off (no Resend key), create them already-verified and log them straight in.
+    // When it's off (gateway not configured), create them already-verified and log them straight in.
     const token = emailVerifyOn ? crypto.randomBytes(32).toString("hex") : null;
     const { rows } = await q(
       `insert into users (email, password_hash, first_name, last_name, email_verified, verify_token, verify_sent_at, is_admin)
@@ -306,7 +306,7 @@ app.delete("/api/auth/account", requireUser, async (req, res) => {
 // ───────────────────────────── History ──────────────────────────────
 const PAGE_SIZE = 25;
 
-const LEAD_STATUSES = ["new", "connected", "replied", "meeting", "won", "lost"];
+const LEAD_STATUSES = ["new", "connected", "replied", "meeting", "won", "lost", "ghosted"];
 
 app.get("/api/history", requireUser, async (req, res) => {
   try {
@@ -481,6 +481,340 @@ app.delete("/api/leads/:id/notes/:noteId", requireUser, async (req, res) => {
       [req.userId, String(req.params.id), String(req.params.noteId)]);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: { message: "Could not delete the note." } }); }
+});
+
+// ─────────────────────────── Analytics + A/B ────────────────────────
+// Pipeline funnel, conversion KPIs, per-sender and per-angle (A/B) performance. All
+// derived from the user's own prospects + message_sends; no AI tokens.
+const MSG_KINDS = ["connection", "relationship", "inmail", "meeting", "followup"];
+
+// Log that a generated message was sent (the A/B event). Body: { prospectId?, kind, angle, senderId? }.
+app.post("/api/message-sends", requireUser, async (req, res) => {
+  try {
+    const kind = MSG_KINDS.includes(String(req.body?.kind)) ? String(req.body.kind) : null;
+    if (!kind) return res.status(400).json({ error: { message: "Unknown message kind." } });
+    const angle = String(req.body?.angle || "").slice(0, 80);
+    const senderId = String(req.body?.senderId || "").slice(0, 60);
+    // prospect_id is optional; if given it must belong to the user (else store null).
+    let prospectId = req.body?.prospectId ? String(req.body.prospectId) : null;
+    if (prospectId) {
+      const { rows } = await q("select id from prospects where id = $1 and user_id = $2", [prospectId, req.userId]);
+      if (!rows[0]) prospectId = null;
+    }
+    const message = String(req.body?.message || "").slice(0, 4000);
+    const pInt = (v) => (Number.isFinite(parseInt(v, 10)) ? Math.max(0, Math.min(100, parseInt(v, 10))) : null);
+    await q("insert into message_sends (user_id, prospect_id, kind, angle, sender_id, message, personalization, acceptance) values ($1,$2,$3,$4,$5,$6,$7,$8)",
+      [req.userId, prospectId, kind, angle, senderId, message, pInt(req.body?.personalization), pInt(req.body?.acceptance)]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: { message: "Could not record the send." } }); }
+});
+
+// Coach dataset: the account's sent messages, per kind, labelled winner (lead replied/booked/won)
+// or not — the raw material the "learn from results" step distills into a playbook.
+app.get("/api/coach/dataset", requireUser, async (req, res) => {
+  try {
+    // outcome: 'won' (replied/meeting/won) = it landed; 'lost' (ghosted/lost) = clear negative;
+    // 'pending' (new/connected/no lead) = not yet decided, ignored by learning.
+    const { rows } = await q(
+      `select m.kind, m.angle, m.message, m.personalization, m.acceptance, p.status as lead_status,
+              case when p.status in ('replied','meeting','won') then 'won'
+                   when p.status in ('ghosted','lost') then 'lost'
+                   else 'pending' end as outcome
+         from message_sends m left join prospects p on p.id = m.prospect_id and p.user_id = m.user_id
+        where m.user_id = $1 and m.message <> ''
+        order by m.kind, m.created_at desc`,
+      [req.userId],
+    );
+    res.json({ rows });
+  } catch (e) { res.status(500).json({ error: { message: "Could not load the coach dataset." } }); }
+});
+
+// Read all learned playbooks for the user (keyed by kind).
+app.get("/api/coach/playbook", requireUser, async (req, res) => {
+  try {
+    const { rows } = await q("select kind, playbook, sample_size, updated_at from coach_playbook where user_id = $1", [req.userId]);
+    const playbook = {};
+    for (const r of rows) playbook[r.kind] = r.playbook;
+    res.json({ playbook, meta: rows });
+  } catch (e) { res.status(500).json({ error: { message: "Could not load the playbook." } }); }
+});
+
+// Save/replace a learned playbook for one kind. Body: { kind, playbook, sampleSize, source }.
+// Logs a coach_changes row whenever the text actually changes, so the update is auditable.
+app.put("/api/coach/playbook", requireUser, async (req, res) => {
+  try {
+    const kind = MSG_KINDS.includes(String(req.body?.kind)) ? String(req.body.kind) : null;
+    if (!kind) return res.status(400).json({ error: { message: "Unknown message kind." } });
+    const text = String(req.body?.playbook || "").slice(0, 4000);
+    const sampleSize = Math.max(0, parseInt(req.body?.sampleSize, 10) || 0);
+    const source = req.body?.source === "manual" ? "manual" : "auto";
+    // Compare against the current playbook so we only log real changes.
+    const { rows: cur } = await q("select playbook from coach_playbook where user_id = $1 and kind = $2", [req.userId, kind]);
+    const prev = cur[0] ? cur[0].playbook : "";
+    if (prev !== text) {
+      await q("insert into coach_changes (user_id, kind, source, prev_playbook, playbook, sample_size) values ($1,$2,$3,$4,$5,$6)",
+        [req.userId, kind, source, prev, text, sampleSize]);
+    }
+    await q(
+      `insert into coach_playbook (user_id, kind, playbook, sample_size, updated_at)
+       values ($1,$2,$3,$4, now())
+       on conflict (user_id, kind) do update set playbook = excluded.playbook, sample_size = excluded.sample_size, updated_at = now()`,
+      [req.userId, kind, text, sampleSize],
+    );
+    res.json({ ok: true, changed: prev !== text });
+  } catch (e) { res.status(500).json({ error: { message: "Could not save the playbook." } }); }
+});
+
+// The change log: every update the coach made to the playbooks, newest first.
+app.get("/api/coach/changes", requireUser, async (req, res) => {
+  try {
+    const { rows } = await q(
+      "select id, kind, source, prev_playbook, playbook, sample_size, created_at from coach_changes where user_id = $1 order by created_at desc limit 100",
+      [req.userId],
+    );
+    res.json({ changes: rows });
+  } catch (e) { res.status(500).json({ error: { message: "Could not load the change log." } }); }
+});
+
+app.get("/api/analytics", requireUser, async (req, res) => {
+  try {
+    const uid = req.userId;
+    // Pipeline funnel. status is the lead's CURRENT stage; "reached X" counts leads at X or beyond,
+    // so the funnel reads as a true drop-off (a 'won' lead also passed through connected/replied/meeting).
+    const funnelSql = `select
+        count(*)::int as total,
+        count(*) filter (where status in ('connected','replied','meeting','won'))::int as connected,
+        count(*) filter (where status in ('replied','meeting','won'))::int as replied,
+        count(*) filter (where status in ('meeting','won'))::int as meeting,
+        count(*) filter (where status = 'won')::int as won,
+        count(*) filter (where status = 'lost')::int as lost,
+        count(*) filter (where status = 'ghosted')::int as ghosted,
+        count(*) filter (where created_at >= now() - interval '7 days')::int as this_week,
+        count(*) filter (where created_at >= date_trunc('month', now()))::int as this_month
+      from prospects where user_id = $1`;
+    // Leads added per ISO week for the last 8 weeks.
+    const trendSql = `select to_char(date_trunc('week', created_at), 'MM-DD') as week,
+             count(*)::int as added
+        from prospects
+       where user_id = $1 and created_at >= date_trunc('week', now()) - interval '7 weeks'
+       group by 1 order by min(created_at)`;
+    // Per-sender: message_sends joined to the prospect's outcome. reply+ = replied/meeting/won.
+    const bySenderSql = `select m.sender_id,
+             count(*)::int as sends,
+             count(distinct m.prospect_id)::int as prospects,
+             count(distinct m.prospect_id) filter (where p.status in ('replied','meeting','won'))::int as replied,
+             count(distinct m.prospect_id) filter (where p.status in ('meeting','won'))::int as meetings
+        from message_sends m left join prospects p on p.id = m.prospect_id and p.user_id = m.user_id
+       where m.user_id = $1
+       group by m.sender_id order by sends desc`;
+    // Per-angle (the A/B readout), split by kind.
+    const byAngleSql = `select m.kind, m.angle,
+             count(*)::int as sends,
+             count(distinct m.prospect_id)::int as prospects,
+             count(distinct m.prospect_id) filter (where p.status in ('replied','meeting','won'))::int as replied,
+             count(distinct m.prospect_id) filter (where p.status in ('meeting','won'))::int as meetings
+        from message_sends m left join prospects p on p.id = m.prospect_id and p.user_id = m.user_id
+       where m.user_id = $1 and m.angle <> ''
+       group by m.kind, m.angle having count(*) > 0 order by m.kind, sends desc`;
+    const [funnel, trend, bySender, byAngle] = await Promise.all([
+      q(funnelSql, [uid]), q(trendSql, [uid]), q(bySenderSql, [uid]), q(byAngleSql, [uid]),
+    ]);
+    const f = funnel.rows[0];
+    const rate = (n, d) => (d > 0 ? Math.round((n / d) * 1000) / 10 : 0); // one decimal %
+    res.json({
+      funnel: {
+        total: f.total, connected: f.connected, replied: f.replied, meeting: f.meeting, won: f.won, lost: f.lost, ghosted: f.ghosted,
+      },
+      kpis: {
+        totalLeads: f.total, thisWeek: f.this_week, thisMonth: f.this_month,
+        replyRate: rate(f.replied, f.total), meetingRate: rate(f.meeting, f.total), winRate: rate(f.won, f.total),
+        ghostRate: rate(f.ghosted, f.total),
+      },
+      trend: trend.rows,
+      bySender: bySender.rows.map((r) => ({ ...r, replyRate: rate(r.replied, r.prospects), meetingRate: rate(r.meetings, r.prospects) })),
+      byAngle: byAngle.rows.map((r) => ({ ...r, replyRate: rate(r.replied, r.prospects), meetingRate: rate(r.meetings, r.prospects) })),
+    });
+  } catch (e) { res.status(500).json({ error: { message: "Could not load analytics." } }); }
+});
+
+// ─────────────────────────── Drip campaigns ─────────────────────────
+// A campaign is a named, ordered sequence of outreach steps. Leads are enrolled and
+// advanced through it one step at a time. Sending stays human-in-the-loop (the send
+// queue) — nothing here contacts LinkedIn. Every query is scoped to req.userId.
+const CAMPAIGN_CHANNELS = ["linkedin", "email"];
+const CAMPAIGN_MSG_TYPES = ["connection", "relationship", "inmail", "meeting", "followup"];
+
+function cleanSteps(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.slice(0, 12).map((s, i) => ({
+    step_order: i,
+    channel: CAMPAIGN_CHANNELS.includes(String(s?.channel)) ? String(s.channel) : "linkedin",
+    message_type: CAMPAIGN_MSG_TYPES.includes(String(s?.messageType)) ? String(s.messageType) : "connection",
+    delay_days: Math.max(0, Math.min(365, parseInt(s?.delayDays, 10) || 0)),
+  }));
+}
+
+// List campaigns with step + enrollment counts.
+app.get("/api/campaigns", requireUser, async (req, res) => {
+  try {
+    const { rows } = await q(
+      `select c.id, c.name, c.sender_id, c.status, c.created_at,
+              (select count(*) from campaign_steps s where s.campaign_id = c.id)::int as step_count,
+              (select count(*) from campaign_enrollments e where e.campaign_id = c.id)::int as enrolled,
+              (select count(*) from campaign_enrollments e where e.campaign_id = c.id and e.status = 'active')::int as active
+         from campaigns c where c.user_id = $1 order by c.created_at desc`,
+      [req.userId],
+    );
+    res.json({ campaigns: rows });
+  } catch (e) { res.status(500).json({ error: { message: "Could not load campaigns." } }); }
+});
+
+// Create a campaign with its steps. Body: { name, senderId, steps: [{channel, messageType, delayDays}] }.
+app.post("/api/campaigns", requireUser, async (req, res) => {
+  try {
+    const name = String(req.body?.name || "").trim().slice(0, 120);
+    if (!name) return res.status(400).json({ error: { message: "Give the campaign a name." } });
+    const senderId = String(req.body?.senderId || "").slice(0, 60);
+    const steps = cleanSteps(req.body?.steps);
+    if (!steps.length) return res.status(400).json({ error: { message: "Add at least one step." } });
+    const { rows } = await q(
+      "insert into campaigns (user_id, name, sender_id) values ($1,$2,$3) returning id",
+      [req.userId, name, senderId],
+    );
+    const campaignId = rows[0].id;
+    for (const s of steps) {
+      await q(
+        "insert into campaign_steps (campaign_id, step_order, channel, message_type, delay_days) values ($1,$2,$3,$4,$5)",
+        [campaignId, s.step_order, s.channel, s.message_type, s.delay_days],
+      );
+    }
+    logActivity(req.userId, "campaign_created", { label: name });
+    res.json({ ok: true, id: campaignId });
+  } catch (e) { res.status(500).json({ error: { message: "Could not create the campaign." } }); }
+});
+
+// One campaign: steps + enrollments (joined to prospect label/status).
+app.get("/api/campaigns/:id", requireUser, async (req, res) => {
+  try {
+    const id = String(req.params.id);
+    const { rows: crows } = await q("select id, name, sender_id, status, created_at from campaigns where id = $1 and user_id = $2", [id, req.userId]);
+    if (!crows[0]) return res.status(404).json({ error: { message: "Campaign not found." } });
+    const [{ rows: steps }, { rows: enrollments }] = await Promise.all([
+      q("select step_order, channel, message_type, delay_days from campaign_steps where campaign_id = $1 order by step_order", [id]),
+      q(`select e.id, e.prospect_id, e.current_step, e.status, e.next_step_at, e.last_step_at,
+                p.label, p.sub, p.status as lead_status
+           from campaign_enrollments e join prospects p on p.id = e.prospect_id
+          where e.campaign_id = $1 and e.user_id = $2 order by e.enrolled_at desc`, [id, req.userId]),
+    ]);
+    res.json({ campaign: crows[0], steps, enrollments });
+  } catch (e) { res.status(500).json({ error: { message: "Could not load the campaign." } }); }
+});
+
+// Update name / sender / status (active|archived).
+app.patch("/api/campaigns/:id", requireUser, async (req, res) => {
+  try {
+    const id = String(req.params.id);
+    const sets = [], params = [];
+    if (req.body?.name != null) { params.push(String(req.body.name).trim().slice(0, 120)); sets.push("name = $" + (params.length + 2)); }
+    if (req.body?.senderId != null) { params.push(String(req.body.senderId).slice(0, 60)); sets.push("sender_id = $" + (params.length + 2)); }
+    if (req.body?.status != null && ["active", "archived"].includes(String(req.body.status))) { params.push(String(req.body.status)); sets.push("status = $" + (params.length + 2)); }
+    if (!sets.length) return res.status(400).json({ error: { message: "Nothing to update." } });
+    const { rows } = await q(`update campaigns set ${sets.join(", ")} where id = $1 and user_id = $2 returning id`, [id, req.userId, ...params]);
+    if (!rows[0]) return res.status(404).json({ error: { message: "Campaign not found." } });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: { message: "Could not update the campaign." } }); }
+});
+
+// Replace a campaign's steps wholesale.
+app.put("/api/campaigns/:id/steps", requireUser, async (req, res) => {
+  try {
+    const id = String(req.params.id);
+    const { rows } = await q("select id from campaigns where id = $1 and user_id = $2", [id, req.userId]);
+    if (!rows[0]) return res.status(404).json({ error: { message: "Campaign not found." } });
+    const steps = cleanSteps(req.body?.steps);
+    if (!steps.length) return res.status(400).json({ error: { message: "A campaign needs at least one step." } });
+    await q("delete from campaign_steps where campaign_id = $1", [id]);
+    for (const s of steps) {
+      await q("insert into campaign_steps (campaign_id, step_order, channel, message_type, delay_days) values ($1,$2,$3,$4,$5)",
+        [id, s.step_order, s.channel, s.message_type, s.delay_days]);
+    }
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: { message: "Could not save steps." } }); }
+});
+
+app.delete("/api/campaigns/:id", requireUser, async (req, res) => {
+  try {
+    await q("delete from campaigns where id = $1 and user_id = $2", [String(req.params.id), req.userId]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: { message: "Could not delete the campaign." } }); }
+});
+
+// Enroll leads. Body: { prospectIds: [...] }. Sets each to step 0, due after step 0's delay.
+app.post("/api/campaigns/:id/enroll", requireUser, async (req, res) => {
+  try {
+    const id = String(req.params.id);
+    const { rows: crows } = await q("select id from campaigns where id = $1 and user_id = $2", [id, req.userId]);
+    if (!crows[0]) return res.status(404).json({ error: { message: "Campaign not found." } });
+    const { rows: step0 } = await q("select delay_days from campaign_steps where campaign_id = $1 order by step_order limit 1", [id]);
+    if (!step0[0]) return res.status(400).json({ error: { message: "Add steps before enrolling leads." } });
+    const ids = Array.isArray(req.body?.prospectIds) ? req.body.prospectIds.map(String).slice(0, 500) : [];
+    if (!ids.length) return res.status(400).json({ error: { message: "No leads selected." } });
+    let enrolled = 0;
+    for (const pid of ids) {
+      // Only enroll leads the user actually owns; skip duplicates (unique constraint).
+      const { rows } = await q(
+        `insert into campaign_enrollments (campaign_id, prospect_id, user_id, current_step, status, next_step_at)
+         select $1, p.id, $2, 0, 'active', now() + make_interval(days => $3)
+           from prospects p where p.id = $4 and p.user_id = $2
+         on conflict (campaign_id, prospect_id) do nothing
+         returning id`,
+        [id, req.userId, step0[0].delay_days, pid],
+      );
+      if (rows[0]) enrolled++;
+    }
+    logActivity(req.userId, "campaign_enrolled", { detail: String(enrolled) });
+    res.json({ ok: true, enrolled });
+  } catch (e) { res.status(500).json({ error: { message: "Could not enroll leads." } }); }
+});
+
+// Advance one enrollment to its next step (called when the current step is marked sent).
+// Sets current_step forward and schedules next_step_at; completes if no steps remain.
+// Mirrors the due date onto the lead's next_action_at so it also shows in Reminders.
+app.post("/api/enrollments/:id/advance", requireUser, async (req, res) => {
+  try {
+    const eid = String(req.params.id);
+    const { rows } = await q(
+      `select e.id, e.campaign_id, e.prospect_id, e.current_step, e.status
+         from campaign_enrollments e where e.id = $1 and e.user_id = $2`,
+      [eid, req.userId],
+    );
+    const en = rows[0];
+    if (!en) return res.status(404).json({ error: { message: "Enrollment not found." } });
+    if (en.status !== "active") return res.status(400).json({ error: { message: "This enrollment is not active." } });
+    const next = en.current_step + 1;
+    const { rows: nextStep } = await q("select delay_days, message_type from campaign_steps where campaign_id = $1 and step_order = $2", [en.campaign_id, next]);
+    if (nextStep[0]) {
+      await q("update campaign_enrollments set current_step = $1, last_step_at = now(), next_step_at = now() + make_interval(days => $2) where id = $3",
+        [next, nextStep[0].delay_days, eid]);
+      await q("update prospects set next_action_at = now() + make_interval(days => $1), next_action_note = $2 where id = $3 and user_id = $4",
+        [nextStep[0].delay_days, "Campaign step " + (next + 1) + " (" + nextStep[0].message_type + ")", en.prospect_id, req.userId]).catch(() => {});
+      res.json({ ok: true, status: "active", current_step: next });
+    } else {
+      await q("update campaign_enrollments set status = 'completed', last_step_at = now(), next_step_at = null where id = $1", [eid]);
+      await q("update prospects set next_action_at = null, next_action_note = null where id = $1 and user_id = $2", [en.prospect_id, req.userId]).catch(() => {});
+      res.json({ ok: true, status: "completed" });
+    }
+  } catch (e) { res.status(500).json({ error: { message: "Could not advance the step." } }); }
+});
+
+// Stop an enrollment (remove the lead from the cadence).
+app.post("/api/enrollments/:id/stop", requireUser, async (req, res) => {
+  try {
+    const { rows } = await q("update campaign_enrollments set status = 'stopped', next_step_at = null where id = $1 and user_id = $2 returning prospect_id", [String(req.params.id), req.userId]);
+    if (!rows[0]) return res.status(404).json({ error: { message: "Enrollment not found." } });
+    await q("update prospects set next_action_at = null where id = $1 and user_id = $2", [rows[0].prospect_id, req.userId]).catch(() => {});
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: { message: "Could not stop the enrollment." } }); }
 });
 
 // ─────────────────────────────── Usage ──────────────────────────────

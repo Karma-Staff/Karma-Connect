@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="popup.css" />
+  <title>Karma Connect — Lead Finder</title>
+</head>
+<body>
+  <header class="hdr">
+    <div class="brand">
+      <img src="icons/icon48.png" alt="" width="20" height="20" />
+      <span>Lead Finder</span>
+    </div>
+    <div class="hdr-right">
+      <span id="who" class="who"></span>
+      <button id="gear" class="icon-btn" title="Settings" aria-label="Settings">⚙</button>
+    </div>
+  </header>
+
+  <!-- Settings / account panel -->
+  <section id="settings" class="panel hidden">
+    <label class="fld">
+      <span>Backend URL</span>
+      <input id="backendUrl" type="text" placeholder="http://localhost:8787" />
+    </label>
+    <button id="saveBackend" class="btn ghost sm">Save URL</button>
+
+    <div class="divider"></div>
+
+    <div id="signedOut">
+      <label class="fld"><span>Email</span><input id="email" type="email" placeholder="you@karmastaff.com" /></label>
+      <label class="fld"><span>Password</span><input id="password" type="password" placeholder="••••••••" /></label>
+      <button id="signin" class="btn sm">Sign in</button>
+      <p class="hint">Sign in is required to <b>save</b> leads. Searching works without it on a local dev server.</p>
+    </div>
+    <div id="signedIn" class="hidden">
+      <p class="hint">Signed in as <b id="signedInEmail"></b></p>
+      <button id="signout" class="btn ghost sm">Sign out</button>
+    </div>
+  </section>
+
+  <!-- Search -->
+  <section class="search">
+    <textarea id="query" rows="3" placeholder="Describe the leads you want, e.g. owners of water-damage restoration companies in Texas, 10–50 employees, hiring admin staff"></textarea>
+    <div class="row">
+      <label class="count">Count
+        <input id="count" type="number" min="1" max="15" value="8" />
+      </label>
+      <button id="find" class="btn">Find leads</button>
+    </div>
+  </section>
+
+  <div id="banner" class="banner hidden"></div>
+
+  <!-- Results -->
+  <section id="results" class="results"></section>
+
+  <footer class="ftr">Powered by Claude web search · results are AI-generated, verify before outreach.</footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>

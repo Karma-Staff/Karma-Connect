@@ -3,7 +3,7 @@ import { flagUnsupported } from "../lib/verify.js";
 import { RefineBox } from "./RefineBox.jsx";
 
 // One generated message: index/angle chips, optional char counter, score bars, AI-coach note, actions.
-export function MsgCard({ item, idx, kind, charLimit, favOn, onCopy, onRegen, onFav, onRefine, regening, source }) {
+export function MsgCard({ item, idx, kind, charLimit, favOn, onCopy, onRegen, onFav, onRefine, regening, source, onSent, sentOn, onImprove, coaching, coachNote }) {
   const over = charLimit && item.message && item.message.length > charLimit;
   // InMails carry a subject line; copy it together with the body.
   const copyText = item.subject ? "Subject: " + item.subject + "\n\n" + item.message : item.message;
@@ -31,6 +31,9 @@ export function MsgCard({ item, idx, kind, charLimit, favOn, onCopy, onRegen, on
         </div>
       )}
       {item.reasoning && <div className="reason"><b>AI Coach</b> · {item.reasoning}</div>}
+      {coachNote && coachNote.length > 0 && (
+        <div className="reason" style={{ borderLeftColor: "var(--gold, #E7B74B)" }}><b>✦ Coached</b> · fixed: {coachNote.join("; ")}</div>
+      )}
       {flags.length > 0 && (
         <div className="verify" title="These specifics aren't in the data you entered. Double-check them before sending — the AI may have invented them.">
           ⚠ Verify before sending: {flags.map((f) => f.claim).join(", ")}
@@ -39,6 +42,16 @@ export function MsgCard({ item, idx, kind, charLimit, favOn, onCopy, onRegen, on
       <div className="mact">
         <button className="iconbtn" onClick={() => onCopy(copyText)}>{CopyIc} Copy{item.subject ? " all" : ""}</button>
         <button className="iconbtn" onClick={onRegen} disabled={regening}>{RegenIc} {regening ? "…" : "Regenerate"}</button>
+        {onImprove && (
+          <button className="iconbtn" onClick={onImprove} disabled={coaching} title="Let the coach critique and rewrite this message stronger">
+            {coaching ? "Coaching…" : "✦ Improve"}
+          </button>
+        )}
+        {onSent && (
+          <button className={"iconbtn" + (sentOn ? " on" : "")} onClick={onSent} title="Mark this variant as the one you sent — feeds A/B analytics" aria-pressed={!!sentOn}>
+            {sentOn ? "✓ Sent" : "Mark sent"}
+          </button>
+        )}
         <button className={"iconbtn fav" + (favOn ? " on" : "")} onClick={onFav} aria-label={favOn ? "Remove from favorites" : "Add to favorites"} aria-pressed={favOn} style={{ marginLeft: "auto" }}>{StarIc(favOn)}</button>
       </div>
       {onRefine && <RefineBox onRefine={onRefine} />}

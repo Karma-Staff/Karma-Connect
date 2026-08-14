@@ -11,6 +11,7 @@ export const LEAD_STATUSES = [
   { v: "meeting", label: "Meeting", color: "#E7B74B" },
   { v: "won", label: "Won", color: "#52d39e" },
   { v: "lost", label: "Lost", color: "#e24a4a" },
+  { v: "ghosted", label: "Ghosted", color: "#6b7280" },
 ];
 const META = Object.fromEntries(LEAD_STATUSES.map((s) => [s.v, s]));
 

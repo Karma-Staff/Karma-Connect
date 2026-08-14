@@ -101,6 +101,47 @@ export function pRefine(base, kind, original, instruction, meta = {}) {
   return s;
 }
 
+// Message coach: critique ONE generated message against the brand voice + cold-outreach best
+// practices, then return a stronger rewrite of the SAME message (same intent, angle, real
+// facts). Returns { notes: [short weaknesses], improved: {same shape as the message} }.
+const COACH_RULES = {
+  connection: "LinkedIn CONNECTION note: 300 chars or fewer, NO pitch/selling/meeting ask — only earn an accepted, personal connection.",
+  inmail: "LinkedIn INMAIL to a non-connection: a SUBJECT under 60 chars plus a 4-7 sentence body; you may introduce who you are and why you're reaching out.",
+  relationship: "Post-connection first message: build rapport, start a conversation, NO pitch or meeting ask.",
+  meeting: "Meeting request: value-focused, low-pressure, make the ask an easy yes.",
+  followup: "Follow-up: move things forward without being pushy; never a generic 'just checking in'.",
+};
+
+export function pCoach(base, kind, message, subject) {
+  const isInmail = kind === "inmail";
+  const rules = COACH_RULES[kind] || COACH_RULES.connection;
+  let s = base + `\nTASK: You are a demanding cold-outreach coach. Critique the message below, then rewrite it STRONGER while keeping its core intent, angle, tone and the specific real facts it used. Do not invent new facts. Fix weak openers, generic lines, anything that reads as AI or a template, and any brand-voice violations.\n`;
+  s += `\nMESSAGE TYPE RULES: ${rules}\n`;
+  s += `\nMESSAGE TO COACH:\n"""\n${subject ? "Subject: " + subject + "\n" : ""}${message}\n"""\n`;
+  s += `\n${HUMANIZE}\n`;
+  s += `Return ONLY a single valid JSON object (no markdown, no preamble):\n`;
+  s += isInmail
+    ? `{"notes":["short weakness 1","short weakness 2"],"improved":{"subject":"the subject line","message":"the stronger body","angle":"2-4 word label","personalization":<int 58-96>,"acceptance":<int 50-90>,"reasoning":"one sentence on what you improved"}}`
+    : `{"notes":["short weakness 1","short weakness 2"],"improved":{"message":"the stronger message","angle":"2-4 word label","personalization":<int 58-96>,"acceptance":<int 55-92>,"reasoning":"one sentence on what you improved"}}`;
+  s += `\n- "notes": 1-3 items, each under 12 words, naming a concrete weakness you fixed.`;
+  return s;
+}
+
+// Learn-from-results: given this account's WINNING messages (the lead replied / booked / won)
+// and its non-winning ones for a kind, distill a short playbook of what actually works here.
+// Returns plain text (bulleted rules) that gets injected verbatim into future generation.
+const KIND_NAME = { connection: "LinkedIn connection notes", relationship: "post-connection first messages", inmail: "LinkedIn InMails", meeting: "meeting-request messages", followup: "follow-up messages" };
+
+export function pLearnPlaybook(kind, winners, others) {
+  const fmt = (arr) => arr.map((m, i) => `${i + 1}. ${String(m || "").replace(/\s+/g, " ").trim().slice(0, 400)}`).join("\n");
+  let s = `You are analysing real cold-outreach results for Karma Staff to find what makes ${KIND_NAME[kind] || "messages"} succeed.\n\n`;
+  s += `WON — the prospect replied, booked a meeting, or became a client after receiving one of these:\n${winners.length ? fmt(winners) : "(none yet)"}\n\n`;
+  s += `GHOSTED / REJECTED — these got no reply at all, or the prospect passed:\n${others.length ? fmt(others) : "(none yet)"}\n\n`;
+  s += `TASK: Compare them and extract what the winners do that the others don't. Focus on concrete, repeatable patterns: opener style, personalization, length, tone, specific angles, what to avoid.\n`;
+  s += `Return 4-7 SHORT imperative rules (one line each, start each with "- "). No preamble, no numbering, no headings. Each rule must be specific enough to change how the next message is written. If the winners are too few to be sure, say so in the first line and give your best provisional guidance.`;
+  return s;
+}
+
 export function pRelationship(base, n, avoid) {
   return base + `\nTASK: The prospect just ACCEPTED the connection. Write ${n} DISTINCT first messages that build a relationship.\nHARD RULES:\n- Build rapport, start a real conversation. NO pitching, NO selling, NO meeting ask.\n- Reference role / company / industry / background in a way that invites a reply. 2-4 sentences. Different conversational style each.\n${avoid && avoid.length ? "- Do NOT reuse these styles/angles: " + avoid.join("; ") + "\n" : ""}${HUMANIZE}\n${ARR} ${n} objects:\n[{"message":"the message","angle":"2-4 word style label","personalization":<int 58-96>,"acceptance":<int 55-92>,"reasoning":"one sentence on why it earns a reply"}]`;
 }

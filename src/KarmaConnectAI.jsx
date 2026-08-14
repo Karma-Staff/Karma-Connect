@@ -7,9 +7,10 @@ import { cleanMessages, stripLinkedInNoise } from "./lib/text.js";
 import { flagUnsupported } from "./lib/verify.js";
 import {
   COMPANY_SYSTEM, companyResearchPrompt, buildContext,
-  pAnalysis, pConnection, pInmail, pRefine, pRelationship, pMeeting, pFollowup, pFollowupSequence,
+  pAnalysis, pConnection, pInmail, pRefine, pRelationship, pMeeting, pFollowup, pFollowupSequence, pCoach,
   STAGES_ANALYZE, STAGES_GEN, FOLLOWUP_STAGES,
 } from "./lib/prompts.js";
+import { getPlaybook, maybeAutoLearn } from "./lib/coach.js";
 import { KarmaMark, Ic, CopyIc, StarIc } from "./components/icons.jsx";
 import { Loader } from "./components/Loader.jsx";
 import { MsgCard } from "./components/MsgCard.jsx";
@@ -24,8 +25,10 @@ import { TeamActivityView } from "./views/TeamActivityView.jsx";
 import { DashboardView } from "./views/DashboardView.jsx";
 import { BoardView } from "./views/BoardView.jsx";
 import { RemindersView } from "./views/RemindersView.jsx";
+import { CoachView } from "./views/CoachView.jsx";
 import { listHistory, writeHistory, deleteHistory, setLeadStatus, HISTORY_PAGE_SIZE } from "./lib/history.js";
 import { setReminder, listReminders } from "./lib/reminders.js";
+import { logMessageSend } from "./lib/analytics.js";
 import { getProspectBriefPdf } from "./lib/leads.js";
 import { scoreFit } from "./lib/scoring.js";
 import { currentUser } from "./lib/auth.js";
@@ -65,7 +68,7 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   // Full results shape — restored results are merged onto this so every key always exists
   // (older saved state from before a key was added won't crash on `.length`).
   const EMPTY_RESULTS = { connection: [], inmail: [], relationship: [], meeting_short: [], meeting_standard: [], meeting_executive: [], followup: [], followupSeq: [] };
-  const [view, setView] = useState(saved.view || "hub");
+  const [view, setView] = useState(["campaigns", "analytics"].includes(saved.view) ? "hub" : (saved.view || "hub"));
   const [prospect, setProspect] = useState({ ...EMPTY_PROSPECT, ...(saved.prospect || {}) });
   const [sender, setSender] = useState(saved.sender || "nordon");
   const [offer, setOffer] = useState(saved.offer || senderOffer(SENDERS[0]));
@@ -88,6 +91,18 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   const [errors, setErrors] = useState({});
   const [regen, setRegen] = useState({});
   const [favs, setFavs] = useState(saved.favs || {});
+  const [sent, setSent] = useState({}); // messages marked "sent" this session (A/B signal)
+  const [playbook, setPlaybook] = useState({}); // learned per-kind "what works" guidance, injected into generation
+  const [coachNotes, setCoachNotes] = useState({}); // per-card coach critique after "Improve"
+  const [coaching, setCoaching] = useState({}); // per-card "Improve" in-flight flags
+  // Load the learned playbook, then quietly self-improve: re-analyze results in the background
+  // and refresh the playbook if anything changed. Cheap when nothing's new (no model call).
+  useEffect(() => {
+    getPlaybook().then((p) => setPlaybook(p || {})).catch(() => {});
+    maybeAutoLearn().then((upd) => {
+      if (upd && upd.length) { getPlaybook().then((p) => setPlaybook(p || {})).catch(() => {}); showToast("Coach refined its playbook from your latest results ✦"); }
+    }).catch(() => {});
+  }, []);
   const [meetLen, setMeetLen] = useState(saved.meetLen || "standard");
   const [connMode, setConnMode] = useState(saved.connMode || "note"); // "note" (invite note) | "inmail" (premium message to non-connections)
   const [prospectReply, setProspectReply] = useState(saved.prospectReply || "");
@@ -337,6 +352,17 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   }
   const favKey = (kind, i, msg) => kind + ":" + i + ":" + (msg || "").slice(0, 24);
   function toggleFav(kind, i, msg) { const k = favKey(kind, i, msg); setFavs((f) => ({ ...f, [k]: !f[k] })); }
+  // Mark a variant as the one you sent → logs the A/B event (angle + sender + lead outcome).
+  function markSent(kind, i, item) {
+    const k = favKey(kind, i, item.message);
+    if (sent[k]) return;
+    setSent((s) => ({ ...s, [k]: true }));
+    logMessageSend({ prospectId: currentEntryId, kind, angle: item.angle || "", senderId: sender, message: item.subject ? "Subject: " + item.subject + "\n" + item.message : item.message, personalization: item.personalization, acceptance: item.acceptance })
+      .then(() => maybeAutoLearn())
+      .then((upd) => { if (upd && upd.length) { getPlaybook().then((p) => setPlaybook(p || {})).catch(() => {}); showToast("Coach refined its playbook ✦"); } })
+      .catch(() => {});
+    showToast(currentEntryId ? "Marked as sent — added to A/B analytics" : "Marked as sent (run AI Analysis to link it to this lead)");
+  }
 
   // Lightweight COMPANY research — one web-search call. Fills empty company-side fields only.
   // (The person's profile comes from the Deep LinkedIn paste panel below.)
@@ -559,13 +585,13 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
     try {
       if (kind === "followup") {
         const stage = FOLLOWUP_STAGES.find((s) => s.v === fuStage) || FOLLOWUP_STAGES[0];
-        const txt = await callClaude(SYSTEM, pFollowup(buildContext(prospect, offer, analysis, ""), stage, transcript), false, 1600);
+        const txt = await callClaude(sysFor("followup"), pFollowup(buildContext(prospect, offer, analysis, ""), stage, transcript), false, 1600);
         let arr = safeJSON(txt); if (!Array.isArray(arr)) arr = [arr];
         arr = arr.filter((x) => x && x.message); arr = cleanMessages(arr);
         if (!arr.length) throw new Error("No email came back. Please try again.");
         setResults((r) => ({ ...r, followup: arr }));
       } else if (kind === "followupSeq") {
-        const txt = await callClaude(SYSTEM, pFollowupSequence(buildContext(prospect, offer, analysis, "")), false, 2800);
+        const txt = await callClaude(sysFor("followup"), pFollowupSequence(buildContext(prospect, offer, analysis, "")), false, 2800);
         let arr = safeJSON(txt); if (!Array.isArray(arr)) arr = [arr]; arr = cleanMessages(arr);
         if (!arr.length) throw new Error("No sequence came back. Please try again.");
         setResults((r) => ({ ...r, followupSeq: arr }));
@@ -582,7 +608,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
           guard++;
           const n = target - acc.length;
           const avoid = acc.map((x) => x.angle).filter(Boolean);
-          const txt = await callClaude(SYSTEM, builderFor(kind, n, avoid), false, cap);
+          const txt = await callClaude(sysFor(kind), builderFor(kind, n, avoid), false, cap);
           let arr = safeJSON(txt); if (!Array.isArray(arr)) arr = [arr];
           arr = arr.filter((x) => x && x.message);
           arr = cleanMessages(arr);
@@ -598,7 +624,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
     const rk = kind + i; setRegen((r) => ({ ...r, [rk]: true }));
     try {
       const avoid = results[kind].filter((_, k) => k !== i).map((x) => x.angle).filter(Boolean);
-      const txt = await callClaude(SYSTEM, builderFor(kind, 1, avoid));
+      const txt = await callClaude(sysFor(kind), builderFor(kind, 1, avoid));
       let arr = safeJSON(txt); if (!Array.isArray(arr)) arr = [arr]; arr = cleanMessages(arr);
       const item = arr.find((x) => x && x.message);
       if (item) setResults((r) => { const c = [...r[kind]]; c[i] = item; return { ...r, [kind]: c }; });
@@ -616,12 +642,45 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
     const cap = kind.indexOf("meeting_") === 0 || kind === "inmail" ? 1600 : 1100;
     try {
       const prompt = pRefine(buildContext(prospect, offer, analysis, ""), refineKind, orig.message, instruction, { subject: orig.subject });
-      const txt = await callClaude(SYSTEM, prompt, false, cap);
+      const txt = await callClaude(sysFor(kind), prompt, false, cap);
       let arr = safeJSON(txt); if (!Array.isArray(arr)) arr = [arr]; arr = cleanMessages(arr);
       const item = arr.find((x) => x && x.message);
       if (item) { setResults((r) => { const c = [...r[kind]]; c[i] = { ...c[i], ...item }; return { ...r, [kind]: c }; }); showToast("Message refined"); }
       else showToast("Refine failed — try again");
     } catch (e) { showToast("Refine failed — try again"); }
+  }
+
+  // Normalize any view kind (meeting_short, followupSeq…) to the 5 tracked message kinds.
+  const baseKind = (kind) => (kind.indexOf("meeting") === 0 ? "meeting" : kind.indexOf("followup") === 0 ? "followup" : kind);
+  // Generation system prompt, augmented with the learned "what works" playbook for this kind.
+  // This is how results-based learning improves every future message.
+  function sysFor(kind) {
+    const pb = playbook[baseKind(kind)];
+    return pb && pb.trim()
+      ? SYSTEM + "\n\nWHAT'S BEEN WORKING (learned from THIS account's own replies — favor these patterns, they have out-performed the alternatives here):\n" + pb.trim()
+      : SYSTEM;
+  }
+  // Coach ONE message: critique it and replace it with a stronger rewrite (keeps facts/angle).
+  const coachKeyOf = (kind, i) => kind + ":" + i;
+  async function coachOne(kind, i) {
+    const orig = (results[kind] || [])[i];
+    if (!orig) return;
+    const ck = kind + i;
+    setCoaching((c) => ({ ...c, [ck]: true }));
+    try {
+      const bk = baseKind(kind);
+      const cap = bk === "meeting" || bk === "inmail" ? 1600 : 1100;
+      const prompt = pCoach(buildContext(prospect, offer, analysis, ""), bk, orig.message, orig.subject);
+      const txt = await callClaude(sysFor(kind), prompt, false, cap);
+      const obj = safeJSON(txt);
+      const improved = obj && obj.improved ? cleanMessages([obj.improved])[0] : null;
+      if (improved && improved.message) {
+        setResults((r) => { const c = [...r[kind]]; c[i] = { ...c[i], ...improved }; return { ...r, [kind]: c }; });
+        setCoachNotes((n) => ({ ...n, [coachKeyOf(kind, i)]: Array.isArray(obj.notes) ? obj.notes : [] }));
+        showToast("Coached — message improved");
+      } else showToast("Coach failed — try again");
+    } catch (e) { showToast("Coach failed — try again"); }
+    setCoaching((c) => ({ ...c, [ck]: false }));
   }
 
   const NAV = [
@@ -635,6 +694,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
     { id: "history", label: "History", ic: Ic.hist, count: history.length },
     { id: "board", label: "Board", ic: Ic.board },
     { id: "reminders", label: "Reminders", ic: Ic.fup, count: remindersDue },
+    { id: "coach", label: "Message Coach", ic: Ic.dash },
     ...(isAdmin ? [
       { id: "approvals", label: "Approvals", ic: Ic.intel, admin: true, count: adminList.filter((a) => a.status === "pending").length },
       { id: "team", label: "Team activity", ic: Ic.team, admin: true },
@@ -701,6 +761,8 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
             {items.map((it, i) => (
               <MsgCard key={i} item={it} idx={i} kind={kind} charLimit={charLimit} source={verifySource}
                 favOn={!!favs[favKey(kind, i, it.message)]} onCopy={copy} onFav={() => toggleFav(kind, i, it.message)}
+                onSent={() => markSent(kind, i, it)} sentOn={!!sent[favKey(kind, i, it.message)]}
+                onImprove={() => coachOne(kind, i)} coaching={!!coaching[kind + i]} coachNote={coachNotes[coachKeyOf(kind, i)]}
                 onRegen={() => regenerateOne(kind, i)} onRefine={(instr) => refineOne(kind, i, instr)} regening={!!regen[kind + i]} />
             ))}
             {isLoad && <div className="mcard" style={{ justifyContent: "center", alignItems: "center", minHeight: 120, color: "var(--muted)", fontSize: 13 }}>Crafting more…</div>}
@@ -1153,7 +1215,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
               )}
               {results["meeting_" + meetLen].length > 0 && (
                 <div className="grid2">
-                  {results["meeting_" + meetLen].map((it, i) => { const kind = "meeting_" + meetLen; return <MsgCard key={i} item={it} idx={i} kind="meeting" source={verifySource} favOn={!!favs[favKey(kind, i, it.message)]} onCopy={copy} onFav={() => toggleFav(kind, i, it.message)} onRegen={() => regenerateOne(kind, i)} onRefine={(instr) => refineOne(kind, i, instr)} regening={!!regen[kind + i]} />; })}
+                  {results["meeting_" + meetLen].map((it, i) => { const kind = "meeting_" + meetLen; return <MsgCard key={i} item={it} idx={i} kind="meeting" source={verifySource} favOn={!!favs[favKey(kind, i, it.message)]} onCopy={copy} onFav={() => toggleFav(kind, i, it.message)} onSent={() => markSent(kind, i, it)} sentOn={!!sent[favKey(kind, i, it.message)]} onImprove={() => coachOne(kind, i)} coaching={!!coaching[kind + i]} coachNote={coachNotes[coachKeyOf(kind, i)]} onRegen={() => regenerateOne(kind, i)} onRefine={(instr) => refineOne(kind, i, instr)} regening={!!regen[kind + i]} />; })}
                   {loading["meeting_" + meetLen] && <div className="mcard" style={{ justifyContent: "center", alignItems: "center", minHeight: 120, color: "var(--muted)", fontSize: 13 }}>Crafting more…</div>}
                 </div>
               )}
@@ -1279,6 +1341,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
           {view === "board" && <BoardView onSetStatus={setHistoryStatus} />}
 
           {view === "reminders" && <RemindersView onChanged={loadRemindersDue} />}
+          {view === "coach" && <CoachView />}
 
           {view === "usage" && <UsageView />}
 

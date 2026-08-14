@@ -1,8 +1,11 @@
-// Email (Resend) + the email-verification/reset config, extracted from server.js.
-// Reads RESEND_* env at load, so require this AFTER the .env loader has run.
-const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
-const RESEND_FROM = process.env.RESEND_FROM || "Karma Connect <noreply@karmastaff.com>";
-const emailVerifyOn = !!RESEND_API_KEY; // when off (no key), signups are created already-verified
+// Email (internal mail gateway) + the email-verification/reset config, extracted from server.js.
+// Reads GATEWAY_* / MAIL_FROM env at load, so require this AFTER the .env loader has run.
+// The gateway holds the real Resend key server-side; this app only carries a per-client
+// bearer token and POSTs to ${GATEWAY_URL}/send (a body that mirrors Resend's /emails shape).
+const GATEWAY_URL = (process.env.GATEWAY_URL || "").replace(/\/+$/, ""); // trim trailing slash
+const GATEWAY_TOKEN = process.env.GATEWAY_TOKEN || "";
+const MAIL_FROM = process.env.MAIL_FROM || "Karma Connect <karmaconnect@karmastaff.com>";
+const emailVerifyOn = !!(GATEWAY_URL && GATEWAY_TOKEN); // when off (unconfigured), signups are created already-verified
 const VERIFY_TTL_HOURS = 24;
 const RESET_TTL_HOURS = 1; // password-reset links expire fast
 
@@ -11,13 +14,24 @@ function escapeHtml(s) {
   return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
+// Deliver one email via the gateway. Returns the gateway's message_id on success.
+// Never logs the bearer token. Maps gateway error statuses to clear, actionable messages.
 async function send(to, subject, html) {
-  const r = await fetch("https://api.resend.com/emails", {
+  const r = await fetch(GATEWAY_URL + "/send", {
     method: "POST",
-    headers: { Authorization: "Bearer " + RESEND_API_KEY, "Content-Type": "application/json" },
-    body: JSON.stringify({ from: RESEND_FROM, to: [to], subject, html }),
+    headers: { Authorization: "Bearer " + GATEWAY_TOKEN, "Content-Type": "application/json" },
+    body: JSON.stringify({ from: MAIL_FROM, to: [to], subject, html }),
   });
-  if (!r.ok) { const t = await r.text().catch(() => ""); throw new Error("Resend " + r.status + ": " + t); }
+  if (r.status === 200) {
+    const { message_id } = await r.json().catch(() => ({}));
+    return message_id;
+  }
+  // Error mapping — surface the cause without ever echoing the token.
+  if (r.status === 401) throw new Error("Email gateway: bad or missing token (401) — check GATEWAY_TOKEN.");
+  if (r.status === 403) throw new Error("Email gateway: sender " + MAIL_FROM + " not permitted for this token (403) — the admin must allowlist MAIL_FROM.");
+  if (r.status === 429) { const ra = r.headers.get("retry-after"); throw new Error("Email gateway: rate limited (429)" + (ra ? " — retry after " + ra + "s." : ".")); }
+  const t = await r.text().catch(() => ""); // 400 (bad request) / 502 (upstream send failure) / other
+  throw new Error("Email gateway " + r.status + ": " + t);
 }
 
 async function sendVerificationEmail(email, firstName, link) {

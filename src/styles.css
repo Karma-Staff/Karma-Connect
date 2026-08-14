@@ -573,3 +573,9 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
 .kc .fustage:hover{border-color:var(--border2); color:var(--text)}
 .kc .fustage.on{color:#fff; border-color:transparent; background:var(--grad);
   box-shadow:0 6px 18px -8px rgba(74,134,200,.7), inset 0 1px 0 rgba(255,255,255,.25)}
+
+/* Analytics tables (Analytics & A/B view) */
+.kc .atable{width:100%; border-collapse:collapse; font-size:12.5px}
+.kc .atable th{text-align:left; color:var(--muted); font-weight:600; font-size:10.5px; text-transform:uppercase; letter-spacing:.04em; padding:6px 10px; border-bottom:1px solid var(--border); white-space:nowrap}
+.kc .atable td{padding:7px 10px; border-bottom:1px solid var(--border); color:var(--text)}
+.kc .atable tr:last-child td{border-bottom:none}

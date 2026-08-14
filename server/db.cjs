@@ -84,6 +84,75 @@ async function ensureSchema() {
         from lead_notes n left join prospects p on p.id = n.prospect_id and p.user_id = n.user_id
        where n.kind = 'activity' and n.body like 'Stage changed to %'
          and not exists (select 1 from activity where kind = 'stage_changed')`);
+    // Drip campaigns: a named sequence of steps a lead is enrolled into and advanced through.
+    // Execution stays human-in-the-loop (a send queue); this is the orchestration/state.
+    await q(`create table if not exists campaigns (
+      id uuid primary key default gen_random_uuid(),
+      user_id uuid not null references users (id) on delete cascade,
+      name text not null,
+      sender_id text not null default '',
+      status text not null default 'active',
+      created_at timestamptz not null default now())`);
+    await q("create index if not exists campaigns_user_idx on campaigns (user_id, created_at desc)");
+    await q(`create table if not exists campaign_steps (
+      id uuid primary key default gen_random_uuid(),
+      campaign_id uuid not null references campaigns (id) on delete cascade,
+      step_order int not null,
+      channel text not null default 'linkedin',
+      message_type text not null default 'connection',
+      delay_days int not null default 0,
+      unique (campaign_id, step_order))`);
+    await q("create index if not exists campaign_steps_idx on campaign_steps (campaign_id, step_order)");
+    await q(`create table if not exists campaign_enrollments (
+      id uuid primary key default gen_random_uuid(),
+      campaign_id uuid not null references campaigns (id) on delete cascade,
+      prospect_id text not null references prospects (id) on delete cascade,
+      user_id uuid not null references users (id) on delete cascade,
+      current_step int not null default 0,
+      status text not null default 'active',
+      next_step_at timestamptz,
+      enrolled_at timestamptz not null default now(),
+      last_step_at timestamptz,
+      unique (campaign_id, prospect_id))`);
+    await q("create index if not exists campaign_enroll_camp_idx on campaign_enrollments (campaign_id, status)");
+    await q("create index if not exists campaign_enroll_due_idx on campaign_enrollments (user_id, status, next_step_at)");
+    // A/B testing: one row each time a user marks a generated message as sent. Joined back to
+    // the prospect's pipeline status to compute reply/meeting rates per angle and per sender.
+    await q(`create table if not exists message_sends (
+      id uuid primary key default gen_random_uuid(),
+      user_id uuid not null references users (id) on delete cascade,
+      prospect_id text references prospects (id) on delete set null,
+      kind text not null,
+      angle text not null default '',
+      sender_id text not null default '',
+      created_at timestamptz not null default now())`);
+    await q("create index if not exists message_sends_user_idx on message_sends (user_id, created_at desc)");
+    await q("create index if not exists message_sends_prospect_idx on message_sends (prospect_id)");
+    // Store the actual sent text + scores so the coach can learn what wording works.
+    await q("alter table message_sends add column if not exists message text not null default ''");
+    await q("alter table message_sends add column if not exists personalization int");
+    await q("alter table message_sends add column if not exists acceptance int");
+    // coach_playbook: the distilled "what works" guidance per message kind, learned from results
+    // and injected into future generation. One row per (user, kind).
+    await q(`create table if not exists coach_playbook (
+      user_id uuid not null references users (id) on delete cascade,
+      kind text not null,
+      playbook text not null default '',
+      sample_size int not null default 0,
+      updated_at timestamptz not null default now(),
+      primary key (user_id, kind))`);
+    // coach_changes: an append-only log of every playbook update (auto or manual), with the
+    // before/after text — so the user can see exactly what the coach changed and when.
+    await q(`create table if not exists coach_changes (
+      id uuid primary key default gen_random_uuid(),
+      user_id uuid not null references users (id) on delete cascade,
+      kind text not null,
+      source text not null default 'auto',
+      prev_playbook text not null default '',
+      playbook text not null default '',
+      sample_size int not null default 0,
+      created_at timestamptz not null default now())`);
+    await q("create index if not exists coach_changes_idx on coach_changes (user_id, created_at desc)");
   } catch (e) { console.error("ensureSchema:", e.message); }
 }
 
