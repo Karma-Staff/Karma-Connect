@@ -650,6 +650,25 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
     } catch (e) { showToast("Refine failed — try again"); }
   }
 
+  // One-click web-search URLs for the current prospect — opens Google (and a LinkedIn-scoped
+  // Google search, and the company site) in a new tab. Pure links; no scraping, no automation.
+  function researchUrls() {
+    const g = (q) => "https://www.google.com/search?q=" + encodeURIComponent(q);
+    const name = [prospect.firstName, prospect.lastName].filter(Boolean).join(" ").trim();
+    const co = prospect.company.trim();
+    const loc = prospect.location.trim();
+    const site = (prospect.website || coUrl || "").trim();
+    const person = [name && `"${name}"`, co && `"${co}"`, prospect.title, loc].filter(Boolean).join(" ").trim();
+    const website = /^https?:\/\//i.test(site) ? site
+      : site ? "https://" + site.replace(/^\/+/, "")
+      : g([co || name, loc, "official website"].filter(Boolean).join(" "));
+    return {
+      google: g(person || co || name),
+      linkedin: g((`site:linkedin.com/in ${name ? `"${name}" ` : ""}${co ? `"${co}"` : ""}`).trim() || `site:linkedin.com "${co || name}"`),
+      website,
+    };
+  }
+
   // Normalize any view kind (meeting_short, followupSeq…) to the 5 tracked message kinds.
   const baseKind = (kind) => (kind.indexOf("meeting") === 0 ? "meeting" : kind.indexOf("followup") === 0 ? "followup" : kind);
   // Generation system prompt, augmented with the learned "what works" playbook for this kind.
@@ -1006,6 +1025,14 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
                     <button className="btn primary" onClick={enrich} disabled={enriching || (!coUrl && !prospect.company.trim())}>{enriching ? "Researching…" : "Research company & fill ↓"}</button>
                     <span style={{ color: "var(--muted)", fontSize: 12.5 }}>One quick web-search pass on the company. Fills empty company fields only, never overwrites what you typed.</span>
                   </div>
+                  {(prospect.company.trim() || prospect.firstName.trim()) && (
+                    <div className="toprow" style={{ marginTop: 10, gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                      <span style={{ color: "var(--muted)", fontSize: 12 }}>Search the web:</span>
+                      <a className="btn ghost sm" style={{ textDecoration: "none" }} href={researchUrls().google} target="_blank" rel="noreferrer">🔍 Google</a>
+                      <a className="btn ghost sm" style={{ textDecoration: "none" }} href={researchUrls().linkedin} target="_blank" rel="noreferrer">🔗 LinkedIn</a>
+                      <a className="btn ghost sm" style={{ textDecoration: "none" }} href={researchUrls().website} target="_blank" rel="noreferrer">🌐 Website</a>
+                    </div>
+                  )}
                   {enriching && <div className="panel" style={{ marginTop: 14 }}><Loader stages={["Reading the company site…", "Searching the web…", "Extracting company facts…"]} /></div>}
                   {enrichMsg && <div className="reason" style={{ marginTop: 12 }}><b>Done</b> · {enrichMsg}</div>}
                   {enrichErr && <div className="err" style={{ marginTop: 12 }}>⚠ {enrichErr}</div>}
