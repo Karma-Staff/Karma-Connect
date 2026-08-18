@@ -69,7 +69,7 @@ function CompanyPicker({ companies, onPick, onForget }) {
     : companies
   ).slice(0, 50);
   return (
-    <div ref={ref} style={{ position: "relative", maxWidth: 440, marginTop: 12 }}>
+    <div ref={ref} style={{ position: "relative", maxWidth: 440, marginTop: 12, zIndex: open ? 60 : 1 }}>
       <input
         value={q}
         placeholder={`Search your ${companies.length} saved compan${companies.length === 1 ? "y" : "ies"}…`}
