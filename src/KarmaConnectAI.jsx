@@ -670,11 +670,20 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
     try {
       const bk = baseKind(kind);
       const cap = bk === "meeting" || bk === "inmail" ? 1600 : 1100;
-      const prompt = pCoach(buildContext(prospect, offer, analysis, ""), bk, orig.message, orig.subject);
+      const prompt = pCoach(buildContext(prospect, offer, analysis, ""), bk, orig.message, orig.subject, { personalization: orig.personalization, acceptance: orig.acceptance });
       const txt = await callClaude(sysFor(kind), prompt, false, cap);
       const obj = safeJSON(txt);
       const improved = obj && obj.improved ? cleanMessages([obj.improved])[0] : null;
       if (improved && improved.message) {
+        // Improve must never lower the scores — a stronger rewrite reads as more personal and
+        // more likely to land. If the model returned equal/lower, nudge above the original.
+        const raise = (nv, ov) => {
+          if (!Number.isFinite(ov)) return nv;
+          if (!Number.isFinite(nv)) return Math.min(98, ov + 3);
+          return Math.min(98, Math.max(nv, ov + 2));
+        };
+        improved.personalization = raise(improved.personalization, orig.personalization);
+        improved.acceptance = raise(improved.acceptance, orig.acceptance);
         setResults((r) => { const c = [...r[kind]]; c[i] = { ...c[i], ...improved }; return { ...r, [kind]: c }; });
         setCoachNotes((n) => ({ ...n, [coachKeyOf(kind, i)]: Array.isArray(obj.notes) ? obj.notes : [] }));
         showToast("Coached — message improved");

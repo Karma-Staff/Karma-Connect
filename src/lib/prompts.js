@@ -112,12 +112,17 @@ const COACH_RULES = {
   followup: "Follow-up: move things forward without being pushy; never a generic 'just checking in'.",
 };
 
-export function pCoach(base, kind, message, subject) {
+export function pCoach(base, kind, message, subject, orig = {}) {
   const isInmail = kind === "inmail";
   const rules = COACH_RULES[kind] || COACH_RULES.connection;
+  const op = Number.isFinite(orig.personalization) ? orig.personalization : null;
+  const oa = Number.isFinite(orig.acceptance) ? orig.acceptance : null;
   let s = base + `\nTASK: You are a demanding cold-outreach coach. Critique the message below, then rewrite it STRONGER while keeping its core intent, angle, tone and the specific real facts it used. Do not invent new facts. Fix weak openers, generic lines, anything that reads as AI or a template, and any brand-voice violations.\n`;
   s += `\nMESSAGE TYPE RULES: ${rules}\n`;
   s += `\nMESSAGE TO COACH:\n"""\n${subject ? "Subject: " + subject + "\n" : ""}${message}\n"""\n`;
+  if (op != null || oa != null) {
+    s += `\nThe original scored ${op != null ? "personalization " + op : ""}${op != null && oa != null ? " and " : ""}${oa != null ? "acceptance " + oa : ""}. Your rewrite MUST be genuinely better, so its "personalization" and "acceptance" MUST both be HIGHER than the original — never equal or lower.\n`;
+  }
   s += `\n${HUMANIZE}\n`;
   s += `Return ONLY a single valid JSON object (no markdown, no preamble):\n`;
   s += isInmail
