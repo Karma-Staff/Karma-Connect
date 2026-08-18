@@ -78,7 +78,7 @@ function CompanyPicker({ companies, onPick, onForget }) {
         style={{ width: "100%" }}
       />
       {open && (
-        <div style={{ position: "absolute", zIndex: 30, left: 0, right: 0, marginTop: 4, maxHeight: 280, overflowY: "auto", background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 10, boxShadow: "0 14px 34px -12px rgba(0,0,0,.6)" }}>
+        <div style={{ position: "absolute", zIndex: 40, left: 0, right: 0, marginTop: 6, maxHeight: 280, overflowY: "auto", background: "linear-gradient(180deg, rgba(16,32,58,.98), rgba(9,20,38,.98))", backdropFilter: "blur(16px) saturate(1.5)", WebkitBackdropFilter: "blur(16px) saturate(1.5)", border: "1px solid var(--steel)", borderRadius: 13, boxShadow: "0 26px 64px -20px rgba(0,0,0,.85), inset 0 1px 0 rgba(255,255,255,.08)" }}>
           {matches.length === 0 && <div style={{ padding: "10px 12px", color: "var(--muted)", fontSize: 12.5 }}>No match. Keep typing, or clear to see all.</div>}
           {matches.map((c) => (
             <div key={c.key} onClick={() => { onPick(c); setOpen(false); setQ(""); }}
