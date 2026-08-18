@@ -1,4 +1,4 @@
-import { useState, useEffect, Fragment } from "react";
+import { useState, useEffect, useRef, Fragment } from "react";
 import { SYSTEM } from "./lib/brand.js";
 import { SENDERS, senderOffer } from "./lib/senders.js";
 import { anthropicMsg, callClaude, CLAUDE_FAST_MODEL } from "./lib/claude.js";
@@ -50,6 +50,53 @@ function identityOf(p) {
 const companyHistKey = (email) => "kc_company_hist_" + (email || "anon").toLowerCase();
 // Stable key for a company: its URL host (or name), lower-cased and trimmed of scheme/slash.
 const companyKey = (url, name) => String(url || name || "").toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/+$/, "").trim();
+
+// Searchable picker over the companies you've worked before. Type to filter by name/location,
+// click to load that company into the form. Your saved-company memory, made selectable.
+function CompanyPicker({ companies, onPick, onForget }) {
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
+  if (!companies || companies.length === 0) return null;
+  const ql = q.trim().toLowerCase();
+  const matches = (ql
+    ? companies.filter((c) => (c.name || c.url || "").toLowerCase().includes(ql) || (c.location || "").toLowerCase().includes(ql))
+    : companies
+  ).slice(0, 50);
+  return (
+    <div ref={ref} style={{ position: "relative", maxWidth: 440, marginTop: 12 }}>
+      <input
+        value={q}
+        placeholder={`Search your ${companies.length} saved compan${companies.length === 1 ? "y" : "ies"}…`}
+        onFocus={() => setOpen(true)}
+        onChange={(e) => { setQ(e.target.value); setOpen(true); }}
+        style={{ width: "100%" }}
+      />
+      {open && (
+        <div style={{ position: "absolute", zIndex: 30, left: 0, right: 0, marginTop: 4, maxHeight: 280, overflowY: "auto", background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 10, boxShadow: "0 14px 34px -12px rgba(0,0,0,.6)" }}>
+          {matches.length === 0 && <div style={{ padding: "10px 12px", color: "var(--muted)", fontSize: 12.5 }}>No match. Keep typing, or clear to see all.</div>}
+          {matches.map((c) => (
+            <div key={c.key} onClick={() => { onPick(c); setOpen(false); setQ(""); }}
+              style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 11px", cursor: "pointer", borderTop: "1px solid var(--border)" }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "var(--panel2)")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name || c.url}</div>
+                {(c.location || c.industry) && <div style={{ fontSize: 11, color: "var(--muted)" }}>{[c.location, c.industry].filter(Boolean).join(" · ")}</div>}
+              </div>
+              <span role="button" title="Remove from memory" onClick={(e) => { e.stopPropagation(); onForget(c.key); }} style={{ color: "var(--faint)", padding: "0 6px", fontSize: 16, lineHeight: 1 }}>×</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   // Working draft is namespaced per account so different logins don't clobber each other.
@@ -265,6 +312,8 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
     const entry = { id, label, sub, status, savedAt: new Date().toISOString(), snapshot: { prospect: pros, sender, offer, coUrl, analysis: ana, results, favs, meetLen, prospectReply, fuMode, fuStage, transcript } };
     setHistory((cur) => [entry, ...cur.filter((h) => h.id !== id)]);
     writeHistory(userEmail, [entry]);
+    // Remember the company so it's one click to reuse later (not just on research).
+    if (pros.company.trim()) rememberCompany({ name: pros.company.trim(), url: (pros.website || coUrl || "").trim(), industry: pros.industry, location: pros.location, companyDesc: pros.companyDesc, news: pros.news, research: pros.research });
   }
   function loadMoreHistory() {
     const next = historyPage + 1;
@@ -372,7 +421,7 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
     const key = companyKey(data.url, data.name);
     if (!key) return;
     setCompanyHistory((cur) => {
-      const next = [{ ...data, key, at: new Date().toISOString() }, ...cur.filter((c) => c.key !== key)].slice(0, 12);
+      const next = [{ ...data, key, at: new Date().toISOString() }, ...cur.filter((c) => c.key !== key)].slice(0, 200);
       try { localStorage.setItem(companyHistKey(userEmail), JSON.stringify(next)); } catch (e) {}
       return next;
     });
@@ -1010,17 +1059,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
                   <div className="fgrid">
                     <div className="f"><label>Company website URL</label><input value={coUrl} placeholder="https://company.com" onChange={(e) => setCoUrl(e.target.value)} /></div>
                   </div>
-                  {companyHistory.length > 0 && (
-                    <div className="cohist">
-                      <span className="cohist-l">Recent</span>
-                      {companyHistory.map((c) => (
-                        <button key={c.key} type="button" className="chip cochip" title={"Load " + (c.name || c.url) + " from history"} onClick={() => applyCompany(c)}>
-                          {c.name || c.url}
-                          <span className="cochip-x" role="button" tabIndex={-1} aria-label="Remove from history" onClick={(e) => { e.stopPropagation(); forgetCompany(c.key); }}>×</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
+                  <CompanyPicker companies={companyHistory} onPick={applyCompany} onForget={forgetCompany} />
                   <div className="toprow" style={{ marginTop: 14 }}>
                     <button className="btn primary" onClick={enrich} disabled={enriching || (!coUrl && !prospect.company.trim())}>{enriching ? "Researching…" : "Research company & fill ↓"}</button>
                     <span style={{ color: "var(--muted)", fontSize: 12.5 }}>One quick web-search pass on the company. Fills empty company fields only, never overwrites what you typed.</span>
