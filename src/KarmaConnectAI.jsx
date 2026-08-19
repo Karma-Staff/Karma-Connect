@@ -26,7 +26,7 @@ import { DashboardView } from "./views/DashboardView.jsx";
 import { BoardView } from "./views/BoardView.jsx";
 import { RemindersView } from "./views/RemindersView.jsx";
 import { CoachView } from "./views/CoachView.jsx";
-import { listHistory, writeHistory, deleteHistory, setLeadStatus, HISTORY_PAGE_SIZE } from "./lib/history.js";
+import { listHistory, writeHistory, deleteHistory, setLeadStatus, countHistory, HISTORY_PAGE_SIZE } from "./lib/history.js";
 import { setReminder, listReminders } from "./lib/reminders.js";
 import { logMessageSend } from "./lib/analytics.js";
 import { getProspectBriefPdf } from "./lib/leads.js";
@@ -162,6 +162,7 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   const [history, setHistory] = useState([]);
   const [historyPage, setHistoryPage] = useState(0);
   const [historyMore, setHistoryMore] = useState(false);
+  const [historyTotal, setHistoryTotal] = useState(0); // all saved leads — the nav badge, not the loaded page
   const [histQuery, setHistQuery] = useState("");   // History search box
   const [histStatus, setHistStatus] = useState(""); // History pipeline-status filter ("" = all)
   const [remindersDue, setRemindersDue] = useState(0); // count of overdue/due-today follow-ups (nav badge)
@@ -205,11 +206,13 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   }, [userEmail, histQuery, histStatus]);
 
   // Load this member's lead-approval statuses (gates the locked engines). Admins also load
-  // the full request list for the Approvals panel + badge. Also the follow-up due count.
+  // the full request list for the Approvals panel + badge. Also the follow-up due count and
+  // the total saved-lead count behind the History badge.
   useEffect(() => {
     refreshApprovals();
     if (isAdmin) loadAdminList(); else loadAdminOptions();
     loadRemindersDue();
+    refreshHistoryTotal();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userEmail]);
   // Re-check when opening a locked engine, so an admin's just-granted approval shows up.
@@ -311,7 +314,7 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
     const status = (history.find((h) => h.id === id) || {}).status || "new"; // keep the lead's stage
     const entry = { id, label, sub, status, savedAt: new Date().toISOString(), snapshot: { prospect: pros, sender, offer, coUrl, analysis: ana, results, favs, meetLen, prospectReply, fuMode, fuStage, transcript } };
     setHistory((cur) => [entry, ...cur.filter((h) => h.id !== id)]);
-    writeHistory(userEmail, [entry]);
+    writeHistory(userEmail, [entry]).then(refreshHistoryTotal).catch(() => {});
     // Remember the company so it's one click to reuse later (not just on research).
     if (pros.company.trim()) rememberCompany({ name: pros.company.trim(), url: (pros.website || coUrl || "").trim(), industry: pros.industry, location: pros.location, companyDesc: pros.companyDesc, news: pros.news, research: pros.research });
   }
@@ -330,6 +333,10 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
     const iso = date ? new Date(date).toISOString() : null;
     setHistory((cur) => cur.map((h) => (h.id === id ? { ...h, nextActionAt: iso, nextActionNote: date ? note : "" } : h)));
     setReminder(id, date || null, note || "").then(loadRemindersDue).catch(() => {});
+  }
+  function refreshHistoryTotal() {
+    if (!userEmail) return;
+    countHistory(userEmail).then(setHistoryTotal).catch(() => {});
   }
   function loadRemindersDue() {
     if (!userEmail) return;
@@ -360,7 +367,7 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   }
   function deleteFromHistory(id) {
     setHistory(history.filter((h) => h.id !== id));
-    deleteHistory(userEmail, id);
+    deleteHistory(userEmail, id).then(refreshHistoryTotal).catch(() => {});
   }
 
   // ---- Approval gate actions ----
@@ -768,7 +775,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
     { id: "relationship", label: "Relationship Builder", ic: Ic.rel, gate: true, count: results.relationship.length },
     { id: "meeting", label: "Meeting Requests", ic: Ic.meet, gate: true },
     { id: "followup", label: "Follow-up Engine", ic: Ic.fup, gate: true, count: results.followup.length + results.followupSeq.length },
-    { id: "history", label: "History", ic: Ic.hist, count: history.length },
+    { id: "history", label: "History", ic: Ic.hist, count: historyTotal },
     { id: "board", label: "Board", ic: Ic.board },
     { id: "reminders", label: "Reminders", ic: Ic.fup, count: remindersDue },
     { id: "coach", label: "Message Coach", ic: Ic.dash },

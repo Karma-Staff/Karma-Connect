@@ -64,6 +64,17 @@ export async function listHistory(email, page = 0, { q = "", status = "" } = {})
   } catch (e) { return lsRead(email); }
 }
 
+// Total saved prospects, unfiltered and unpaginated — powers the History nav badge, which
+// must show everything the user has saved rather than whatever the current page/filters show.
+export async function countHistory(email) {
+  const user = currentUser();
+  if (!user || !getAccessToken()) return lsRead(email).length;
+  try {
+    const data = await api("/api/stats");
+    return Number(data?.stats?.total) || 0;
+  } catch (e) { return lsRead(email).length; }
+}
+
 // Update the pipeline status of one saved lead.
 export async function setLeadStatus(email, id, status) {
   const user = currentUser();
