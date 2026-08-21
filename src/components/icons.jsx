@@ -18,6 +18,16 @@ export function KarmaMark({ color = "#fff", w = 24 }) {
   );
 }
 
+// The full-colour app tile (bevelled navy square, handshake, bars+k, "karma staff" wordmark),
+// supplied as a raster asset. Use it only where the logo is shown large and branded.
+//
+// It deliberately does NOT replace KarmaMark everywhere. KarmaMark stays for two things a PNG
+// cannot do: it is drawn in `currentColor` / a passed colour in the nav and footer, and it is
+// legible down to 18px, where this tile's wordmark degrades into a smudge.
+export function KarmaIcon({ w = 64, alt = "Karma Connect" }) {
+  return <img className="kicon" src="/icon-256.png" width={w} height={w} alt={alt} />;
+}
+
 export const Ic = {
   hub: <svg className="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg>,
   intel: <svg className="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/></svg>,

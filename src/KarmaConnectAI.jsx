@@ -11,7 +11,7 @@ import {
   STAGES_ANALYZE, STAGES_GEN, FOLLOWUP_STAGES,
 } from "./lib/prompts.js";
 import { getPlaybook, maybeAutoLearn } from "./lib/coach.js";
-import { KarmaMark, Ic, CopyIc, StarIc } from "./components/icons.jsx";
+import { KarmaMark, KarmaIcon, Ic, CopyIc, StarIc } from "./components/icons.jsx";
 import { Loader } from "./components/Loader.jsx";
 import { MsgCard } from "./components/MsgCard.jsx";
 import { RefineBox } from "./components/RefineBox.jsx";
@@ -954,7 +954,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
       <div className="app">
         <aside className="side">
           <div className="brand">
-            <span className="mark"><KarmaMark color="#fff" w={30} /></span>
+            <span className="mark"><KarmaIcon w={44} /></span>
             <div><h1>Karma <b>Connect</b></h1><span>AI Prospecting</span></div>
           </div>
           <nav aria-label="Primary">
