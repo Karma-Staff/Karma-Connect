@@ -39,8 +39,19 @@ On Windows PowerShell, use `$env:KC_EMAIL = "..."` instead of `export`.
 Try it safely first:
 
 ```bash
-npm run agent -- --dry-run   # opens profiles, scrapes, types the message, never presses Send
+npm run agent -- --dry-run
 ```
+
+A dry run opens each profile, scrapes it, opens the composer and types the message — then
+clears the box and stops without sending. It also checks the two things the real path needs
+*after* that point, and prints what it found:
+
+```
+failed → Jane Doe: Dry run — Send button ok; thread transcript ok; composer cleared
+```
+
+If it says `THREAD TRANSCRIPT NOT FOUND`, LinkedIn's markup has moved and every live send would
+come back `unverified` — fix the selectors in `send.cjs` before running for real.
 
 ## What it does each cycle
 

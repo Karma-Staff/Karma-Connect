@@ -72,6 +72,26 @@ const norm = (s) => String(s || "").replace(/\s+/g, " ").trim().toLowerCase();
 //   'unverified'  the composer cleared but we couldn't find it in the thread. Ambiguous —
 //                 never retried automatically, because double-messaging a prospect is worse
 //                 than a missed send.
+// Empty the composer. LinkedIn autosaves whatever is left in it as a DRAFT on that thread, so
+// any path that types and then doesn't send has to clean up — otherwise a dry run (or a bailed
+// send) quietly leaves half-finished outreach sitting in real prospects' conversations.
+async function clearComposer(box) {
+  try {
+    await box.click();
+    await box.press("ControlOrMeta+a");
+    await box.press("Delete");
+    return !norm(await box.innerText({ timeout: 1500 }));
+  } catch (e) { return false; }
+}
+
+// Which of `selectors` is present, by name — used to report what the page actually offered.
+async function whichPresent(page, selectors) {
+  for (const sel of selectors) {
+    try { if (await page.locator(sel).first().count()) return sel; } catch (e) { /* next */ }
+  }
+  return null;
+}
+
 async function confirmSent(page, box, body) {
   const want = norm(body).slice(0, 60);
   if (!want) return "unverified";
@@ -120,17 +140,38 @@ async function sendOne(page, item, { dryRun = false } = {}) {
   const box = await firstVisible(page, COMPOSER_BOX, 9000);
   if (!box) return { result: "failed", error: "The message composer didn't open.", scrape };
 
+  // Start from empty. LinkedIn restores drafts, so a previous crashed or retried attempt can
+  // leave the message already sitting there — typing on top of it would send it twice over.
+  await clearComposer(box);
   await typeBody(box, item.body);
   await jitter(700, 1800);
 
-  // Re-check right before sending: a challenge can appear while we were typing.
+  // Re-check right before sending: a challenge can appear while we were typing. The draft is
+  // left in place on purpose here — a human is taking over, and the approved message sitting
+  // ready in the box is exactly what they need to press Send on.
   halt = await haltReason(page);
   if (halt) return { result: "halted", error: halt, scrape };
 
-  if (dryRun) return { result: "failed", error: "Dry run — composed but not sent.", scrape };
+  // A dry run stops here, but it still checks everything the real path would depend on AFTER
+  // this point — the Send button and the thread transcript confirmSent() reads. Otherwise the
+  // confirmation machinery is only ever exercised by a live send to a real prospect.
+  if (dryRun) {
+    const btn = await whichPresent(page, SEND_BUTTON);
+    const thread = await whichPresent(page, THREAD_LIST);
+    const cleared = await clearComposer(box);
+    const notes = [
+      btn ? "Send button ok" : "SEND BUTTON NOT FOUND — a real send would fail here",
+      thread ? "thread transcript ok" : "THREAD TRANSCRIPT NOT FOUND — every send would come back 'unverified'",
+      cleared ? "composer cleared" : "COMPOSER NOT CLEARED — a draft may be left on this thread",
+    ];
+    return { result: "failed", error: "Dry run — " + notes.join("; "), scrape };
+  }
 
   const sendBtn = await firstVisible(page, SEND_BUTTON, 6000);
-  if (!sendBtn) return { result: "failed", error: "The Send button never became active.", scrape };
+  if (!sendBtn) {
+    await clearComposer(box); // don't leave the typed message as a draft
+    return { result: "failed", error: "The Send button never became active.", scrape };
+  }
   await sendBtn.click();
   await jitter(1500, 3000);
 
@@ -143,6 +184,7 @@ async function sendOne(page, item, { dryRun = false } = {}) {
   const confirmed = await confirmSent(page, box, item.body);
   if (confirmed === "sent") return { result: "sent", error: null, scrape };
   if (confirmed === "not-sent") {
+    await clearComposer(box); // it goes back for a retry, which types it fresh
     return { result: "failed", error: "Send didn't go through — the message was still in the composer afterwards.", scrape };
   }
   return {
