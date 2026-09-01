@@ -33,21 +33,34 @@ const LOGGED_OUT_RE = /\/(login|uas\/login|checkpoint|authwall)/i;
 async function open() {
   const { chromium } = loadPlaywright();
   fs.mkdirSync(PROFILE_DIR, { recursive: true });
-  // Prefer the real Chrome installed on this machine over Playwright's bundled Chromium: it's
-  // the same build the person already browses LinkedIn with, and the sign-in screen looks like
-  // the one they know. Falls back to bundled Chromium if Chrome isn't installed.
+  // Which browser to drive: LI_AGENT_BROWSER = chrome | msedge | chromium (default chrome).
+  // Set it to try a different one — note this changes the browser, NOT whether the browser
+  // announces itself as automated. Every Playwright-driven browser sets navigator.webdriver and
+  // runs a CDP connection, and that is what LinkedIn checks at login. Switching brands is a
+  // reasonable thing to try; it is not a way round the check.
   //
   // Deliberately no anti-detection flags or fingerprint patching. If LinkedIn decides this looks
   // automated, the right answer is to stop and let a human take over — see haltReason() — not to
   // hide from it. Pacing and low caps are the whole safety story.
-  const opts = { headless: HEADLESS, viewport: { width: 1280, height: 900 } };
-  let ctx;
-  try {
-    ctx = await chromium.launchPersistentContext(PROFILE_DIR, { ...opts, channel: "chrome" });
-  } catch (e) {
-    console.log("Real Chrome not found — using Playwright's bundled Chromium instead.");
-    ctx = await chromium.launchPersistentContext(PROFILE_DIR, opts);
+  // chromiumSandbox: true keeps Chrome's sandbox ON. Playwright disables it by default for
+  // persistent contexts, which triggers the "unsupported command-line flag: --no-sandbox"
+  // banner and, more to the point, removes the browser's main defence against a hostile page —
+  // in a window the user signs into LinkedIn with.
+  const opts = { headless: HEADLESS, viewport: { width: 1280, height: 900 }, chromiumSandbox: true };
+  const want = String(process.env.LI_AGENT_BROWSER || "chrome").toLowerCase();
+  const order = want === "chromium" ? [null] : [want, "chrome", null];
+
+  let ctx = null;
+  for (const channel of order) {
+    try {
+      ctx = await chromium.launchPersistentContext(PROFILE_DIR, channel ? { ...opts, channel } : opts);
+      console.log("Browser: " + (channel || "bundled Chromium"));
+      break;
+    } catch (e) {
+      if (channel) console.log("Could not launch " + channel + " — trying the next option.");
+    }
   }
+  if (!ctx) throw new Error("No usable browser found. Try LI_AGENT_BROWSER=chromium.");
   ctx.setDefaultTimeout(NAV_TIMEOUT);
   ctx.setDefaultNavigationTimeout(NAV_TIMEOUT);
   const page = ctx.pages()[0] || (await ctx.newPage());
