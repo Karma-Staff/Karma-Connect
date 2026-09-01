@@ -78,6 +78,9 @@ function QueueItem({ item, onChange, showToast }) {
       <div className="mbody" style={{ maxHeight: 168, overflow: "auto" }}>{item.body}</div>
 
       {item.status === "sent" && <div className="hint" style={{ color: "var(--muted)" }}>Sent {fmt(item.sent_at)}{item.channel === "email" && item.to_email ? " · " + item.to_email : ""}</div>}
+      {/* A sent row carrying an error is an UNCONFIRMED agent send — it's marked sent so it can
+          never be auto-repeated, but a human needs to check the thread. Don't hide this. */}
+      {item.status === "sent" && item.error && <div className="err">{item.error}</div>}
       {item.status === "approved" && isEmail && <div className="hint" style={{ color: "var(--muted)" }}>Auto-sends {item.scheduled_at ? fmt(item.scheduled_at) : "shortly"} → {item.to_email}</div>}
       {item.status === "approved" && !isEmail && <div className="hint" style={{ color: "var(--muted)" }}>Opens the chat in a new tab and copies this message — paste it in and press Send when you're ready. Keep working here meanwhile; it stays in the queue until you mark it sent.</div>}
       {item.status === "failed" && <div className="err">{item.error || "Send failed."}</div>}

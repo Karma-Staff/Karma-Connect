@@ -26,6 +26,12 @@ const SEND_BUTTON = [
   "button[type='submit']:has-text('Send'):not([disabled])",
   "button:has-text('Send'):not([disabled])",
 ];
+// The thread transcript, for confirming the message actually landed.
+const THREAD_LIST = [
+  ".msg-s-message-list-content",
+  ".msg-s-message-list",
+  "div[role='log']",
+];
 
 // Sleep a random time in [min,max] ms — the agent never acts at a metronome-steady rate.
 const jitter = (min, max) => new Promise((r) => setTimeout(r, Math.floor(min + Math.random() * (max - min))));
@@ -54,6 +60,37 @@ async function typeBody(el, body) {
     if (i < lines.length - 1) await el.press("Shift+Enter");
     await jitter(120, 400);
   }
+}
+
+const norm = (s) => String(s || "").replace(/\s+/g, " ").trim().toLowerCase();
+
+// Did the message actually go out? Clicking Send only means the click dispatched — the composer
+// can silently reject it, and a row wrongly marked 'sent' is invisible precisely because nobody
+// looks at sent items again. Returns:
+//   'sent'        the text is in the thread. Certain.
+//   'not-sent'    it's still sitting in the composer. Certain, and safe to retry.
+//   'unverified'  the composer cleared but we couldn't find it in the thread. Ambiguous —
+//                 never retried automatically, because double-messaging a prospect is worse
+//                 than a missed send.
+async function confirmSent(page, box, body) {
+  const want = norm(body).slice(0, 60);
+  if (!want) return "unverified";
+
+  // 1. The composer should have emptied. Our text still there means it never sent.
+  try {
+    const left = norm(await box.innerText({ timeout: 2000 }));
+    if (left && left.includes(want.slice(0, 30))) return "not-sent";
+  } catch (e) { /* composer detached after sending — that's the normal case */ }
+
+  // 2. The text should now appear in the thread transcript.
+  for (const sel of THREAD_LIST) {
+    try {
+      const el = page.locator(sel).first();
+      if (!(await el.count())) continue;
+      if (norm(await el.innerText({ timeout: 2500 })).includes(want)) return "sent";
+    } catch (e) { /* try the next */ }
+  }
+  return "unverified";
 }
 
 // Send `item.body` to the person at `item.linkedin_url`.
@@ -102,7 +139,17 @@ async function sendOne(page, item, { dryRun = false } = {}) {
   halt = await haltReason(page);
   if (halt) return { result: "halted", error: halt, scrape };
 
-  return { result: "sent", error: null, scrape };
+  // Never report 'sent' on the strength of a click alone.
+  const confirmed = await confirmSent(page, box, item.body);
+  if (confirmed === "sent") return { result: "sent", error: null, scrape };
+  if (confirmed === "not-sent") {
+    return { result: "failed", error: "Send didn't go through — the message was still in the composer afterwards.", scrape };
+  }
+  return {
+    result: "unverified",
+    error: "Clicked Send but couldn't confirm the message in the thread. Check LinkedIn before re-sending — it may already have gone out.",
+    scrape,
+  };
 }
 
 module.exports = { sendOne, jitter };

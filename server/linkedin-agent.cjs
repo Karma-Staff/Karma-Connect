@@ -220,6 +220,24 @@ async function report(userId, id, { result, error, leaseId, scrape } = {}) {
     return rows[0];
   }
 
+  if (result === "unverified") {
+    // The click happened but the worker couldn't see the message land in the thread. Marking it
+    // 'sent' is deliberate: a duplicate message to a prospect is worse than a missed one, and
+    // re-sending is the only thing a retry could do. The warning is kept on the row so a human
+    // can check the thread and re-send by hand if it really didn't go, and the agent stops so
+    // somebody actually looks rather than it happening 25 times in a day.
+    const { rows } = await q(
+      `update outreach_queue set status = 'sent', sent_at = now(), lease_id = null, leased_at = null,
+         lease_expires_at = null, error = $3, ${keepScrapeFrom(4)}, updated_at = now()
+       where id = $1 and user_id = $2 returning *`,
+      [id, userId, String(error || "Send could not be confirmed.").slice(0, 300), ...scrapeArgs],
+    );
+    await q("update linkedin_agent set last_sent_at = now(), last_seen_at = now(), updated_at = now() where user_id = $1", [userId]);
+    logActivity(userId, "outreach_sent", { prospectId: row.prospect_id, label: row.lead_label, detail: "linkedin_agent_unconfirmed" });
+    await halt(userId, "A send couldn't be confirmed — check that thread on LinkedIn before restarting.");
+    return rows[0];
+  }
+
   if (result === "halted") {
     await q(
       `update outreach_queue set status = 'approved', lease_id = null, leased_at = null, lease_expires_at = null,

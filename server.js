@@ -1115,13 +1115,16 @@ app.post("/api/outreach/agent/lease", requireUser, async (req, res) => {
   } catch (e) { res.status(500).json({ error: { message: "Could not lease work." } }); }
 });
 
-// Report one leased item back. Body: { result: 'sent'|'failed'|'halted', error, leaseId, scrape }
-// 'halted' means LinkedIn asked for a human — it releases the item and stops the agent.
+// Report one leased item back. Body: { result, error, leaseId, scrape }, result being one of:
+//   'sent'       confirmed in the thread          'failed'      safe to retry
+//   'halted'     LinkedIn wants a human           'unverified'  clicked Send, could not confirm
+// 'halted' and 'unverified' both stop the agent; 'unverified' also marks the row sent, so an
+// ambiguous send is never automatically repeated.
 app.post("/api/outreach/agent/report/:id", requireUser, async (req, res) => {
   try {
     const b = req.body || {};
-    if (!["sent", "failed", "halted"].includes(String(b.result))) {
-      return res.status(400).json({ error: { message: "result must be sent, failed or halted." } });
+    if (!["sent", "failed", "halted", "unverified"].includes(String(b.result))) {
+      return res.status(400).json({ error: { message: "result must be sent, failed, halted or unverified." } });
     }
     const item = await liAgent.report(req.userId, String(req.params.id), b);
     if (!item) return res.status(404).json({ error: { message: "Item not found, or the lease is no longer yours." } });

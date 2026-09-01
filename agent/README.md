@@ -69,6 +69,23 @@ copies doesn't reset anything. Tune with env vars on the server, not here.
 
 Raising these raises the risk to the account. They're deliberately low.
 
+## How a send is judged
+
+Clicking Send is not proof it sent, so the agent checks afterwards:
+
+| Situation | Outcome |
+|---|---|
+| Text found in the thread | `sent` |
+| Text still in the composer | `failed` — the click didn't take; safe to retry |
+| Composer cleared, text not found in the thread | `unverified` |
+| Captcha / security check / limit notice | `halted` |
+| No Message button, composer won't open | `failed` — retries, parks after 3 attempts |
+
+`unverified` is the ambiguous one. It marks the row **sent** — deliberately, so it can never be
+sent again automatically — attaches a warning visible on the item in the Send Queue, and stops
+the agent. Go look at that thread: the message may well have gone out. Double-messaging a
+prospect is worse than missing one, which is why it doesn't retry.
+
 ## When it stops
 
 The agent **halts itself** — switches off, releases the message, shows the reason in the Send
