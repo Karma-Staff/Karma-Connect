@@ -11,6 +11,7 @@ dist
 .vscode/
 start-karma.ps1
 Start Karma Connect.bat
+check-karma.ps1
 
 # The LinkedIn agent's Chrome profile: contains a LIVE logged-in LinkedIn session.
 # Committing it would hand out account access — never track it.
