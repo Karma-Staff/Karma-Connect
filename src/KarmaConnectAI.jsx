@@ -11,7 +11,7 @@ import {
   STAGES_ANALYZE, STAGES_GEN, FOLLOWUP_STAGES,
 } from "./lib/prompts.js";
 import { getPlaybook, maybeAutoLearn } from "./lib/coach.js";
-import { KarmaMark, KarmaIcon, Ic, CopyIc, StarIc } from "./components/icons.jsx";
+import { KarmaMark, KarmaIcon, Ic, CopyIc, StarIc, SendIc } from "./components/icons.jsx";
 import { Loader } from "./components/Loader.jsx";
 import { MsgCard } from "./components/MsgCard.jsx";
 import { RefineBox } from "./components/RefineBox.jsx";
@@ -26,6 +26,8 @@ import { DashboardView } from "./views/DashboardView.jsx";
 import { BoardView } from "./views/BoardView.jsx";
 import { RemindersView } from "./views/RemindersView.jsx";
 import { CoachView } from "./views/CoachView.jsx";
+import { SendQueueView } from "./views/SendQueueView.jsx";
+import { queueMessage } from "./lib/outreach.js";
 import { listHistory, writeHistory, deleteHistory, setLeadStatus, countHistory, HISTORY_PAGE_SIZE } from "./lib/history.js";
 import { setReminder, listReminders } from "./lib/reminders.js";
 import { logMessageSend } from "./lib/analytics.js";
@@ -108,7 +110,7 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   });
   const EMPTY_PROSPECT = {
     firstName: "", lastName: "", company: "", title: "", industry: "Property Restoration", location: "",
-    headline: "", about: "", experience: "", website: "", companyDesc: "", news: "",
+    headline: "", about: "", experience: "", website: "", companyDesc: "", news: "", linkedinUrl: "",
     notes: "", mutual: "", research: "", pain: "", growth: "", staffing: "", ops: "",
     context: "",
   };
@@ -455,6 +457,26 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
     });
   }
 
+  // Queue a generated message to the outreach Send Queue. channel "linkedin" (the LinkedIn
+  // agent sends it, or you do via blitz mode) or "email" (auto-sent by the server tick once
+  // approved). The LinkedIn URL is what the agent navigates to, so it rides along here.
+  async function queueToSend({ channel, step, subject, body }) {
+    if (!body || !body.trim()) { showToast("Nothing to queue yet."); return; }
+    if (!currentEntryId) { showToast("Run AI Analysis first so the lead is saved."); return; }
+    const label = [prospect.firstName, prospect.lastName].filter(Boolean).join(" ") || prospect.company || "Lead";
+    const s = SENDERS.find((x) => x.id === sender) || SENDERS[0];
+    try {
+      await queueMessage({
+        prospectId: currentEntryId, leadLabel: label, channel, step,
+        subject: subject || "", body,
+        toEmail: channel === "email" ? (prospect.email || "") : "",
+        linkedinUrl: channel === "linkedin" ? (prospect.linkedinUrl || "") : "",
+        fromEmail: s.email, fromName: s.name,
+      });
+      showToast(channel === "email" ? "Queued — set recipient & approve in Send Queue" : "Queued to Send Queue");
+    } catch (e) { showToast((e && e.message) || "Could not queue the message."); }
+  }
+
   async function enrich() {
     if (!coUrl.trim() && !prospect.company.trim()) {
       setEnrichErr("Add the company website URL or the company name first.");
@@ -779,6 +801,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
     { id: "board", label: "Board", ic: Ic.board },
     { id: "reminders", label: "Reminders", ic: Ic.fup, count: remindersDue },
     { id: "coach", label: "Message Coach", ic: Ic.dash },
+    { id: "queue", label: "Send Queue", ic: SendIc },
     ...(isAdmin ? [
       { id: "approvals", label: "Approvals", ic: Ic.intel, admin: true, count: adminList.filter((a) => a.status === "pending").length },
       { id: "team", label: "Team activity", ic: Ic.team, admin: true },
@@ -847,7 +870,8 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
                 favOn={!!favs[favKey(kind, i, it.message)]} onCopy={copy} onFav={() => toggleFav(kind, i, it.message)}
                 onSent={() => markSent(kind, i, it)} sentOn={!!sent[favKey(kind, i, it.message)]}
                 onImprove={() => coachOne(kind, i)} coaching={!!coaching[kind + i]} coachNote={coachNotes[coachKeyOf(kind, i)]}
-                onRegen={() => regenerateOne(kind, i)} onRefine={(instr) => refineOne(kind, i, instr)} regening={!!regen[kind + i]} />
+                onRegen={() => regenerateOne(kind, i)} onRefine={(instr) => refineOne(kind, i, instr)}
+                onQueue={() => queueToSend({ channel: "linkedin", step: kind, subject: it.subject || "", body: it.message })} regening={!!regen[kind + i]} />
             ))}
             {isLoad && <div className="mcard" style={{ justifyContent: "center", alignItems: "center", minHeight: 120, color: "var(--muted)", fontSize: 13 }}>Crafting more…</div>}
           </div>
@@ -1136,6 +1160,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
                 <div className="panel">
                   <div className="sect-title">Research information</div>
                   <div className="fgrid">
+                    <Field k="linkedinUrl" label="LinkedIn profile URL" ph="https://www.linkedin.com/in/their-handle" full />
                     <Field k="headline" label="LinkedIn headline" ph="Their headline" full />
                     <Field k="about" label="LinkedIn about section" ph="Paste their About text" area full />
                     <Field k="experience" label="LinkedIn experience" ph="Key roles, tenure, background" area full />
@@ -1297,7 +1322,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
               )}
               {results["meeting_" + meetLen].length > 0 && (
                 <div className="grid2">
-                  {results["meeting_" + meetLen].map((it, i) => { const kind = "meeting_" + meetLen; return <MsgCard key={i} item={it} idx={i} kind="meeting" source={verifySource} favOn={!!favs[favKey(kind, i, it.message)]} onCopy={copy} onFav={() => toggleFav(kind, i, it.message)} onSent={() => markSent(kind, i, it)} sentOn={!!sent[favKey(kind, i, it.message)]} onImprove={() => coachOne(kind, i)} coaching={!!coaching[kind + i]} coachNote={coachNotes[coachKeyOf(kind, i)]} onRegen={() => regenerateOne(kind, i)} onRefine={(instr) => refineOne(kind, i, instr)} regening={!!regen[kind + i]} />; })}
+                  {results["meeting_" + meetLen].map((it, i) => { const kind = "meeting_" + meetLen; return <MsgCard key={i} item={it} idx={i} kind="meeting" source={verifySource} favOn={!!favs[favKey(kind, i, it.message)]} onCopy={copy} onFav={() => toggleFav(kind, i, it.message)} onSent={() => markSent(kind, i, it)} sentOn={!!sent[favKey(kind, i, it.message)]} onImprove={() => coachOne(kind, i)} coaching={!!coaching[kind + i]} coachNote={coachNotes[coachKeyOf(kind, i)]} onRegen={() => regenerateOne(kind, i)} onRefine={(instr) => refineOne(kind, i, instr)} onQueue={() => queueToSend({ channel: "linkedin", step: "meeting", subject: it.subject || "", body: it.message })} regening={!!regen[kind + i]} />; })}
                   {loading["meeting_" + meetLen] && <div className="mcard" style={{ justifyContent: "center", alignItems: "center", minHeight: 120, color: "var(--muted)", fontSize: 13 }}>Crafting more…</div>}
                 </div>
               )}
@@ -1424,6 +1449,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
 
           {view === "reminders" && <RemindersView onChanged={loadRemindersDue} />}
           {view === "coach" && <CoachView />}
+          {view === "queue" && <SendQueueView showToast={showToast} />}
 
           {view === "usage" && <UsageView />}
 

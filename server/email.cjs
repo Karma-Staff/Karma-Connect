@@ -102,4 +102,39 @@ async function sendApprovalDecisionEmail(memberEmail, { memberName, leadLabel, d
   await send(memberEmail, (approved ? "Approved: " : "Update on: ") + (leadLabel || "your lead"), html);
 }
 
-module.exports = { emailVerifyOn, VERIFY_TTL_HOURS, RESET_TTL_HOURS, escapeHtml, sendVerificationEmail, sendResetEmail, sendApprovalRequestEmail, sendApprovalDecisionEmail };
+// Outreach send: goes out AS the chosen sender (from / reply-to = their @karmastaff.com
+// address), so replies land with the recruiter rather than the app. The body is the plain-text
+// message the app generated; we wrap it in minimal HTML and append a CAN-SPAM-style footer
+// (sender identity + reply-to-opt-out). Returns the gateway message id. Throws on failure so
+// the outreach queue can flag or retry.
+//
+// Unlike send(), this overrides `from` — the gateway allowlists senders per token, so each
+// recruiter address has to be permitted there or the gateway answers 403.
+async function sendOutreachEmail({ fromName, fromEmail, to, subject, text }) {
+  if (!emailVerifyOn) throw new Error("Email sending is not configured (GATEWAY_URL / GATEWAY_TOKEN missing).");
+  if (!fromEmail || !to || !subject) throw new Error("Outreach email needs fromEmail, to and subject.");
+  const from = fromName ? `${fromName} <${fromEmail}>` : fromEmail;
+  const safeBody = escapeHtml(text).replace(/\n/g, "<br>");
+  const footer = `Sent by ${escapeHtml(fromName || fromEmail)}, Karma Staff. ` +
+    `If this isn't relevant, just reply "unsubscribe" and you won't hear from us again.`;
+  const html = `<div style="font-family:Inter,Segoe UI,Arial,sans-serif;max-width:560px;color:#101828;font-size:15px;line-height:1.6">` +
+    `<div>${safeBody}</div>` +
+    `<div style="margin-top:28px;padding-top:14px;border-top:1px solid #e4e7ec;font-size:12px;color:#98a2b3">${footer}</div>` +
+    `</div>`;
+  const r = await fetch(GATEWAY_URL + "/send", {
+    method: "POST",
+    headers: { Authorization: "Bearer " + GATEWAY_TOKEN, "Content-Type": "application/json" },
+    body: JSON.stringify({ from, to: [to], reply_to: fromEmail, subject, html, text }),
+  });
+  if (r.status === 200) {
+    const { message_id } = await r.json().catch(() => ({}));
+    return message_id;
+  }
+  if (r.status === 401) throw new Error("Email gateway: bad or missing token (401) — check GATEWAY_TOKEN.");
+  if (r.status === 403) throw new Error("Email gateway: sender " + from + " not permitted for this token (403) — the admin must allowlist this recruiter's address.");
+  if (r.status === 429) { const ra = r.headers.get("retry-after"); throw new Error("Email gateway: rate limited (429)" + (ra ? " — retry after " + ra + "s." : ".")); }
+  const t = await r.text().catch(() => "");
+  throw new Error("Email gateway " + r.status + ": " + t);
+}
+
+module.exports = { emailVerifyOn, VERIFY_TTL_HOURS, RESET_TTL_HOURS, escapeHtml, sendVerificationEmail, sendResetEmail, sendApprovalRequestEmail, sendApprovalDecisionEmail, sendOutreachEmail };

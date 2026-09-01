@@ -54,6 +54,11 @@ const { JWT_SECRET, ALLOWED_DOMAIN, DUMMY_HASH, emailAllowed, tokenFor, publicUs
 // Email senders + verify/reset config. Required here, after the .env loader above.
 const { emailVerifyOn, VERIFY_TTL_HOURS, RESET_TTL_HOURS, sendVerificationEmail, sendResetEmail, sendApprovalRequestEmail, sendApprovalDecisionEmail } = require("./server/email.cjs");
 
+// Outreach queue + the agent tick (auto-sends approved email; LinkedIn goes via the agent).
+const outreach = require("./server/outreach.cjs");
+// The LinkedIn agent: leases queue items to the local worker and enforces the send caps.
+const liAgent = require("./server/linkedin-agent.cjs");
+
 const app = express();
 app.disable("x-powered-by");
 // Behind Render's proxy: trust it so req.ip is the real client IP and req.secure is correct.
@@ -1016,6 +1021,114 @@ app.get("/api/admin/activity", requireUser, requireAdmin, async (req, res) => {
   } catch (e) { res.status(500).json({ error: { message: "Could not load team activity." } }); }
 });
 
+// ───────────────────────── Outreach send queue ──────────────────────
+// Queue a generated message for sending. Email items the user approves are auto-sent by the
+// agent tick; LinkedIn items wait for the human one-click hand-off. Body:
+//   { prospectId, leadLabel, channel, step, subject, body, toEmail, fromEmail, fromName, approved, scheduledAt }
+app.post("/api/outreach/queue", requireUser, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const item = await outreach.enqueue(req.userId, { ...b, approvedBy: b.approved !== false ? req.email : null });
+    res.json({ item });
+  } catch (e) { res.status(400).json({ error: { message: (e && e.message) || "Could not queue the message." } }); }
+});
+
+// List this user's queue (optional ?status= and ?channel= filters).
+app.get("/api/outreach/queue", requireUser, async (req, res) => {
+  try {
+    const items = await outreach.listQueue(req.userId, { status: String(req.query.status || ""), channel: String(req.query.channel || "") });
+    res.json({ items, sendingOn: emailVerifyOn });
+  } catch (e) { res.status(500).json({ error: { message: "Could not load the queue." } }); }
+});
+
+// Approve a pending item (schedules it; email then auto-sends on the next tick).
+app.post("/api/outreach/queue/:id/approve", requireUser, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const item = await outreach.approveItem(req.userId, String(req.params.id), { scheduledAt: b.scheduledAt, toEmail: b.toEmail, subject: b.subject, approvedBy: req.email });
+    if (!item) return res.status(404).json({ error: { message: "Item not found or not approvable." } });
+    res.json({ item });
+  } catch (e) {
+    const code = e && (e.code === "NO_RECIPIENT" || e.code === "NO_SENDER") ? 400 : 500;
+    res.status(code).json({ error: { message: (e && e.message) || "Could not approve the item." } });
+  }
+});
+
+// Send an approved email item immediately (don't wait for the tick).
+app.post("/api/outreach/queue/:id/send-now", requireUser, async (req, res) => {
+  try {
+    if (!emailVerifyOn) return res.status(400).json({ error: { message: "Email sending isn't configured on this server." } });
+    const item = await outreach.sendNow(req.userId, String(req.params.id));
+    if (!item) return res.status(404).json({ error: { message: "Item not found or not sendable." } });
+    res.json({ item });
+  } catch (e) { res.status(500).json({ error: { message: "Could not send the item." } }); }
+});
+
+// Mark a LinkedIn item sent after the human one-click hand-off.
+app.post("/api/outreach/queue/:id/sent", requireUser, async (req, res) => {
+  try {
+    const item = await outreach.markSent(req.userId, String(req.params.id));
+    if (!item) return res.status(404).json({ error: { message: "Item not found." } });
+    res.json({ item });
+  } catch (e) { res.status(500).json({ error: { message: "Could not update the item." } }); }
+});
+
+// Skip / cancel a queued item.
+app.post("/api/outreach/queue/:id/skip", requireUser, async (req, res) => {
+  try {
+    const item = await outreach.skipItem(req.userId, String(req.params.id));
+    if (!item) return res.status(404).json({ error: { message: "Item not found." } });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: { message: "Could not skip the item." } }); }
+});
+
+
+// ─────────────────────── LinkedIn agent (worker API) ────────────────
+// The local worker in agent/ authenticates as the user (same signin + Bearer token as the
+// browser app) and drives these four endpoints. Every sending cap is enforced server-side in
+// linkedin-agent.cjs — the worker cannot raise its own limits by restarting or running twice.
+
+// Agent state for the Send Queue strip: on/off, caps, how many sent today, what's waiting.
+app.get("/api/outreach/agent/status", requireUser, async (req, res) => {
+  try {
+    res.json(await liAgent.status(req.userId));
+  } catch (e) { res.status(500).json({ error: { message: "Could not load the agent status." } }); }
+});
+
+// The kill switch. { enabled: true|false } — enabling also clears a previous halt.
+app.post("/api/outreach/agent/enable", requireUser, async (req, res) => {
+  try {
+    const state = await liAgent.setEnabled(req.userId, !!(req.body || {}).enabled);
+    res.json({ enabled: !!state.enabled, status: await liAgent.status(req.userId) });
+  } catch (e) { res.status(500).json({ error: { message: "Could not change the agent state." } }); }
+});
+
+// Hand the worker its next batch. The worker sends its OWN local hour/day — the recruiter's
+// working window is what matters, and this server may be in another timezone.
+// Body: { leaseId, localHour, localDay }. Always 200: an empty batch with a reason is normal.
+app.post("/api/outreach/agent/lease", requireUser, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const hour = Number.isInteger(b.localHour) ? b.localHour : new Date().getHours();
+    const day = Number.isInteger(b.localDay) ? b.localDay : new Date().getDay();
+    res.json(await liAgent.lease(req.userId, { leaseId: b.leaseId, localHour: hour, localDay: day }));
+  } catch (e) { res.status(500).json({ error: { message: "Could not lease work." } }); }
+});
+
+// Report one leased item back. Body: { result: 'sent'|'failed'|'halted', error, leaseId, scrape }
+// 'halted' means LinkedIn asked for a human — it releases the item and stops the agent.
+app.post("/api/outreach/agent/report/:id", requireUser, async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!["sent", "failed", "halted"].includes(String(b.result))) {
+      return res.status(400).json({ error: { message: "result must be sent, failed or halted." } });
+    }
+    const item = await liAgent.report(req.userId, String(req.params.id), b);
+    if (!item) return res.status(404).json({ error: { message: "Item not found, or the lease is no longer yours." } });
+    res.json({ item });
+  } catch (e) { res.status(500).json({ error: { message: "Could not record the result." } }); }
+});
+
 // ─────────────────────────── Anthropic proxy ────────────────────────
 app.post("/api/claude", async (req, res) => {
   const bodyString = typeof req.body === "string" ? req.body : JSON.stringify(req.body || {});
@@ -1052,6 +1165,13 @@ if (!DEV) {
 }
 
 ensureSchema(); // apply idempotent column migrations on boot
+
+// Outreach queue table, then the LinkedIn agent tables (which add columns TO outreach_queue,
+// so they must run after it exists), then the tick that auto-sends approved email items.
+outreach.ensureOutreachSchema()
+  .then(() => liAgent.ensureAgentSchema())
+  .then(() => outreach.startTick())
+  .catch((e) => console.error("outreach boot:", e.message));
 
 const server = app.listen(PORT, () => {
   console.log(`Karma Connect server on :${PORT} (${DEV ? "dev" : "prod"}, db=${dbOn ? "on" : "OFF"})`);

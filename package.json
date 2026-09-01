@@ -10,6 +10,8 @@
     "build": "vite build",
     "start": "node server.js",
     "db:init": "node scripts/db-init.mjs",
+    "agent": "node agent/run.cjs",
+    "agent:login": "node agent/run.cjs --login",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -27,6 +29,9 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "vite": "^5.4.2"
+  },
+  "optionalDependencies": {
+    "playwright": "^1.49.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

@@ -15,7 +15,9 @@ services:
     name: karma-connect
     runtime: node
     plan: free
-    buildCommand: npm install --include=dev && npm run build
+    # --omit=optional skips playwright: it's only for the local LinkedIn agent in agent/, never
+    # for the server, and installing it would add weight to every deploy for nothing.
+    buildCommand: npm install --include=dev --omit=optional && npm run build
     startCommand: npm start
     healthCheckPath: /api/health
     envVars:
