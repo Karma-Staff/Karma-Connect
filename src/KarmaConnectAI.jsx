@@ -1361,6 +1361,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
                             {(() => { const fl = flagUnsupported(st.message, verifySource); return fl.length ? <div className="verify" title="These specifics aren't in the data you entered. Double-check them before sending.">⚠ Verify before sending: {fl.map((f) => f.claim).join(", ")}</div> : null; })()}
                             <div className="mact">
                               <button className="iconbtn" onClick={() => copy(st.message)}>{CopyIc} Copy</button>
+                              <button className="iconbtn" onClick={() => queueToSend({ channel: "linkedin", step: "followup_" + (i + 1), subject: "", body: st.message })} title="Queue this step to send">{SendIc} Queue</button>
                               <button className={"iconbtn fav" + (favs[favKey(kind, i, st.message)] ? " on" : "")} onClick={() => toggleFav(kind, i, st.message)} aria-label={favs[favKey(kind, i, st.message)] ? "Remove from favorites" : "Add to favorites"} aria-pressed={!!favs[favKey(kind, i, st.message)]} style={{ marginLeft: "auto" }}>{StarIc(!!favs[favKey(kind, i, st.message)])}</button>
                             </div>
                             <RefineBox onRefine={(instr) => refineOne("followupSeq", i, instr)} />
@@ -1406,6 +1407,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
                   {(() => { const fl = flagUnsupported(st.message, verifySource + "\n" + transcript); return fl.length ? <div className="verify" title="These specifics aren't in your data or the transcript. Double-check them before sending.">⚠ Verify before sending: {fl.map((f) => f.claim).join(", ")}</div> : null; })()}
                   <div className="mact">
                     <button className="iconbtn" onClick={() => copy(st.message)}>{CopyIc} Copy</button>
+                    <button className="iconbtn" onClick={() => queueToSend({ channel: "email", step: "followup_email", subject: st.subject || st.stage || "Following up", body: st.message })} title="Queue this email to send">{SendIc} Queue</button>
                     <button className={"iconbtn fav" + (favs[favKey(kind, i, st.message)] ? " on" : "")} onClick={() => toggleFav(kind, i, st.message)} aria-label={favs[favKey(kind, i, st.message)] ? "Remove from favorites" : "Add to favorites"} aria-pressed={!!favs[favKey(kind, i, st.message)]} style={{ marginLeft: "auto" }}>{StarIc(!!favs[favKey(kind, i, st.message)])}</button>
                   </div>
                   <RefineBox onRefine={(instr) => refineOne("followup", i, instr)} />
