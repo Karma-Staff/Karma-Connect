@@ -33,13 +33,21 @@ const LOGGED_OUT_RE = /\/(login|uas\/login|checkpoint|authwall)/i;
 async function open() {
   const { chromium } = loadPlaywright();
   fs.mkdirSync(PROFILE_DIR, { recursive: true });
+  // Prefer the real Chrome installed on this machine over Playwright's bundled Chromium: it's
+  // the same build the person already browses LinkedIn with, and the sign-in screen looks like
+  // the one they know. Falls back to bundled Chromium if Chrome isn't installed.
+  //
   // Deliberately no anti-detection flags or fingerprint patching. If LinkedIn decides this looks
   // automated, the right answer is to stop and let a human take over — see haltReason() — not to
   // hide from it. Pacing and low caps are the whole safety story.
-  const ctx = await chromium.launchPersistentContext(PROFILE_DIR, {
-    headless: HEADLESS,
-    viewport: { width: 1280, height: 900 },
-  });
+  const opts = { headless: HEADLESS, viewport: { width: 1280, height: 900 } };
+  let ctx;
+  try {
+    ctx = await chromium.launchPersistentContext(PROFILE_DIR, { ...opts, channel: "chrome" });
+  } catch (e) {
+    console.log("Real Chrome not found — using Playwright's bundled Chromium instead.");
+    ctx = await chromium.launchPersistentContext(PROFILE_DIR, opts);
+  }
   ctx.setDefaultTimeout(NAV_TIMEOUT);
   ctx.setDefaultNavigationTimeout(NAV_TIMEOUT);
   const page = ctx.pages()[0] || (await ctx.newPage());
