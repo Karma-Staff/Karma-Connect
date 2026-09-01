@@ -11,7 +11,15 @@
 const { haltReason } = require("./session.cjs");
 const { scrapeProfile } = require("./scrape.cjs");
 
+// The Message control is an <a> pointing at /messaging/compose (wrapped in a div carrying a
+// data-view-name) — NOT a <button>, which is why a button-only selector found nothing on a
+// profile plainly showing "Message". LinkedIn's class names are hashed and regenerated every
+// deploy (a13b6c0c, _8751a942…), so only the href pattern and data-view-name are safe to target.
+// Ordered most stable first.
 const MESSAGE_BUTTON = [
+  "a[href*='/messaging/compose']",
+  "[data-view-name='profile-secondary-message']",
+  "[data-view-name='profile-top-card'] button:has-text('Message')",
   "main button:has-text('Message')",
   "button[aria-label^='Message']",
   "main a[href*='/messaging/thread']",
