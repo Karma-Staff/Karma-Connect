@@ -1,6 +1,6 @@
 // The browser session the agent works in.
 //
-// The agent never handles your LinkedIn password. It drives a PERSISTENT Chrome profile stored
+// The agent never handles your LinkedIn password. It drives a PERSISTENT browser profile stored
 // on this machine (agent/.profile by default): you sign in there by hand once, and the session
 // cookie survives restarts, so every run after that is unattended. When the cookie eventually
 // expires the agent stops and asks you to sign in again — it does not try to log in for you.
@@ -28,12 +28,15 @@ function loadPlaywright() {
 // checkpoint URL when the session is gone.
 const LOGGED_OUT_RE = /\/(login|uas\/login|checkpoint|authwall)/i;
 
-// Open the persistent profile. headed by default — you want to see what it's doing, and a
+// Open the persistent profile. Headed by default — you want to see what it is doing, and a
 // visible window is also how you complete the one-time sign-in.
 async function open() {
   const { chromium } = loadPlaywright();
   fs.mkdirSync(PROFILE_DIR, { recursive: true });
-  // Which browser to drive: LI_AGENT_BROWSER = chrome | msedge | chromium (default chrome).
+  // Which browser to drive: LI_AGENT_BROWSER = msedge | chrome | chromium (default msedge).
+  // Edge is the default because it's what LinkedIn accepted a signed-in session in during
+  // testing — Google's OAuth screen refuses automated browsers outright, and the saved session
+  // lives in whichever browser you signed into. Changing this means signing in again.
   // Set it to try a different one — note this changes the browser, NOT whether the browser
   // announces itself as automated. Every Playwright-driven browser sets navigator.webdriver and
   // runs a CDP connection, and that is what LinkedIn checks at login. Switching brands is a
@@ -47,8 +50,8 @@ async function open() {
   // banner and, more to the point, removes the browser's main defence against a hostile page —
   // in a window the user signs into LinkedIn with.
   const opts = { headless: HEADLESS, viewport: { width: 1280, height: 900 }, chromiumSandbox: true };
-  const want = String(process.env.LI_AGENT_BROWSER || "chrome").toLowerCase();
-  const order = want === "chromium" ? [null] : [want, "chrome", null];
+  const want = String(process.env.LI_AGENT_BROWSER || "msedge").toLowerCase();
+  const order = want === "chromium" ? [null] : [want, "msedge", "chrome", null];
 
   let ctx = null;
   for (const channel of order) {
@@ -79,7 +82,8 @@ async function isSignedIn(page) {
 async function login({ waitMinutes = 10 } = {}) {
   const { ctx, page } = await open();
   await page.goto("https://www.linkedin.com/login", { waitUntil: "domcontentloaded" });
-  console.log("\nA Chrome window is open. Sign in to LinkedIn there (finish any 2FA).");
+  console.log("\nA browser window is open. Sign in to LinkedIn there with your email and");
+  console.log("password — do NOT use \"Continue with Google\", which refuses automated browsers.");
   console.log("Waiting for you… this window closes by itself once you're in.\n");
   const deadline = Date.now() + waitMinutes * 60000;
   while (Date.now() < deadline) {

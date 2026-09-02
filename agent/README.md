@@ -3,12 +3,21 @@
 A local worker that sends the LinkedIn messages you approved in Karma Connect, and pulls each
 prospect's title / company / company link off their profile while it's there.
 
-It runs on **your machine**, not on Render. It needs the Chrome profile you signed into, and it
+It runs on **your machine**, not on Render. It needs the browser profile you signed into, and it
 should reach LinkedIn from where you normally work.
+
+## Which browser
+
+**Microsoft Edge by default.** `LI_AGENT_BROWSER` accepts `msedge`, `chrome` or `chromium`, but
+the saved session lives in whichever one you signed into — changing it means signing in again.
 
 ## How it logs in
 
-It doesn't. **You sign in by hand, once.** The agent drives a persistent Chrome profile
+Sign in with your LinkedIn **email and password**. Do **not** use "Continue with Google": Google
+refuses its sign-in flow inside any automated browser, whatever browser you pick. If your account
+has no LinkedIn password because it was created via Google, set one in Settings first.
+
+**You sign in by hand, once** — the agent never logs in for you. It drives a persistent profile
 (`agent/.profile`) and reuses that session for weeks. Your LinkedIn password is never asked for,
 never stored, and never sent anywhere.
 
@@ -23,14 +32,14 @@ has, and it stalls on 2FA anyway.
 
 ```bash
 npm install                         # picks up playwright (optionalDependencies)
-npx playwright install chromium     # one-time browser download
+npx playwright install chromium     # only needed for the LI_AGENT_BROWSER=chromium fallback
 
 # Karma Connect login — the same one you use in the app
 export KC_BASE_URL=https://your-app.onrender.com   # or http://localhost:8787
 export KC_EMAIL=you@karmastaff.com
 export KC_PASSWORD=...
 
-npm run agent:login   # a Chrome window opens — sign in to LinkedIn, it closes itself
+npm run agent:login   # Edge opens - sign in with EMAIL + PASSWORD, it closes itself
 npm run agent         # start the loop
 ```
 
@@ -59,6 +68,11 @@ come back `unverified` — fix the selectors in `send.cjs` before running for re
 2. The server checks the caps and hands back at most a few items.
 3. For each: open the profile → scrape → **Message** → type the approved body → **Send**.
 4. Reports `sent` / `failed` / `halted` back, then waits 45–180s before the next one.
+
+Step 3 *navigates* to the profile's `/messaging/compose/` URL rather than clicking the Message
+link. LinkedIn floats promo banners ("Reactivate Premium: 50% Off") over the profile that
+intercept clicks — a click retries until it times out having done nothing, while a navigation
+can't be intercepted.
 
 The message text always comes from a queue row **a human approved in Karma Connect**. The agent
 never writes or edits message content.
