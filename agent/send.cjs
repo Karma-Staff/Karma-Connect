@@ -142,8 +142,24 @@ async function sendOne(page, item, { dryRun = false } = {}) {
   if (!msgBtn) {
     return { result: "failed", error: "No Message button on this profile (not connected, or messaging is closed).", scrape };
   }
-  await msgBtn.click();
+
+  // Prefer NAVIGATING to the compose URL over clicking the link. LinkedIn floats promo banners
+  // ("Reactivate Premium: 50% Off") over the profile that intercept pointer events — a click
+  // then retries until it times out, having done nothing. A navigation can't be intercepted.
+  // Falls back to a real click when the control isn't a link we can follow.
+  let composeHref = null;
+  try { composeHref = await msgBtn.getAttribute("href", { timeout: 1500 }); } catch (e) { /* not an <a> */ }
+
+  if (composeHref && /\/messaging\/compose/i.test(composeHref)) {
+    const url = composeHref.startsWith("http") ? composeHref : "https://www.linkedin.com" + composeHref;
+    await page.goto(url, { waitUntil: "domcontentloaded" });
+  } else {
+    await msgBtn.click({ timeout: 15000 }).catch(() => msgBtn.click({ force: true }));
+  }
   await jitter(1200, 2600);
+
+  halt = await haltReason(page);
+  if (halt) return { result: "halted", error: halt, scrape };
 
   const box = await firstVisible(page, COMPOSER_BOX, 9000);
   if (!box) return { result: "failed", error: "The message composer didn't open.", scrape };
