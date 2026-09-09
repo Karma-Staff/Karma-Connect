@@ -1,7 +1,7 @@
 // The outreach Send Queue. Approved EMAIL items are auto-sent by the server agent; LINKEDIN
 // items wait here for the human one-click hand-off (open LinkedIn + copy, you send, mark sent).
 import { useState, useEffect } from "react";
-import { listQueue, approveQueued, sendQueuedNow, markQueuedSent, skipQueued, agentStatus, setAgentEnabled } from "../lib/outreach.js";
+import { listQueue, approveQueued, sendQueuedNow, markQueuedSent, skipQueued, agentStatus, setAgentEnabled, downloadAgent } from "../lib/outreach.js";
 
 const fmt = (t) => (t ? new Date(t).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "");
 const STATUS_META = {
@@ -136,7 +136,7 @@ function QueueItem({ item, onChange, showToast }) {
 // Status strip for the LinkedIn agent: whether it's on, how much of today's cap it has used,
 // and why it stopped if it stopped. The Stop button is the kill switch — the next time the
 // worker asks for work it gets nothing back.
-function AgentStrip({ status, onToggle, busy }) {
+function AgentStrip({ status, onToggle, busy, onDownload, downloading }) {
   if (!status) return null;
   const { enabled, haltReason, lastSeenAt, counts = {}, limits = {}, ready = 0, inflight = 0 } = status;
   // "Live" means the worker has actually checked in recently — enabled with no worker running
@@ -156,8 +156,12 @@ function AgentStrip({ status, onToggle, busy }) {
           {counts.day ?? 0}/{limits.perDay ?? "?"} sent today · {counts.hour ?? 0}/{limits.perHour ?? "?"} this hour
           {ready ? " · " + ready + " ready" : ""}{inflight ? " · " + inflight + " in flight" : ""}
         </span>
+        <button className="btn sm ghost" disabled={downloading} onClick={onDownload}
+          style={{ marginLeft: "auto" }} title="Download the agent to run on this machine">
+          {downloading ? "…" : "Download agent"}
+        </button>
         <button className={"btn sm " + (enabled ? "ghost" : "primary")} disabled={busy}
-          onClick={() => onToggle(!enabled)} style={{ marginLeft: "auto" }}>
+          onClick={() => onToggle(!enabled)}>
           {busy ? "…" : enabled ? "Stop agent" : haltReason ? "Clear & restart" : "Start agent"}
         </button>
       </div>
@@ -169,6 +173,7 @@ function AgentStrip({ status, onToggle, busy }) {
       {enabled && !live && !haltReason && (
         <div className="hint" style={{ marginTop: 10, color: "var(--muted)" }}>
           Waiting for the local worker. On the machine with the signed-in Chrome profile, run <code>npm run agent</code>.
+          {" "}Don’t have it yet? <b>Download agent</b> above — the zip has a SETUP.md with your details filled in.
         </div>
       )}
     </div>
@@ -182,6 +187,7 @@ export function SendQueueView({ showToast }) {
   const [session, setSession] = useState(null); // blitz mode: { order: [ids], idx }
   const [agent, setAgent] = useState(null);     // LinkedIn agent status, null until first load
   const [agentBusy, setAgentBusy] = useState(false);
+  const [agentDl, setAgentDl] = useState(false);   // agent zip download in flight
 
   function load() {
     listQueue().then(({ items, sendingOn }) => { setItems(items); setSendingOn(sendingOn); })
@@ -201,6 +207,16 @@ export function SendQueueView({ showToast }) {
       showToast(next ? "Agent on — it sends the ready LinkedIn messages" : "Agent stopped");
     } catch (e) { setErr((e && e.message) || "Could not change the agent."); }
     setAgentBusy(false);
+  }
+
+  // Pulls the agent's own source down as a zip, so the machine that runs it doesn't need a clone.
+  async function getAgent() {
+    setAgentDl(true);
+    try {
+      await downloadAgent();
+      showToast("Agent downloaded — unzip it, then open SETUP.md");
+    } catch (e) { setErr((e && e.message) || "Could not download the agent."); }
+    setAgentDl(false);
   }
 
   function patch(next) {
@@ -255,7 +271,7 @@ export function SendQueueView({ showToast }) {
       {!sendingOn && <div className="hint" style={{ marginBottom: 14 }}>Email auto-send is off on this server (no email provider configured). Items will queue but won't send until it's set up.</div>}
       {err && <div className="err">{err}</div>}
 
-      <AgentStrip status={agent} onToggle={toggleAgent} busy={agentBusy} />
+      <AgentStrip status={agent} onToggle={toggleAgent} busy={agentBusy} onDownload={getAgent} downloading={agentDl} />
 
       {/* Blitz launcher: rip through all Ready LinkedIn items, one paste-and-send at a time. */}
       {!session && readyLinked.length > 0 && (

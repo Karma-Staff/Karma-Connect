@@ -3,6 +3,7 @@ import { createRequire } from "module";
 const require = createRequire(import.meta.url);
 const { hit } = require("./ratelimit.cjs");
 const { escapeHtml } = require("./email.cjs");
+const { buildAgentZip } = require("./agent-bundle.cjs");
 
 describe("ratelimit.hit", () => {
   it("allows up to max within the window, then blocks", () => {
@@ -102,5 +103,42 @@ describe("linkedin-agent.decide", () => {
 
     const longAgo = { day: 1, hour: 1, lastSent: new Date(now - (LIMITS.minGapSec + 5) * 1000).toISOString() };
     expect(decide({ state: on, counts: longAgo, ...WEEKDAY_10AM, now }).ok).toBe(true);
+  });
+});
+
+describe("agent-bundle.buildAgentZip", () => {
+  const zip = buildAgentZip({ baseUrl: "https://example.test", email: "someone@example.test" });
+
+  // The EOCD is the only way a reader finds the central directory. Getting these two offsets
+  // wrong still produces a plausible-looking buffer that every unzip tool rejects, so pin them.
+  it("writes a locatable end-of-central-directory record", () => {
+    const eocd = zip.length - 22;
+    expect(zip.readUInt32LE(eocd)).toBe(0x06054b50);
+    const count = zip.readUInt16LE(eocd + 10);
+    const size = zip.readUInt32LE(eocd + 12);
+    const offset = zip.readUInt32LE(eocd + 16);
+    expect(count).toBe(7);
+    expect(offset + size).toBe(eocd);                    // directory ends where the EOCD starts
+    expect(zip.readUInt32LE(offset)).toBe(0x02014b50);   // and starts on a central-dir header
+    expect(zip.readUInt32LE(0)).toBe(0x04034b50);        // file begins with a local header
+  });
+
+  it("ships the agent sources plus a generated setup", () => {
+    const names = [];
+    let p = 0;
+    while (zip.readUInt32LE(p) === 0x04034b50) {
+      const nameLen = zip.readUInt16LE(p + 26);
+      names.push(zip.subarray(p + 30, p + 30 + nameLen).toString("utf8"));
+      p += 30 + nameLen + zip.readUInt16LE(p + 28) + zip.readUInt32LE(p + 18);
+    }
+    expect(names).toContain("karma-connect-agent/send.cjs");
+    expect(names).toContain("karma-connect-agent/SETUP.md");
+    expect(names).toContain("karma-connect-agent/package.json");
+  });
+
+  // agent/.profile holds a live logged-in LinkedIn session. If the allowlist ever becomes a
+  // directory walk, this is what catches it before one user's session ships to everyone.
+  it("never includes the browser profile", () => {
+    expect(zip.toString("latin1")).not.toContain(".profile");
   });
 });

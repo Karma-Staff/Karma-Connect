@@ -58,6 +58,8 @@ const { emailVerifyOn, VERIFY_TTL_HOURS, RESET_TTL_HOURS, sendVerificationEmail,
 const outreach = require("./server/outreach.cjs");
 // The LinkedIn agent: leases queue items to the local worker and enforces the send caps.
 const liAgent = require("./server/linkedin-agent.cjs");
+// Packs the agent's own source into a zip the user downloads from the Send Queue.
+const { buildAgentZip } = require("./server/agent-bundle.cjs");
 
 const app = express();
 app.disable("x-powered-by");
@@ -1093,6 +1095,22 @@ app.get("/api/outreach/agent/status", requireUser, async (req, res) => {
   try {
     res.json(await liAgent.status(req.userId));
   } catch (e) { res.status(500).json({ error: { message: "Could not load the agent status." } }); }
+});
+
+// The agent's source, zipped, so a recruiter can run it without GitHub access or a clone. The
+// SETUP.md inside is generated per-caller with their server URL and login email filled in.
+// Behind requireUser: this is an internal tool, not a public download.
+app.get("/api/outreach/agent/download", requireUser, (req, res) => {
+  try {
+    const zip = buildAgentZip({ baseUrl: baseUrl(req), email: req.email });
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", 'attachment; filename="karma-connect-agent.zip"');
+    res.setHeader("Content-Length", zip.length);
+    res.setHeader("Cache-Control", "no-store"); // it embeds the caller's own email
+    res.end(zip);
+  } catch (e) {
+    res.status(500).json({ error: { message: "Could not build the agent download." } });
+  }
 });
 
 // The kill switch. { enabled: true|false } — enabling also clears a previous halt.

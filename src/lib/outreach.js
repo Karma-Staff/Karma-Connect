@@ -69,3 +69,24 @@ export async function setAgentEnabled(enabled) {
   const d = await api("/api/outreach/agent/enable", { method: "POST", body: { enabled: !!enabled } });
   return d.status;
 }
+
+// Download the agent as a zip. The endpoint needs the Bearer token, so a plain <a download>
+// can't fetch it — we pull the blob here and click a temporary link at it instead.
+export async function downloadAgent() {
+  const res = await fetch("/api/outreach/agent/download", {
+    headers: { Authorization: "Bearer " + getAccessToken() },
+  });
+  if (!res.ok) {
+    let msg = "Could not download the agent (" + res.status + ").";
+    try { msg = (await res.json())?.error?.message || msg; } catch (e) {}
+    throw new Error(msg);
+  }
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "karma-connect-agent.zip";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
