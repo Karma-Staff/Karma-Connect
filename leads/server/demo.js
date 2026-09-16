@@ -76,10 +76,25 @@ function build() {
       : (rand() < 0.82 ? "New" : STATUSES[1 + Math.floor(rand() * 4)]);
     const hasPhone = rand() < 0.74;
     const hasEmail = rand() < 0.58;
+    const kind = rand() < 0.62 ? "company" : (rand() < 0.5 ? "person" : "job");
+    const company = `Demo Company ${i}`;
     leads.push({
-      id: i, owner, status,
+      id: i, lead_code: `KL-G${String(i).padStart(4, "0")}`,
+      kind, name: kind === "company" ? company
+        : (kind === "person" ? `Contact ${i}` : `Bookkeeper (posting ${i})`),
+      company, title: null, contact: null, contact_title: null,
+      website: null, job_url: null, category: null, industry: "Accounting",
+      employees: null, revenue: null, certs: null,
+      city: "Springfield", state: "TX",
+      owner, status,
       phone: hasPhone ? "555-01" + String(1000 + (i % 9000)) : "",
+      phone_key: hasPhone ? "55501" + String(1000 + (i % 9000)) : null,
       email: hasEmail ? `contact${i}@example.com` : "",
+      favorite: i % 23 === 0, removed: false, notes: null,
+      source: "Excel import", source_file: "generated",
+      date_added: new Date(Date.now() - Math.floor(rand() * 40) * 864e5)
+        .toISOString().slice(0, 10),
+      company_lead_id: null,
     });
   }
   return leads;
@@ -96,10 +111,11 @@ function build() {
    because a demo that cannot start is worse than an invented one. */
 function fromSpreadsheet(file) {
   const XLSX = require("xlsx");
-  const wb = XLSX.readFile(file);
-  const rows = [];
+  // cellDates so "Posted On" arrives as a Date rather than an Excel serial
+  const wb = XLSX.readFile(file, { cellDates: true });
+  const raw = [];
   for (const sheet of wb.SheetNames) {
-    for (const r of XLSX.utils.sheet_to_json(wb.Sheets[sheet], { defval: "" })) rows.push(r);
+    for (const r of XLSX.utils.sheet_to_json(wb.Sheets[sheet], { defval: "" })) raw.push(r);
   }
   // header names vary between exports, so match loosely rather than exactly
   const pick = (row, ...names) => {
@@ -109,15 +125,71 @@ function fromSpreadsheet(file) {
     }
     return "";
   };
-  return rows.map((r, i) => ({
-    id: i + 1,
-    owner: pick(r, "owner", "assigned to") || null,
-    status: pick(r, "lead status", "status") || "New",
-    phone: pick(r, "phone", "phone number", "telephone"),
-    email: pick(r, "email", "email address"),
-    // carried for the banner only — the board counts, it does not list leads
-    label: pick(r, "company", "name", "job title posted") || `Lead ${i + 1}`,
-  }));
+  const date = (row, ...names) => {
+    for (const n of names) {
+      const key = Object.keys(row).find((k) => k.trim().toLowerCase() === n);
+      const v = key ? row[key] : null;
+      if (v instanceof Date && !isNaN(v)) return v.toISOString().slice(0, 10);
+      if (typeof v === "string" && v.trim()) {
+        const d = new Date(v);
+        if (!isNaN(d)) return d.toISOString().slice(0, 10);
+      }
+    }
+    return null;
+  };
+  const digits = (p) => String(p || "").replace(/\D/g, "").slice(-10);
+  const srcFile = file.split(/[\\/]/).pop();
+
+  /* An Indeed export is a list of JOB POSTINGS, each belonging to a company, so
+     it becomes two leads the way the real importer writes them: a company lead,
+     and a job lead pointing back at it through company_lead_id. Emitting only
+     one kind would leave either the Companies tab or the Job board empty and
+     the app looking broken. Rows are shaped like the `leads` table because the
+     client's fromApi() translates those column names directly. */
+  const out = [];
+  let id = 0;
+  raw.forEach((r, i) => {
+    const company = pick(r, "company", "employer") || `Company ${i + 1}`;
+    const phone = pick(r, "phone", "phone number", "telephone");
+    const common = {
+      company,
+      website: pick(r, "website", "site"),
+      industry: pick(r, "industry", "category"),
+      city: pick(r, "city", "town"),
+      state: pick(r, "state / province", "state", "province"),
+      phone,
+      phone_key: digits(phone) || null,
+      email: pick(r, "email", "email address") || null,
+      status: pick(r, "lead status", "status") || "New",
+      owner: pick(r, "owner", "assigned to") || null,
+      removed: false,
+      notes: pick(r, "notes", "note") || null,
+      source: "Job board",
+      source_file: srcFile,
+      date_added: date(r, "posted on", "date added", "posted") || null,
+      contact: null, contact_title: null, title: null,
+      category: pick(r, "industry", "category") || null,
+      employees: null, revenue: null, certs: null,
+    };
+    const companyId = ++id;
+    out.push({
+      ...common, id: companyId, lead_code: `KL-D${String(companyId).padStart(4, "0")}`,
+      kind: "company", name: company, job_url: null, company_lead_id: null,
+      // a handful of favorites so that tab is not a dead end in the demo
+      favorite: i % 7 === 0,
+    });
+    const jobTitle = pick(r, "job title posted", "job title", "role");
+    if (jobTitle) {
+      const jobId = ++id;
+      out.push({
+        ...common, id: jobId, lead_code: `KL-D${String(jobId).padStart(4, "0")}`,
+        kind: "job", name: jobTitle,
+        job_url: pick(r, "indeed link", "job url", "link") || null,
+        company_lead_id: companyId, favorite: false,
+      });
+    }
+  });
+  return out;
 }
 
 function load() {
@@ -187,20 +259,67 @@ router.get("/api/assignments", auth.requireAdmin, (req, res) => {
   });
 });
 
-/* Only the distribute query is served here — the board asks for unassigned
-   leads, optionally narrowed to callable ones. Anything else falls through to
-   the real router (which will fail without a database, honestly, rather than
-   quietly pretending). */
-router.get("/api/leads", auth.requireUser, (req, res, next) => {
-  const focus = String(req.query.focus || "");
-  if (!focus.includes("unassigned")) return next();
-  const wantReady = focus.includes("ready");
-  const limit = Math.min(Math.max(+req.query.limit || 50, 1), 200);
-  const rows = LEADS
-    .filter((l) => !l.owner && (!wantReady || isReady(l)))
-    .slice(0, limit)
-    .map((l) => ({ Id: l.id, id: l.id, Status: l.status, Owner: "" }));
-  res.json({ rows, demo: true });
+/* The whole list, not just the distribute query — otherwise the tabs sit empty
+   while the KPI tiles show numbers, which reads as a broken app rather than a
+   demo. Mirrors the real endpoint's filters and its {list,total,nextCursor}
+   contract; paging is a plain offset because 70-odd rows do not need a keyset. */
+router.get("/api/leads", auth.requireUser, (req, res) => {
+  const p = req.query;
+  const focus = String(p.focus || "");
+  let rows = LEADS.slice();
+
+  rows = rows.filter((l) => (p.removed === "true" ? l.removed : !l.removed));
+  if (["company", "person", "job"].includes(p.kind)) rows = rows.filter((l) => l.kind === p.kind);
+  if (p.favorite === "true") rows = rows.filter((l) => l.favorite);
+  if (p.status) rows = rows.filter((l) => l.status === p.status);
+  if (p.owner) rows = rows.filter((l) => (l.owner || "") === p.owner);
+  if (p.state) {
+    const want = String(p.state).toLowerCase();
+    rows = rows.filter((l) => String(l.state || "").toLowerCase().startsWith(want));
+  }
+  if (p.q) {
+    const q = String(p.q).toLowerCase();
+    rows = rows.filter((l) => [l.name, l.company, l.email, l.city, l.contact]
+      .some((v) => String(v || "").toLowerCase().includes(q)));
+  }
+  // the KPI tiles, same three predicates as everywhere else
+  for (const key of focus.split(",")) {
+    if (key === "ready") rows = rows.filter(isReady);
+    else if (key === "enrich") rows = rows.filter(isEnrich);
+    else if (key === "unassigned") rows = rows.filter((l) => !l.owner);
+    else if (key === "week") rows = rows.filter((l) => l.date_added
+      && (Date.now() - Date.parse(l.date_added)) < 7 * 864e5);
+  }
+
+  const total = rows.length;
+  const limit = Math.min(Math.max(+p.limit || 50, 1), 200);
+  const offset = Math.max(0, parseInt(p.cursor || "0", 10) || 0);
+  const page = rows.slice(offset, offset + limit);
+  res.json({
+    list: page,
+    rows: page,                       // the board's distribute call reads either
+    total,
+    nextCursor: offset + limit < total ? String(offset + limit) : null,
+    demo: true,
+  });
+});
+
+/* Opening a lead. The real endpoint answers by id or lead_code and includes a
+   `related` block (the company a job belongs to, and its other postings), so
+   the reading pane gets the same shape here. */
+router.get("/api/leads/:key", auth.requireUser, (req, res) => {
+  const key = String(req.params.key);
+  const row = LEADS.find((l) => String(l.id) === key || l.lead_code === key);
+  if (!row) return res.status(404).json({ error: "no such lead" });
+  const related = { company: null, people: [], jobs: [], similar: null };
+  if (row.company_lead_id) {
+    related.company = LEADS.find((l) => l.id === row.company_lead_id) || null;
+  }
+  if (row.kind === "company") {
+    related.jobs = LEADS.filter((l) => l.company_lead_id === row.id && l.kind === "job");
+    related.people = LEADS.filter((l) => l.company_lead_id === row.id && l.kind === "person");
+  }
+  res.json({ ...row, related, demo: true });
 });
 
 router.post("/api/bulk/assign", auth.requireAdmin, express.json({ limit: "64kb" }), (req, res) => {
@@ -217,18 +336,33 @@ router.post("/api/bulk/assign", auth.requireAdmin, express.json({ limit: "64kb" 
 
 /* The KPI row across the top, so the page is not half-populated while the
    board below it is full. Same predicates again. */
+/* Counted from the same rows the list serves. Earlier these were fabricated
+   percentages, which put numbers in the tiles while the tabs underneath were
+   empty — a tile must never disagree with the list you get by clicking it. */
 router.get("/api/counts", auth.requireUser, (req, res) => {
-  const t = tally(LEADS);
+  const live = LEADS.filter((l) => !l.removed);
+  const t = tally(live);
+  const since = (days) => Date.now() - days * 864e5;
+  const added = (from, to) => live.filter((l) => {
+    if (!l.date_added) return false;
+    const ms = Date.parse(l.date_added);
+    return ms >= from && (to === null || ms < to);
+  }).length;
   res.json({
-    companies: Math.round(LEADS.length * 0.58), people: Math.round(LEADS.length * 0.3),
-    jobs: Math.round(LEADS.length * 0.12), favorites: 24, removed: 17,
-    status_new: LEADS.filter((l) => l.status === "New").length,
-    qualified: LEADS.filter((l) => l.status === "Qualified").length,
-    with_phone: LEADS.filter((l) => String(l.phone || "").trim()).length,
-    with_email: LEADS.filter((l) => String(l.email || "").trim()).length,
+    companies: live.filter((l) => l.kind === "company").length,
+    people: live.filter((l) => l.kind === "person").length,
+    jobs: live.filter((l) => l.kind === "job").length,
+    favorites: live.filter((l) => l.favorite).length,
+    removed: LEADS.filter((l) => l.removed).length,
+    status_new: live.filter((l) => l.status === "New").length,
+    qualified: live.filter((l) => l.status === "Qualified").length,
+    with_phone: live.filter((l) => String(l.phone || "").trim()).length,
+    with_email: live.filter((l) => String(l.email || "").trim()).length,
     ready: t.ready, needs_enrichment: t.enrich,
-    unassigned: LEADS.filter((l) => !l.owner).length,
-    week: 96, prev_week: 81, demo: true,
+    unassigned: live.filter((l) => !l.owner).length,
+    week: added(since(7), null),
+    prev_week: added(since(14), since(7)),
+    demo: true,
   });
 });
 
