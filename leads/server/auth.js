@@ -44,6 +44,35 @@ if (WORKOS_ON) {
 }
 const PASSWORD = process.env.SESSION_SECRET;
 
+/* ---------------- DEV ONLY: sign-in bypass ----------------
+   Set DEV_AUTH_EMAIL=you@karmastaff.com to treat every request as that person,
+   so both products can be clicked through locally without a WorkOS round trip.
+
+   Three things keep this out of production, and all three must hold:
+     1. NODE_ENV must not be "production" — Render's blueprint sets exactly that,
+        so the bypass cannot even be switched on there.
+     2. DEV_AUTH_EMAIL must be set deliberately. There is no default.
+     3. The request must come from loopback. A bound-to-0.0.0.0 dev server on a
+        café network does not hand the app to the next table.
+
+   The email is resolved through the normal userByEmail path, so ids, roles and
+   ownership stay real — this skips the sign-in, not the authorization. */
+const DEV_AUTH_EMAIL = (process.env.DEV_AUTH_EMAIL || "").trim().toLowerCase();
+const DEV_BYPASS = !!DEV_AUTH_EMAIL && process.env.NODE_ENV !== "production";
+if (DEV_AUTH_EMAIL && !DEV_BYPASS) {
+  console.error("[karma] DEV_AUTH_EMAIL IGNORED — NODE_ENV=production. Sign-in stays required.");
+} else if (DEV_BYPASS) {
+  console.warn("┌─────────────────────────────────────────────────────────────┐");
+  console.warn("│ SIGN-IN BYPASSED — every local request is treated as        │");
+  console.warn(`│ ${DEV_AUTH_EMAIL.padEnd(59)}│`);
+  console.warn("│ Development only. Never set DEV_AUTH_EMAIL on a deploy.     │");
+  console.warn("└─────────────────────────────────────────────────────────────┘");
+}
+const isLoopback = (req) => {
+  const ip = String((req && (req.ip || (req.socket && req.socket.remoteAddress))) || "");
+  return ip === "::1" || ip === "127.0.0.1" || ip === "::ffff:127.0.0.1";
+};
+
 function getCookie(req, name) {
   for (const part of (req.get("cookie") || "").split(/; */)) {
     const i = part.indexOf("=");
@@ -123,10 +152,31 @@ async function autoInvite(email, name) {
 /* resolve the caller, or null. {id: null} = authenticated but not invited. */
 async function resolve(req, res) {
   let email = null;
-  const wu = await workosUser(req, res);
-  if (wu) email = String(wu.email || "").trim().toLowerCase();
+  let wu = null;
+  if (DEV_BYPASS && isLoopback(req)) {
+    // stand in for the WorkOS session; everything below is unchanged
+    email = DEV_AUTH_EMAIL;
+  } else {
+    wu = await workosUser(req, res);
+    if (wu) email = String(wu.email || "").trim().toLowerCase();
+  }
   if (!email) return null;
-  let u = await userByEmail(email);
+  let u;
+  try {
+    u = await userByEmail(email);
+  } catch (e) {
+    /* No reachable database. In production that is a real fault and must
+       surface. Under the dev bypass it usually just means LEADS_DATABASE_URL
+       is not set yet, so hand back a synthetic admin: the UI renders and can
+       be clicked through, and the individual data panels fail on their own
+       terms rather than the whole app collapsing into a 503. */
+    if (!DEV_BYPASS) throw e;
+    console.warn("[karma] dev bypass: no database (" + e.message
+      + ") — using a synthetic admin so the UI still renders");
+    // -1, not 0: requireUser rejects a falsy id, and 0 would fail the very
+    // check this synthetic user exists to pass.
+    return { id: -1, email, name: email.split("@")[0], role: "admin" };
+  }
   /* Auto-enrol here as well as in the callback. One sign-in now covers both
      Karma products, so somebody can arrive holding a perfectly valid session
      that was minted before they had a Leads row — signed in through Connect,
