@@ -381,7 +381,7 @@ app.delete("/api/history/:id", requireUser, async (req, res) => {
 });
 
 // All of the user's leads (minimal fields) for the board + export. Capped for safety.
-app.get("/api/leads/all", requireUser, async (req, res) => {
+app.get("/api/connect/leads/all", requireUser, async (req, res) => {
   try {
     const { rows } = await q(
       "select id, label, sub, status, updated_at, created_at from prospects where user_id = $1 order by updated_at desc limit 1000",
@@ -411,7 +411,7 @@ app.get("/api/stats", requireUser, async (req, res) => {
 });
 
 // Branded PDF export of the user's leads (rendering in server/pdf.cjs).
-app.get("/api/leads/export.pdf", requireUser, async (req, res) => {
+app.get("/api/connect/leads/export.pdf", requireUser, async (req, res) => {
   try {
     const { rows } = await q(
       "select label, sub, status, created_at, updated_at from prospects where user_id = $1 order by updated_at desc limit 1000",
@@ -424,7 +424,7 @@ app.get("/api/leads/export.pdf", requireUser, async (req, res) => {
 });
 
 // One prospect's brief PDF (details + computed fit + AI profile). Client posts what's on screen.
-app.post("/api/leads/brief.pdf", requireUser, async (req, res) => {
+app.post("/api/connect/leads/brief.pdf", requireUser, async (req, res) => {
   try {
     streamProspectBriefPdf(res, req.body || {}, req.email);
   } catch (e) {
@@ -459,7 +459,7 @@ app.get("/api/reminders", requireUser, async (req, res) => {
 });
 
 // ───────────────────────── Lead notes & activity ────────────────────
-app.get("/api/leads/:id/notes", requireUser, async (req, res) => {
+app.get("/api/connect/leads/:id/notes", requireUser, async (req, res) => {
   try {
     const { rows } = await q(
       "select id, kind, body, created_at from lead_notes where user_id = $1 and prospect_id = $2 order by created_at desc limit 200",
@@ -469,7 +469,7 @@ app.get("/api/leads/:id/notes", requireUser, async (req, res) => {
   } catch (e) { res.status(500).json({ error: { message: "Could not load notes." } }); }
 });
 
-app.post("/api/leads/:id/notes", requireUser, async (req, res) => {
+app.post("/api/connect/leads/:id/notes", requireUser, async (req, res) => {
   try {
     const body = String(req.body?.body || "").trim().slice(0, 4000);
     if (!body) return res.status(400).json({ error: { message: "The note can't be empty." } });
@@ -481,7 +481,7 @@ app.post("/api/leads/:id/notes", requireUser, async (req, res) => {
   } catch (e) { res.status(500).json({ error: { message: "Could not add the note." } }); }
 });
 
-app.delete("/api/leads/:id/notes/:noteId", requireUser, async (req, res) => {
+app.delete("/api/connect/leads/:id/notes/:noteId", requireUser, async (req, res) => {
   try {
     // Only user-typed notes are deletable; auto-logged activity is immutable.
     await q("delete from lead_notes where user_id = $1 and prospect_id = $2 and id = $3 and kind = 'note'",
@@ -1166,6 +1166,30 @@ app.post("/api/claude", async (req, res) => {
 // Health check for Render.
 app.get("/api/health", (_req, res) => res.json({ ok: true, db: dbOn }));
 
+// ──────────────────── Karma Leads (the other half of the site) ────────────────────
+// One Render service serves both products: Connect at /, Leads at /leads, and a
+// switcher in each header. Leads keeps its API on /api/* untouched because its
+// front end calls those paths absolutely — Connect's own lead routes were the
+// ones that moved, to /api/connect/leads/*.
+//
+// Mounted HERE, after every Connect route and before the SPA fallback below:
+// that fallback answers any non-/api GET, so anything registered after it is
+// unreachable. terminal:false keeps Leads' /api 404 and error handler out of
+// the way of Connect's routes.
+//
+// LEADS_ENABLED=0 turns it off without a code change — the escape hatch if the
+// merged deploy misbehaves and Leads needs to go back to its own service.
+if (process.env.LEADS_ENABLED !== "0") {
+  try {
+    require("./leads/server/index.js").mount(app, { staticPaths: ["/leads"], terminal: false });
+    console.log("Karma Leads mounted at /leads");
+  } catch (e) {
+    // Never let a Leads misconfiguration (e.g. no LEADS_DATABASE_URL in local
+    // dev) stop Karma Connect from booting.
+    console.error("Karma Leads NOT mounted:", e.message);
+  }
+}
+
 // ───────────────────── Static SPA (production only) ─────────────────
 // In dev, Vite serves the client and proxies /api here, so we don't serve static files.
 if (!DEV) {
@@ -1179,7 +1203,9 @@ if (!DEV) {
     },
   }));
   // SPA fallback: any non-/api GET returns index.html (never cached, so deploys are instant).
-  app.get(/^\/(?!api\/).*/, (_req, res) => {
+  // /leads is excluded too — that half of the site is Karma Leads' own static app, and
+  // without this the fallback would hand its URLs Connect's index.html instead.
+  app.get(/^\/(?!api\/|leads(\/|$)).*/, (_req, res) => {
     res.setHeader("Cache-Control", "no-cache");
     res.sendFile(path.join(dist, "index.html"));
   });

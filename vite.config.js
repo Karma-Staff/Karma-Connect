@@ -14,6 +14,9 @@ export default defineConfig({
     open: true,
     proxy: {
       '/api': { target: API_TARGET, changeOrigin: true },
+      // Karma Leads is served by Express from leads/public (no build step), so in
+      // dev it has to be proxied like the API — Vite has nothing to serve for it.
+      '/leads': { target: API_TARGET, changeOrigin: true },
     },
   },
 })

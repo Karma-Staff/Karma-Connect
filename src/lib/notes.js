@@ -14,6 +14,6 @@ async function api(path, { method = "GET", body } = {}) {
 }
 
 const enc = (id) => encodeURIComponent(id);
-export async function listNotes(prospectId) { return (await api("/api/leads/" + enc(prospectId) + "/notes")).notes || []; }
-export async function addNote(prospectId, body) { return (await api("/api/leads/" + enc(prospectId) + "/notes", { method: "POST", body: { body } })).note; }
-export async function deleteNote(prospectId, noteId) { return api("/api/leads/" + enc(prospectId) + "/notes/" + enc(noteId), { method: "DELETE" }); }
+export async function listNotes(prospectId) { return (await api("/api/connect/leads/" + enc(prospectId) + "/notes")).notes || []; }
+export async function addNote(prospectId, body) { return (await api("/api/connect/leads/" + enc(prospectId) + "/notes", { method: "POST", body: { body } })).note; }
+export async function deleteNote(prospectId, noteId) { return api("/api/connect/leads/" + enc(prospectId) + "/notes/" + enc(noteId), { method: "DELETE" }); }

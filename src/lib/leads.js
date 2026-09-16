@@ -9,7 +9,7 @@ async function get(path) {
 
 // All leads (minimal fields), newest first — powers the board and export.
 export async function getAllLeads() {
-  const data = await get("/api/leads/all");
+  const data = await get("/api/connect/leads/all");
   return data.rows || [];
 }
 
@@ -21,14 +21,14 @@ export async function getStats() {
 
 // Branded PDF of all leads (generated server-side). Returns a Blob.
 export async function getLeadsPdf() {
-  const res = await fetch("/api/leads/export.pdf", { headers: { Authorization: "Bearer " + getAccessToken() } });
+  const res = await fetch("/api/connect/leads/export.pdf", { headers: { Authorization: "Bearer " + getAccessToken() } });
   if (!res.ok) throw new Error("Could not generate the PDF.");
   return res.blob();
 }
 
 // One prospect's brief (details + fit + AI analysis) as a PDF. Returns a Blob.
 export async function getProspectBriefPdf(payload) {
-  const res = await fetch("/api/leads/brief.pdf", {
+  const res = await fetch("/api/connect/leads/brief.pdf", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: "Bearer " + getAccessToken() },
     body: JSON.stringify(payload || {}),

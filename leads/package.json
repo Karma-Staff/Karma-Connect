@@ -1,0 +1,28 @@
+{
+  "name": "karma-leads",
+  "version": "1.0.0",
+  "description": "",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "migrate": "node server/migrate.js",
+    "migrate:status": "node server/migrate.js --status",
+    "etl": "node scripts/etl-from-noco.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20.12"
+  },
+  "dependencies": {
+    "@workos-inc/node": "^10.9.0",
+    "express": "^5.2.1",
+    "pg": "^8.23.0",
+    "xlsx": "^0.20.3"
+  },
+  "devDependencies": {
+    "sqlite3": "^5.1.7"
+  }
+}
