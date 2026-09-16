@@ -1,16 +1,60 @@
 /* Karma Leads — email-style lead client */
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* ── Design tokens ──────────────────────────────────────────────────────────
+   Karma Leads and Karma Connect are one site, so Leads wears Connect's palette:
+   deep navy surfaces, steel-blue accent, gold reserved for the primary action.
+
+   Navy is the DEFAULT (:root). Connect is dark-only, and a switcher that flips
+   between a dark product and a white one reads as two sites, not one. The
+   original light theme is intact under [data-theme="light"] for anyone who
+   prefers it — including its own categorical steps, which were validated
+   against a white surface and are still correct there. */
 :root {
   /* tells the browser to paint native widgets (select popups, scrollbars,
      checkboxes) for the active theme — without it a dark-mode <select> drops
      a white popup behind near-white option text */
+  color-scheme: dark;
+
+  /* Categorical slots for the KPI tiles and the Team activity chart. These are
+     the same steps the dark theme always used, re-validated against the navy
+     panel (#121b2d): lightness band, chroma floor, adjacent-pair CVD
+     separation (worst 8.4 ΔE protan), normal-vision floor (19.3) and 3:1
+     contrast all pass, so they carry over unchanged. Fixed order, never
+     cycled. */
+  --cat-1: #3987e5;
+  --cat-2: #d95926;
+  --cat-3: #199e70;
+  --cat-4: #c98500;
+  --cat-5: #d55181;
+  --cat-6: #008300;
+  --cat-7: #9085e9;
+  --cat-8: #e66767;
+  --good: #52d39e;
+
+  --bg: #081224;
+  --surface: #0e1a30;
+  --surface-2: #142442;
+  --border: rgba(74,134,200,.20);
+  --ink: #eef2fb;
+  --ink-2: #9aa7c4;
+  --ink-3: #808cb6;
+  /* steel for structure (borders, focus, active state); ice for accent text.
+     Connect spends gold sparingly, on the primary action only — see
+     .btn-primary below. */
+  --accent: #4a86c8;
+  --accent-soft: rgba(74,134,200,.16);
+  --accent-ink: #cfe0f6;
+  --gold: #FFCF00;
+  --gold-grad: linear-gradient(135deg,#FFD83A 0%,#FFCF00 45%,#E7B74B 100%);
+  --shadow: 0 1px 2px rgba(0,0,0,.45), 0 4px 18px rgba(0,0,0,.4);
+  --radius: 6px;
+}
+
+:root[data-theme="light"] {
   color-scheme: light;
 
-  /* categorical slots for the KPI tiles and the Team activity chart,
-     validated for CVD separation against this app's own surfaces
-     (#fff light / #1e2023 dark) — all 8 pass the palette validator's
-     lightness/chroma/CVD/normal-vision checks in fixed order */
+  /* validated against this theme's white surface (#fff) */
   --cat-1: #2a78d6;
   --cat-2: #eb6834;
   --cat-3: #1baf7a;
@@ -31,38 +75,14 @@
   --accent: #2f54eb;
   --accent-soft: #e8edfd;
   --accent-ink: #2545c8;
+  --gold: #b8860b;
+  --gold-grad: linear-gradient(135deg,#FFD83A 0%,#E7B74B 100%);
   --shadow: 0 1px 2px rgba(20,20,15,.05), 0 4px 16px rgba(20,20,15,.05);
-  --radius: 6px;
-}
-:root[data-theme="dark"] {
-  color-scheme: dark;
-  /* same hues re-stepped for the dark surface, not an automatic flip */
-  --cat-1: #3987e5;
-  --cat-2: #d95926;
-  --cat-3: #199e70;
-  --cat-4: #c98500;
-  --cat-5: #d55181;
-  --cat-6: #008300;
-  --cat-7: #9085e9;
-  --cat-8: #e66767;
-  --good: #0ca30c;
-
-  --bg: #141517;
-  --surface: #1e2023;
-  --surface-2: #26282c;
-  --border: #33363b;
-  --ink: #ececea;
-  --ink-2: #a8a7a1;
-  --ink-3: #7b7a75;
-  --accent: #6d8dff;
-  --accent-soft: #263258;
-  --accent-ink: #9db1ff;
-  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.35);
 }
 
 html, body { height: 100%; }
 body {
-  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-family: 'Manrope', "Segoe UI", system-ui, -apple-system, sans-serif;
   background: var(--bg);
   color: var(--ink);
   font-size: 14px;
@@ -93,7 +113,7 @@ a:hover { text-decoration: underline; }
   background: #fdecec; color: #b3261e; border-radius: 4px;
   padding: 8px 12px; margin-bottom: 12px; font-size: 13px;
 }
-:root[data-theme="dark"] .login-error { background: #4a2020; color: #ffb4ab; }
+:root:not([data-theme="light"]) .login-error { background: #4a2020; color: #ffb4ab; }
 
 /* the K is drawn, not typeset — a text glyph in a box picks up whatever the
    platform font does to it, and never sits quite centred */
@@ -157,8 +177,8 @@ a:hover { text-decoration: underline; }
 .login-alt { margin: 14px 0 0; text-align: center; font-size: 12.5px; }
 .login-alt a { color: var(--ink-2); text-decoration: none; }
 .login-alt a:hover { color: var(--accent); text-decoration: underline; }
-:root[data-theme="dark"] .theme-ic-dark { display: none; }
-:root:not([data-theme="dark"]) .theme-ic-light { display: none; }
+:root:not([data-theme="light"]) .theme-ic-dark { display: none; }
+:root[data-theme="light"] .theme-ic-light { display: none; }
 
 .user-menu { position: relative; }
 .dropdown {
@@ -356,7 +376,7 @@ a:hover { text-decoration: underline; }
 .feed-what { color: var(--ink-2); }
 
 .btn-primary {
-  background: var(--accent); color: #fff; font-weight: 600;
+  background: var(--gold-grad); color: #081224; font-weight: 700;
   border-radius: 5px; padding: 9px 16px;
 }
 .btn-primary:hover { filter: brightness(1.08); }
@@ -473,7 +493,7 @@ a:hover { text-decoration: underline; }
 }
 .bulk-act:hover:not(:disabled) { border-color: var(--accent); color: var(--accent-ink); }
 .bulk-act.danger:hover:not(:disabled) { border-color: #b3261e; color: #b3261e; }
-:root[data-theme="dark"] .bulk-act.danger:hover:not(:disabled) {
+:root:not([data-theme="light"]) .bulk-act.danger:hover:not(:disabled) {
   border-color: #ffb4ab; color: #ffb4ab;
 }
 .bulk-act:disabled { opacity: .45; cursor: default; }
@@ -527,11 +547,11 @@ body.d-compact .row-pick { margin-top: 0; }
 .size-3 { background: #ddf2f0; color: #0f6b62; }
 .size-4 { background: #fbf0d9; color: #8a6116; }
 .size-5 { background: #efe7fa; color: #5b34a2; }
-:root[data-theme="dark"] .size-1 { background: #33363b; color: #b8b7b1; }
-:root[data-theme="dark"] .size-2 { background: #1e3a5f; color: #9ec5f5; }
-:root[data-theme="dark"] .size-3 { background: #143d38; color: #8fd9cf; }
-:root[data-theme="dark"] .size-4 { background: #453a15; color: #ecd08a; }
-:root[data-theme="dark"] .size-5 { background: #372952; color: #cbb3f0; }
+:root:not([data-theme="light"]) .size-1 { background: #1c2a44; color: #9aa7c4; }
+:root:not([data-theme="light"]) .size-2 { background: #1e3a5f; color: #9ec5f5; }
+:root:not([data-theme="light"]) .size-3 { background: #143d38; color: #8fd9cf; }
+:root:not([data-theme="light"]) .size-4 { background: #453a15; color: #ecd08a; }
+:root:not([data-theme="light"]) .size-5 { background: #372952; color: #cbb3f0; }
 
 .chip-has {
   background: transparent; border: 1px solid var(--border);
@@ -585,17 +605,17 @@ button.fav-star:hover { background: var(--surface-2); color: var(--ink-2); trans
 .chip-st-responded { background: #ddf2f0; color: #0f6b62; }
 .chip-st-qualified { background: #e4f3e5; color: #2b6b2f; }
 .chip-st-notinterested { background: #ececea; color: #55544e; }
-:root[data-theme="dark"] .chip-src-job      { background: #1e3a5f; color: #9ec5f5; }
-:root[data-theme="dark"] .chip-src-excel    { background: #214023; color: #a5d8a8; }
-:root[data-theme="dark"] .chip-src-apollo   { background: #372952; color: #cbb3f0; }
-:root[data-theme="dark"] .chip-src-bitrix   { background: #4a3418; color: #f0c390; }
-:root[data-theme="dark"] .chip-src-master   { background: #143d38; color: #8fd9cf; }
-:root[data-theme="dark"] .chip-src-other    { background: #33363b; color: #b8b7b1; }
-:root[data-theme="dark"] .chip-st-new       { background: #1e3a5f; color: #9ec5f5; }
-:root[data-theme="dark"] .chip-st-contacted { background: #453a15; color: #ecd08a; }
-:root[data-theme="dark"] .chip-st-responded { background: #143d38; color: #8fd9cf; }
-:root[data-theme="dark"] .chip-st-qualified { background: #214023; color: #a5d8a8; }
-:root[data-theme="dark"] .chip-st-notinterested { background: #33363b; color: #b8b7b1; }
+:root:not([data-theme="light"]) .chip-src-job      { background: #1e3a5f; color: #9ec5f5; }
+:root:not([data-theme="light"]) .chip-src-excel    { background: #214023; color: #a5d8a8; }
+:root:not([data-theme="light"]) .chip-src-apollo   { background: #372952; color: #cbb3f0; }
+:root:not([data-theme="light"]) .chip-src-bitrix   { background: #4a3418; color: #f0c390; }
+:root:not([data-theme="light"]) .chip-src-master   { background: #143d38; color: #8fd9cf; }
+:root:not([data-theme="light"]) .chip-src-other    { background: #1c2a44; color: #9aa7c4; }
+:root:not([data-theme="light"]) .chip-st-new       { background: #1e3a5f; color: #9ec5f5; }
+:root:not([data-theme="light"]) .chip-st-contacted { background: #453a15; color: #ecd08a; }
+:root:not([data-theme="light"]) .chip-st-responded { background: #143d38; color: #8fd9cf; }
+:root:not([data-theme="light"]) .chip-st-qualified { background: #214023; color: #a5d8a8; }
+:root:not([data-theme="light"]) .chip-st-notinterested { background: #1c2a44; color: #9aa7c4; }
 
 /* ---------- density modes ---------- */
 .density-toggle {
@@ -710,7 +730,7 @@ body.resizing .lead-row, body.resizing .splitter { pointer-events: none; }
   border: 1px solid var(--border); border-radius: 4px; padding: 5px 9px;
 }
 .delete-btn:hover { color: #b3261e; border-color: #b3261e; background: #fdecec; }
-:root[data-theme="dark"] .delete-btn:hover {
+:root:not([data-theme="light"]) .delete-btn:hover {
   color: #ffb4ab; border-color: #8c1d18; background: #3b1614;
 }
 
@@ -772,8 +792,8 @@ body.resizing .lead-row, body.resizing .splitter { pointer-events: none; }
 .copyable:hover { background: var(--accent-soft); }
 .copyable.copied { background: #d8f3e3; color: #14663f; }
 .copyable.copied::after { content: "✓ copied"; font-size: 11px; color: #14663f; }
-:root[data-theme="dark"] .copyable.copied { background: #17402c; color: #7fe0ad; }
-:root[data-theme="dark"] .copyable.copied::after { color: #7fe0ad; }
+:root:not([data-theme="light"]) .copyable.copied { background: #17402c; color: #7fe0ad; }
+:root:not([data-theme="light"]) .copyable.copied::after { color: #7fe0ad; }
 
 .dg-value input:hover { border-color: var(--border); }
 .dg-value input:focus { outline: none; border: 1px solid var(--accent); background: var(--surface); }
@@ -929,7 +949,7 @@ body.resizing .lead-row, body.resizing .splitter { pointer-events: none; }
   white-space: nowrap;
 }
 .trash-left.soon { color: #b3261e; }
-:root[data-theme="dark"] .trash-left.soon { color: #ffb4ab; }
+:root:not([data-theme="light"]) .trash-left.soon { color: #ffb4ab; }
 .trash-row .trash-restore { flex-shrink: 0; white-space: nowrap; font-size: 12.5px; }
 /* the destructive action leads the row, so it must not look like Close */
 #trash-empty { margin-right: auto; }
@@ -1032,12 +1052,12 @@ body.dragging #import-btn { outline: 3px solid var(--accent-soft); }
 .board-linkedin { --brand: #0a66c2; --brand-soft: #eaf2fb; }
 .board-indeed { --brand: #003a9b; --brand-soft: #e9eef9; }
 .board-google { --brand: #1a73e8; --brand-soft: #e8f0fe; }
-:root[data-theme="dark"] #js-form,
-:root[data-theme="dark"] .board-linkedin { --brand: #4a9be8; --brand-soft: #14263c; }
-:root[data-theme="dark"] #js-form.js-indeed,
-:root[data-theme="dark"] .board-indeed { --brand: #7ba0ff; --brand-soft: #18213d; }
-:root[data-theme="dark"] #js-form.js-google,
-:root[data-theme="dark"] .board-google { --brand: #8ab4f8; --brand-soft: #16243a; }
+:root:not([data-theme="light"]) #js-form,
+:root:not([data-theme="light"]) .board-linkedin { --brand: #4a9be8; --brand-soft: #14263c; }
+:root:not([data-theme="light"]) #js-form.js-indeed,
+:root:not([data-theme="light"]) .board-indeed { --brand: #7ba0ff; --brand-soft: #18213d; }
+:root:not([data-theme="light"]) #js-form.js-google,
+:root:not([data-theme="light"]) .board-google { --brand: #8ab4f8; --brand-soft: #16243a; }
 
 /* ---- the settings panel itself
    Three boards, and three boards' worth of filters, stopped fitting a 420px
@@ -1099,7 +1119,7 @@ body.dragging #import-btn { outline: 3px solid var(--accent-soft); }
   background: var(--brand); color: #fff; font-size: 10px; font-weight: 700;
   display: grid; place-items: center; opacity: 0;
 }
-:root[data-theme="dark"] .board-tick { color: #10131a; }
+:root:not([data-theme="light"]) .board-tick { color: #081224; }
 .board-card.on .board-tick { opacity: 1; }
 .board-price {
   display: block; margin-top: 9px; font-size: 16px; font-weight: 700;
@@ -1114,7 +1134,7 @@ body.dragging #import-btn { outline: 3px solid var(--accent-soft); }
   background: var(--brand); color: #fff; white-space: nowrap;
   font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
 }
-:root[data-theme="dark"] .board-tag { color: #10131a; }
+:root:not([data-theme="light"]) .board-tag { color: #081224; }
 /* the board name, wherever it has to travel outside a card */
 .board-chip {
   display: inline-block; padding: 1px 6px; border-radius: 3px; color: #fff;
@@ -1222,7 +1242,7 @@ label.check input[type="checkbox"] { width: auto; margin: 0; accent-color: var(-
   font-size: 11px; font-weight: 600; color: #b3261e;
   background: #fdecec; border-radius: 4px; padding: 1px 7px;
 }
-:root[data-theme="dark"] .js-price-warn { background: #4a2020; color: #ffb4ab; }
+:root:not([data-theme="light"]) .js-price-warn { background: #4a2020; color: #ffb4ab; }
 /* the boolean-search box needs a sentence of explanation under it, and the
    queries themselves want a monospace box — they are code, not prose */
 .js-hint {
@@ -1308,7 +1328,7 @@ label.check input[type="checkbox"] { width: auto; margin: 0; accent-color: var(-
    the target and throws a 9999px shadow over everything else. Moving one box
    is what makes the tour glide — a separate overlay would just cut. */
 .tour { position: fixed; inset: 0; z-index: 80; --tour-dim: rgba(15, 15, 12, .55); }
-:root[data-theme="dark"] .tour { --tour-dim: rgba(0, 0, 0, .68); }
+:root:not([data-theme="light"]) .tour { --tour-dim: rgba(0, 0, 0, .68); }
 .tour-spot {
   position: fixed; pointer-events: none; border-radius: 8px;
   box-shadow: 0 0 0 9999px var(--tour-dim), 0 0 0 2px var(--accent),

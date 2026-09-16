@@ -3199,9 +3199,9 @@ function wire() {
     loadList();
   });
   on("theme-toggle", "click", () => {
-    const dark = document.documentElement.dataset.theme !== "dark";
-    document.documentElement.dataset.theme = dark ? "dark" : "";
-    localStorage.setItem("kl_theme", dark ? "dark" : "");
+    const light = document.documentElement.dataset.theme !== "light";
+    document.documentElement.dataset.theme = light ? "light" : "dark";
+    localStorage.setItem("kl_theme", light ? "light" : "dark");
   });
   on("help-btn", "click", startTour);
   on("user-avatar", "click", (e) => {
@@ -3306,7 +3306,9 @@ async function init() {
   }
   if (usp.get("density")) localStorage.setItem("kl_density", usp.get("density"));
   S.deepLink = { tab: usp.get("tab"), open: usp.get("open") };
-  document.documentElement.dataset.theme = localStorage.getItem("kl_theme") || "";
+  const savedTheme = localStorage.getItem("kl_theme");
+  document.documentElement.dataset.theme =
+    savedTheme === "" ? "light" : (savedTheme || "dark");
   const savedSize = +localStorage.getItem("kl_page_size");
   if (PAGE_SIZES.includes(savedSize)) S.pageSize = savedSize;
   setDensity(localStorage.getItem("kl_density") || "compact");
