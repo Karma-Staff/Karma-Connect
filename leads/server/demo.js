@@ -160,7 +160,13 @@ function tally(rows) {
 
 const router = express.Router();
 
-router.get("/api/assignments", (req, res) => {
+/* The demo router is mounted BEFORE the database-backed ones, so it must apply
+   the same gates they do — otherwise it answers requests the real endpoint
+   would refuse, which makes the demo lie about permissions and hides whether
+   the real gate works at all. Same middleware, same source of truth. */
+const auth = require("./auth");
+
+router.get("/api/assignments", auth.requireAdmin, (req, res) => {
   const people = [];
   for (const t of TEAM) {
     const mine = LEADS.filter((l) => l.owner === t.email);
@@ -185,7 +191,7 @@ router.get("/api/assignments", (req, res) => {
    leads, optionally narrowed to callable ones. Anything else falls through to
    the real router (which will fail without a database, honestly, rather than
    quietly pretending). */
-router.get("/api/leads", (req, res, next) => {
+router.get("/api/leads", auth.requireUser, (req, res, next) => {
   const focus = String(req.query.focus || "");
   if (!focus.includes("unassigned")) return next();
   const wantReady = focus.includes("ready");
@@ -197,7 +203,7 @@ router.get("/api/leads", (req, res, next) => {
   res.json({ rows, demo: true });
 });
 
-router.post("/api/bulk/assign", express.json({ limit: "64kb" }), (req, res) => {
+router.post("/api/bulk/assign", auth.requireAdmin, express.json({ limit: "64kb" }), (req, res) => {
   const ids = new Set((Array.isArray(req.body?.ids) ? req.body.ids : []).map(Number));
   const owner = String(req.body?.owner ?? "").trim() || null;
   let affected = 0;
@@ -211,7 +217,7 @@ router.post("/api/bulk/assign", express.json({ limit: "64kb" }), (req, res) => {
 
 /* The KPI row across the top, so the page is not half-populated while the
    board below it is full. Same predicates again. */
-router.get("/api/counts", (req, res) => {
+router.get("/api/counts", auth.requireUser, (req, res) => {
   const t = tally(LEADS);
   res.json({
     companies: Math.round(LEADS.length * 0.58), people: Math.round(LEADS.length * 0.3),

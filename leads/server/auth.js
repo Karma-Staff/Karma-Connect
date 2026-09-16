@@ -59,6 +59,12 @@ const PASSWORD = process.env.SESSION_SECRET;
    ownership stay real — this skips the sign-in, not the authorization. */
 const DEV_AUTH_EMAIL = (process.env.DEV_AUTH_EMAIL || "").trim().toLowerCase();
 const DEV_BYPASS = !!DEV_AUTH_EMAIL && process.env.NODE_ENV !== "production";
+/* DEV_AUTH_ROLE=member forces the bypassed session to a member, so the
+   salesperson's view can be checked without a second account. Admin-only
+   surfaces are presentation; the real control is the API's 403s, and this
+   exercises both. Only meaningful while the bypass is active. */
+const DEV_AUTH_ROLE = ["admin", "member"].includes(process.env.DEV_AUTH_ROLE)
+  ? process.env.DEV_AUTH_ROLE : null;
 if (DEV_AUTH_EMAIL && !DEV_BYPASS) {
   console.error("[karma] DEV_AUTH_EMAIL IGNORED — NODE_ENV=production. Sign-in stays required.");
 } else if (DEV_BYPASS) {
@@ -175,7 +181,8 @@ async function resolve(req, res) {
       + ") — using a synthetic admin so the UI still renders");
     // -1, not 0: requireUser rejects a falsy id, and 0 would fail the very
     // check this synthetic user exists to pass.
-    return { id: -1, email, name: email.split("@")[0], role: "admin" };
+    return { id: -1, email, name: email.split("@")[0],
+      role: DEV_AUTH_ROLE || "admin" };
   }
   /* Auto-enrol here as well as in the callback. One sign-in now covers both
      Karma products, so somebody can arrive holding a perfectly valid session
@@ -188,7 +195,8 @@ async function resolve(req, res) {
     u = await autoInvite(email, name);
   }
   if (!u) return { email, id: null, role: null };
-  return { id: u.id, email: u.email, name: u.display_name, role: u.role || "member" };
+  return { id: u.id, email: u.email, name: u.display_name,
+    role: (DEV_BYPASS && DEV_AUTH_ROLE) || u.role || "member" };
 }
 
 function requireUser(req, res, next) {
