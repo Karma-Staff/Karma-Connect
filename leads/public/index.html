@@ -13,7 +13,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@400;500;600;700&display=swap">
 <!-- bump ?v= whenever app.js/app.css change so no one gets a half-old app -->
-<link rel="stylesheet" href="app.css?v=40">
+<link rel="stylesheet" href="app.css?v=41">
 </head>
 <body>
 
@@ -158,6 +158,12 @@
         Favorites <span class="nav-count" id="count-favorites"></span></button>
 
       <div class="nav-section admin-only hidden">Manage</div>
+      <!-- the manager's view of who is carrying what, and where the unclaimed
+           work is. Assigning from here goes through the same /api/bulk/assign
+           the selection toolbar uses — there is only one way to set an owner. -->
+      <button class="nav-item admin-only hidden" data-tab="assign">
+        <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3.4 19.4a5.8 5.8 0 0 1 11.2 0"/><path d="M17.5 8.5h4M19.5 6.5v4"/></svg>
+        Assignments</button>
       <button class="nav-item admin-only hidden" data-tab="stats">
         <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V4M4 20h16M7.6 20v-5.2M12 20V9.4M16.4 20v-7.8"/></svg>
         Team activity</button>
@@ -277,6 +283,21 @@
 
     <!-- Team activity: admin-only, full width — it replaces the list and
          reading panes rather than sitting beside them. Filled by renderStats(). -->
+    <!-- Assignments: like Team activity, not a list of leads, so it takes the
+         whole width instead of leaving an empty reading pane beside it. -->
+    <section class="stats-pane hidden" id="assign-pane">
+      <div class="stats-head">
+        <div class="list-title-wrap">
+          <div class="seg-eyebrow">Manage</div>
+          <h2>Assignments</h2>
+        </div>
+        <div class="list-filters">
+          <button id="assign-refresh" class="btn-ghost" title="Recount the board">Refresh</button>
+        </div>
+      </div>
+      <div id="assign-body" class="stats-body"></div>
+    </section>
+
     <section class="stats-pane hidden" id="stats-pane">
       <div class="stats-head">
         <div class="list-title-wrap">
@@ -322,6 +343,6 @@
   </div>
 </div>
 
-<script src="app.js?v=44"></script>
+<script src="app.js?v=45"></script>
 </body>
 </html>

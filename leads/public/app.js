@@ -42,6 +42,8 @@ const TABS = {
   removed:   { title: "DNC — do not call", removedTab: true, admin: true },
   // admin-only, and not a list of leads at all: the team's action log
   stats:     { title: "Team activity", stats: true, admin: true },
+  // admin-only, also not a list: who is carrying what, and the unclaimed pool
+  assign:    { title: "Assignments", assign: true, admin: true },
   // not in the sidebar: entered by clicking a segment tag in the reading pane
   segment:   { title: "Segment", kind: "company", pv: "Company",
                dateField: "Date Added", segment: true },
@@ -249,7 +251,7 @@ function toggleFocus(key) {
   paintTiles();
   // Team activity reads the log, not the leads table — there is no list there
   // to filter, so arming a queue from it means "show me those leads"
-  if (S.focus && TABS[S.tab].stats) return setTab("companies");
+  if (S.focus && (TABS[S.tab].stats || TABS[S.tab].assign)) return setTab("companies");
   const list = $("lead-list");
   if (list) list.scrollTop = 0;
   loadList(true);
@@ -443,6 +445,7 @@ async function loadList(resetPage = false) {
   const cfg = TABS[S.tab];
   // Team activity reads the log, not the leads table — no list, no pager
   if (cfg.stats) return loadStats();
+  if (cfg.assign) return loadAssignments();
   // the armed tile is named in the header too: a list that is short because a
   // KPI tile is filtering it should never look like a list that is just short
   $("list-title").textContent =
@@ -2626,6 +2629,161 @@ async function runPhoneRefresh() {
   }
 }
 
+/* ---------------- assignments board (admin) ----------------
+
+   Read-only on the way in: GET /api/assignments is one aggregate pass.
+   On the way out it uses the SAME /api/bulk/assign the selection toolbar uses,
+   so the owner change is logged once, skips no-ops and invalidates the counts
+   cache exactly as it does everywhere else. No second write path. */
+
+// one list call caps at 200, and bulk assign caps at 500; 200 keeps a
+// distribute to a single round trip, which keeps it atomic from the user's
+// point of view
+const ASSIGN_MAX = 200;
+
+async function loadAssignments() {
+  const el = $("assign-body");
+  if (!el) return;
+  el.innerHTML = `<p class="act-empty">Counting the board…</p>`;
+  try {
+    renderAssignments(await api("/api/assignments"));
+  } catch (e) {
+    el.innerHTML = `<p class="act-empty">Could not load assignments (${esc(e.message)})</p>`;
+  }
+}
+
+function renderAssignments(d) {
+  const el = $("assign-body");
+  const people = d.people || [];
+  const pool = d.unassigned || { total: 0, ready: 0, enrich: 0 };
+  // bars are relative to the biggest pile, so the shape of the distribution
+  // reads at a glance rather than the absolute numbers fighting each other
+  const peak = Math.max(1, ...people.map((p) => p.total));
+  const assignable = people.filter((p) => p.team);
+
+  const options = assignable.map((p) =>
+    `<option value="${esc(p.value)}">${esc(p.label)}</option>`).join("");
+
+  el.innerHTML = `
+    <div class="act-card asg-pool">
+      <h4>Unassigned</h4>
+      <div class="asg-pool-row">
+        <div class="asg-pool-n">
+          <b>${pool.total.toLocaleString()}</b>
+          <span>lead${pool.total === 1 ? "" : "s"} with no owner</span>
+          <div class="asg-pool-sub">${pool.ready.toLocaleString()} ready to work ·
+            ${pool.enrich.toLocaleString()} need enrichment</div>
+        </div>
+        ${assignable.length && pool.total ? `
+        <form class="asg-give" id="asg-give">
+          <label>Give
+            <input id="asg-n" type="number" min="1" max="${Math.min(ASSIGN_MAX, pool.total)}"
+                   value="${Math.min(25, pool.total)}" inputmode="numeric">
+          </label>
+          <label>to
+            <select id="asg-who">${options}</select>
+          </label>
+          <label class="asg-ready-only">
+            <input id="asg-ready" type="checkbox" checked>
+            ready to work only
+          </label>
+          <button class="btn-primary" type="submit" id="asg-go">Assign</button>
+        </form>` : ""}
+      </div>
+      ${!assignable.length ? `<p class="act-empty">No team accounts yet — add
+        people under Manage team before assigning.</p>` : ""}
+      <div id="asg-msg" class="asg-msg hidden"></div>
+    </div>
+
+    <div class="act-card">
+      <h4>Workload — ${d.totals.assigned.toLocaleString()} of
+        ${d.totals.leads.toLocaleString()} leads assigned across
+        ${d.totals.members} ${d.totals.members === 1 ? "person" : "people"}</h4>
+      <table class="asg-table">
+        <thead><tr>
+          <th>Person</th><th class="n">Total</th><th class="n">Ready</th>
+          <th class="n">Worked</th><th class="n">Needs info</th><th>Share</th>
+        </tr></thead>
+        <tbody>
+          ${people.map((p) => `
+            <tr${p.team ? "" : ' class="asg-ghost"'}>
+              <td>
+                <span class="avatar avatar-sm" style="background:${avColor(p.value)}">${esc(initials(p.label))}</span>
+                <span class="asg-name">${esc(p.label)}</span>
+                ${p.team ? "" : `<span class="asg-tag" title="Not a team account — an owner string from an import or someone who has left">no account</span>`}
+              </td>
+              <td class="n"><b>${p.total.toLocaleString()}</b></td>
+              <td class="n">${p.ready.toLocaleString()}</td>
+              <td class="n">${p.worked.toLocaleString()}</td>
+              <td class="n">${p.enrich.toLocaleString()}</td>
+              <td class="asg-bar-cell">
+                <span class="asg-bar" style="width:${Math.round((p.total / peak) * 100)}%"></span>
+              </td>
+            </tr>`).join("")}
+        </tbody>
+      </table>
+      ${people.some((p) => !p.team) ? `<p class="asg-foot">Rows marked
+        <b>no account</b> hold leads under an owner name that is nobody's
+        account — an old import, or someone who has left. Reassign them from
+        the list using the owner filter.</p>` : ""}
+    </div>`;
+
+  $("asg-give")?.addEventListener("submit", (e) => {
+    e.preventDefault();
+    distribute(pool.total);
+  });
+}
+
+/* Take the next N unassigned leads and hand them over. Two existing endpoints,
+   no new ones: the list decides WHICH leads (same filters, same ordering the
+   manager would see on screen), bulk assign does the write. */
+async function distribute(poolTotal) {
+  const btn = $("asg-go"), msg = $("asg-msg");
+  const who = $("asg-who");
+  const owner = who.value;
+  const label = who.options[who.selectedIndex]?.text || owner;
+  const readyOnly = $("asg-ready")?.checked;
+  let n = Math.floor(+$("asg-n").value || 0);
+  n = Math.max(1, Math.min(n, ASSIGN_MAX, poolTotal));
+
+  const say = (text, bad) => {
+    msg.textContent = text;
+    msg.classList.remove("hidden");
+    msg.classList.toggle("bad", !!bad);
+  };
+
+  btn.disabled = true;
+  say("Finding leads…");
+  try {
+    /* The server picks the leads, using the same FOCUS predicates the KPI
+       tiles count — "unassigned" alone, or combined with "ready" to mean work
+       that is both unclaimed and actually callable today. Handing someone 50
+       leads with no phone number is not giving them work. */
+    const p = new URLSearchParams({
+      focus: readyOnly ? "unassigned,ready" : "unassigned",
+      limit: String(n), sort: "recent",
+    });
+    const found = await api("/api/leads?" + p.toString());
+    const rows = found.rows || found.list || [];
+    const ids = rows.map((r) => r.Id ?? r.id).filter(Boolean).slice(0, n);
+    if (!ids.length) { say("No matching unassigned leads left.", true); return; }
+
+    say(`Assigning ${ids.length}…`);
+    const out = await api("/api/bulk/assign", {
+      method: "POST",
+      body: JSON.stringify({ ids, owner }),
+    });
+    say(`${out.affected} lead${out.affected === 1 ? "" : "s"} assigned to ${label}.`);
+    toast(`${out.affected} assigned to ${label}`);
+    await loadAssignments();
+    runCounts();                      // the Unassigned tile just changed
+  } catch (e) {
+    say("Could not assign: " + e.message, true);
+  } finally {
+    if ($("asg-go")) $("asg-go").disabled = false;
+  }
+}
+
 async function loadStats() {
   const el = $("stats-body");
   if (!el) return;
@@ -2837,9 +2995,12 @@ function setTab(tab) {
   /* Team activity is not a list of leads: it takes the whole width instead of
      leaving an empty reading pane beside a chart */
   const isStats = !!TABS[tab].stats;
+  const isAssign = !!TABS[tab].assign;
+  const wide = isStats || isAssign;          // neither is a list of leads
   $("stats-pane")?.classList.toggle("hidden", !isStats);
-  document.querySelector(".list-pane")?.classList.toggle("hidden", isStats);
-  $("detail-pane")?.classList.toggle("hidden", isStats);
+  $("assign-pane")?.classList.toggle("hidden", !isAssign);
+  document.querySelector(".list-pane")?.classList.toggle("hidden", wide);
+  $("detail-pane")?.classList.toggle("hidden", wide);
   renderSortOptions();
   loadList(true);
 }
@@ -2849,7 +3010,7 @@ function setTab(tab) {
 function renderSortOptions() {
   const sel = $("sort-by");
   if (!sel) return;
-  if (TABS[S.tab].stats) return;         // its own controls live in the stats pane
+  if (TABS[S.tab].stats || TABS[S.tab].assign) return;  // their controls live in their own panes
   if (TABS[S.tab].activity) {
     // the trail has exactly one meaningful order; leave S.sort alone so the
     // last real choice is still there when the user goes back to a lead tab
@@ -3242,6 +3403,7 @@ function wire() {
   on("segment-back", "click", exitSegment);
   on("act-days", "change", loadStats);
   on("act-refresh", "click", loadStats);
+  on("assign-refresh", "click", loadAssignments);
   on("act-phones", "click", runPhoneRefresh);
   on("act-logs", "click", () => { actFull = !actFull; loadStats(); });
   on("import-btn", "click", openImportModal);

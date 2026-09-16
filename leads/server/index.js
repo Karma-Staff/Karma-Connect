@@ -97,6 +97,9 @@ function mount(app, opts = {}) {
   app.use(require("./bulk").router);
   /* the Team activity pane's phone-refresh button (admin) */
   app.use(require("./webphone").router);
+  /* the assignments board (admin): read-only workload per person — assigning
+     itself still goes through bulk.js, mounted above */
+  app.use(require("./assignments").router);
 
   /* the trash bin, plus its 30-day sweep — mounted after leads so the leads
      router's requireUser has already run for /api/leads/:id paths */

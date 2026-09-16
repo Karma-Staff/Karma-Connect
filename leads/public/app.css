@@ -173,6 +173,45 @@ a:hover { text-decoration: underline; }
 }
 .btn-appswitch .ic { width: 14px; height: 14px; flex: 0 0 14px; }
 .btn-appswitch:hover { color: var(--ink); border-color: var(--accent); }
+/* ---------- assignments board (admin) ---------- */
+.asg-pool-row { display: flex; gap: 24px; align-items: flex-end;
+  flex-wrap: wrap; justify-content: space-between; }
+.asg-pool-n b { font-size: 30px; font-weight: 700; line-height: 1; }
+.asg-pool-n span { color: var(--ink-2); margin-left: 8px; }
+.asg-pool-sub { color: var(--ink-3); font-size: 12.5px; margin-top: 6px; }
+.asg-give { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.asg-give label { display: flex; gap: 6px; align-items: center;
+  color: var(--ink-2); font-size: 13px; }
+.asg-give input[type=number] { width: 72px; background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: 5px; padding: 7px 8px; }
+.asg-give select { background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 5px; padding: 7px 8px; max-width: 200px; }
+.asg-ready-only { white-space: nowrap; }
+.asg-msg { margin-top: 14px; font-size: 13px; color: var(--ink-2); }
+.asg-msg.bad { color: #ffb4ab; }
+
+.asg-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.asg-table th { text-align: left; color: var(--ink-3); font-weight: 600;
+  font-size: 11.5px; letter-spacing: .04em; text-transform: uppercase;
+  padding: 0 10px 8px; border-bottom: 1px solid var(--border); }
+.asg-table th.n, .asg-table td.n { text-align: right; }
+.asg-table td { padding: 9px 10px; border-bottom: 1px solid var(--border);
+  vertical-align: middle; }
+.asg-table tbody tr:last-child td { border-bottom: 0; }
+.asg-table tbody tr:hover td { background: var(--surface-2); }
+.asg-name { margin-left: 9px; }
+/* an owner string that is nobody's account: still holds leads, still needs to
+   be visible, but is not somebody you can hand new work to */
+.asg-ghost td { color: var(--ink-3); }
+.asg-tag { margin-left: 8px; font-size: 10.5px; letter-spacing: .03em;
+  text-transform: uppercase; color: var(--ink-3);
+  border: 1px solid var(--border); border-radius: 20px; padding: 1px 7px; }
+.asg-bar-cell { width: 28%; min-width: 120px; }
+.asg-bar { display: block; height: 7px; border-radius: 20px;
+  background: var(--accent); opacity: .75; min-width: 2px; }
+.asg-ghost .asg-bar { background: var(--ink-3); opacity: .5; }
+.asg-foot { color: var(--ink-3); font-size: 12.5px; margin-top: 14px; }
+
 /* way back to Karma Connect from the sign-in card */
 .login-alt { margin: 14px 0 0; text-align: center; font-size: 12.5px; }
 .login-alt a { color: var(--ink-2); text-decoration: none; }

@@ -86,7 +86,13 @@ function buildFilters(p) {
   if (p.favorite === "true") add("favorite");
   if (STATUSES.includes(p.status)) add("status = ?", p.status);
   if (p.owner) add("owner = ?", p.owner);
-  if (FOCUS[p.focus]) add(FOCUS[p.focus]);          // a KPI tile was clicked
+  /* A KPI tile was clicked. Comma-separated so tiles can be combined —
+     "unassigned,ready" is the assignments board asking for work that is both
+     unclaimed and actually callable. Unknown keys are ignored, and a single
+     key behaves exactly as it always did. */
+  for (const key of String(p.focus || "").split(",")) {
+    if (FOCUS[key]) add(FOCUS[key]);
+  }
   if (p.state && STATE_NAME[p.state.toUpperCase()]) {
     const ab = p.state.toUpperCase();
     add("(upper(state) = ? OR state ILIKE ?)", ab, STATE_NAME[ab]);
@@ -410,4 +416,8 @@ router.delete("/api/comments/:id", async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-module.exports = { router, STATE_NAME, findLead };
+/* FOCUS is exported so the assignments board can reuse these exact predicates.
+   CLAUDE.md warns that the KPI predicates are already written three times and
+   must be changed together — a fourth copy would make that worse, so reuse it
+   rather than restating it. */
+module.exports = { router, STATE_NAME, findLead, FOCUS };
