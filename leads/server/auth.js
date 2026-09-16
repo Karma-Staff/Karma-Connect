@@ -237,6 +237,33 @@ function mountAuthRoutes(app) {
       clearSession(res);
       res.json({ url });
     });
+  } else {
+    /* WorkOS is not configured, so none of the routes above exist. Without
+       these stand-ins the Sign in button leads to a bare "Cannot GET
+       /api/auth/login", which says nothing about the actual problem — a
+       missing environment variable. Answer every sign-in route with what is
+       wrong instead; this is the shared sign-in for both products, so a
+       missed env var on a deploy would otherwise present as a broken page. */
+    const missing = () => ["WORKOS_API_KEY", "WORKOS_CLIENT_ID",
+      "WORKOS_REDIRECT_URI", "SESSION_SECRET"].filter((k) => !process.env[k]);
+    const explain = (req, res) => {
+      const detail = `Sign-in is not configured on this server — missing ${missing().join(", ")}.`;
+      console.error("[karma]", req.method, req.originalUrl, "->", detail);
+      if (req.method === "GET" && !req.xhr) {
+        // a browser followed a link here: say it in the page, not as JSON
+        res.status(503).type("html").send(
+          `<!doctype html><meta charset="utf-8"><title>Sign-in unavailable</title>` +
+          `<body style="font:14px/1.6 system-ui;background:#081224;color:#eef2fb;padding:48px">` +
+          `<h1 style="font-size:19px;margin:0 0 10px">Sign-in is not configured</h1>` +
+          `<p style="color:#9aa7c4;margin:0 0 6px">This server is missing: <b>${missing().join(", ")}</b></p>` +
+          `<p style="color:#9aa7c4;margin:0">Set them and restart, then try again.</p></body>`);
+      } else {
+        res.status(503).json({ error: detail });
+      }
+    };
+    app.get("/api/auth/login", explain);
+    app.get("/api/auth/callback", explain);
+    app.post("/api/auth/logout", (req, res) => { clearSession(res); res.json({ url: "/" }); });
   }
 }
 
