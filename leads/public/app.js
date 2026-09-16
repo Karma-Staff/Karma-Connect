@@ -2665,6 +2665,9 @@ function renderAssignments(d) {
     `<option value="${esc(p.value)}">${esc(p.label)}</option>`).join("");
 
   el.innerHTML = `
+    ${d.demo ? `<div class="asg-demo">Demo data — an invented team and
+      invented leads, held in memory. Nothing here touches the real base, and
+      assigning really works so the board can be tried out.</div>` : ""}
     <div class="act-card asg-pool">
       <h4>Unassigned</h4>
       <div class="asg-pool-row">

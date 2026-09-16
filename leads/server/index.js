@@ -85,6 +85,13 @@ function mount(app, opts = {}) {
       display_name: req.user.name, role: req.user.role });
   });
 
+  /* ---------------- demo mode (development only)
+     Mounted FIRST so it can answer before the database-backed routers, and
+     only when KARMA_DEMO=1 outside production. In every other configuration
+     these handlers are never registered at all. */
+  const demo = require("./demo");
+  if (demo.ON) app.use(demo.router);
+
   /* ---------------- feature routers */
   app.use(require("./leads").router);
   app.use(require("./counts").router);
