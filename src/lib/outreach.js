@@ -1,12 +1,10 @@
 // Client helper for the outreach send queue. A generated message is queued here; the agent
 // auto-sends approved EMAIL items, while LinkedIn items wait for the human one-click hand-off.
-import { getAccessToken } from "./auth.js";
 
 async function api(path, { method = "GET", body } = {}) {
-  const token = getAccessToken();
   const res = await fetch(path, {
     method,
-    headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+    headers: { "Content-Type": "application/json" },
     body: body ? JSON.stringify(body) : undefined,
   });
   let data = {};
@@ -73,9 +71,7 @@ export async function setAgentEnabled(enabled) {
 // Download the agent as a zip. The endpoint needs the Bearer token, so a plain <a download>
 // can't fetch it — we pull the blob here and click a temporary link at it instead.
 export async function downloadAgent() {
-  const res = await fetch("/api/outreach/agent/download", {
-    headers: { Authorization: "Bearer " + getAccessToken() },
-  });
+  const res = await fetch("/api/outreach/agent/download", {});
   if (!res.ok) {
     let msg = "Could not download the agent (" + res.status + ").";
     try { msg = (await res.json())?.error?.message || msg; } catch (e) {}

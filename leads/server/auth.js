@@ -149,6 +149,18 @@ function requireAdmin(req, res, next) {
   });
 }
 
+/* Where sign-in returns to. Karma Connect and Karma Leads share this one
+   sign-in, so the caller says which product it started from and the callback
+   sends them back there.
+
+   Only a same-site absolute path is accepted — never "//evil.com" and never a
+   full URL — so `next` cannot be turned into an open redirect. */
+function safeNext(v) {
+  const s = String(v || "");
+  if (!s.startsWith("/") || s.startsWith("//")) return APP_URL;
+  return s;
+}
+
 /* ---------------- routes (mounted by index.js) ---------------- */
 function mountAuthRoutes(app) {
   if (WORKOS_ON) {
@@ -157,12 +169,15 @@ function mountAuthRoutes(app) {
         provider: "authkit",
         clientId: process.env.WORKOS_CLIENT_ID,
         redirectUri: process.env.WORKOS_REDIRECT_URI,
+        // carried through WorkOS untouched and handed back to the callback
+        state: safeNext(req.query.next),
       }));
     });
 
     app.get("/api/auth/callback", async (req, res) => {
+      const dest = safeNext(req.query.state);
       const back = (msg) =>
-        res.redirect(`${APP_URL}?authError=${encodeURIComponent(msg)}`);
+        res.redirect(`${dest}${dest.includes("?") ? "&" : "?"}authError=${encodeURIComponent(msg)}`);
       try {
         const code = String(req.query.code || "");
         if (!code) return back(String(req.query.error_description ||
@@ -179,7 +194,8 @@ function mountAuthRoutes(app) {
         if (!u) u = await autoInvite(email, name);  // @karmastaff.com walks in as member
         if (!u) {                       // authenticated, but not invited
           clearSession(res);
-          return back(`${email} is not invited to Karma Leads — ask your manager.`);
+          // one sign-in now covers both products, so the copy can't name just one
+          return back(`${email} is not invited to Karma — ask your manager.`);
         }
         // remember the provider's stable id and a display name, once known
         await query(
@@ -187,7 +203,7 @@ function mountAuthRoutes(app) {
              display_name = COALESCE(display_name, $2) WHERE id = $3`,
           [out.user.id, name, u.id]);
         setSession(res, out.sealedSession);
-        res.redirect(APP_URL);
+        res.redirect(dest);
       } catch (e) {
         console.error("[karma] auth callback failed:", e.message);
         back("sign-in failed — try again");
@@ -195,7 +211,8 @@ function mountAuthRoutes(app) {
     });
 
     app.post("/api/auth/logout", async (req, res) => {
-      let url = APP_URL;
+      // ?next= so signing out of Connect doesn't drop you on Leads, and vice versa
+      let url = safeNext(req.query.next);
       try {
         const sealed = getCookie(req, COOKIE);
         if (sealed) {

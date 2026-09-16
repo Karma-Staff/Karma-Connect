@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, cloneElement } from "react";
-import { signIn, signUp, signOut, currentUser, onAuthChange, refreshUser, authAvailable, resendVerification, requestPasswordReset, resetPassword } from "../lib/auth.js";
-import { hasPassword, setPassword as setLocalPw, verifyPassword, clearPassword } from "../lib/localpass.js";
+import { startSignIn, signOut, currentUser, onAuthChange, refreshUser, authAvailable } from "../lib/auth.js";
+import { hasPassword, setPassword as setLocalPw, verifyPassword } from "../lib/localpass.js";
 import { KarmaIcon } from "./icons.jsx";
 
 const LS_KEY = "kc_email";
@@ -145,10 +145,8 @@ const AUTH_CSS = `
 function I({ d, c }) { return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">{c || <path d={d} />}</svg>; }
 const MailIc = <I c={<><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 7l9 6 9-6" /></>} />;
 const LockIc = <I c={<><rect x="4" y="11" width="16" height="9" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></>} />;
-const UserIc = <I c={<><circle cx="12" cy="8" r="3.5" /><path d="M5 20a7 7 0 0 1 14 0" /></>} />;
 const EyeIc = <I c={<><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" /><circle cx="12" cy="12" r="3" /></>} />;
 const EyeOffIc = <I c={<><path d="M3 3l18 18" /><path d="M10.6 10.6a3 3 0 0 0 4.2 4.2" /><path d="M9.9 5.2A10.4 10.4 0 0 1 12 5c6.5 0 10 7 10 7a17.8 17.8 0 0 1-3.3 4.1M6.6 6.6A17.6 17.6 0 0 0 2 12s3.5 7 10 7a10.3 10.3 0 0 0 3.4-.6" /></>} />;
-const CheckIc = <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5"><path d="M5 13l4 4L19 7" /></svg>;
 
 // The login intro clip is shot on a green screen, and CSS has no chroma key — `mix-blend-mode`
 // can only drop black. So we key the green out ourselves to get real per-pixel alpha.
@@ -312,23 +310,17 @@ function Backdrop() {
 // (server-side, scoped by user_id) when a database is configured, or per-browser otherwise.
 export function AuthGate({ children }) {
   const [localEmail, setLocalEmail] = useState(() => { try { return localStorage.getItem(LS_KEY) || ""; } catch (e) { return ""; } });
-  // authMode: undefined (probing) | "remote" (DB-backed accounts) | "local" (per-browser fallback)
+  // authMode: undefined (probing) | "remote" (real accounts, WorkOS) | "local" (per-browser fallback)
   const [authMode, setAuthMode] = useState(undefined);
   const [session, setSession] = useState(() => currentUser()); // the signed-in user object, or null
-  const [mode, setMode] = useState("signin");
+  // Local-gate fields only. The remote path has no form: WorkOS hosts it.
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [password2, setPassword2] = useState("");
-  const [firstName, setFirstName] = useState("");
-  const [lastName, setLastName] = useState("");
-  const [adminCode, setAdminCode] = useState("");
-  const [remember, setRemember] = useState(true);
   const [showPw, setShowPw] = useState(false);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const [showResend, setShowResend] = useState(false);
-  const [resetToken, setResetToken] = useState(""); // set from a ?reset=<token> email link
   // Cinematic handshake intro — plays whenever the login screen loads; click to skip.
   const [intro, setIntro] = useState(true);
   // Use /login-intro.mp4 if present; otherwise fall back to the silhouette animation.
@@ -344,27 +336,17 @@ export function AuthGate({ children }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // After the email-confirmation link redirects back with ?verified=1 / ?verified=0,
-  // or after an inactivity auto-logout redirects with ?timeout=1.
+  // Messages we can be redirected back with: ?authError=... from the shared
+  // sign-in callback (e.g. "not invited"), or ?timeout=1 from the idle logout.
   useEffect(() => {
     let params;
     try { params = new URLSearchParams(window.location.search); } catch (e) { return; }
-    const v = params.get("verified");
-    if (v === "1") setNotice("Email confirmed. You can sign in now.");
-    else if (v === "0") { setErr("That confirmation link is invalid or has expired. Sign in to get a new one."); setShowResend(true); }
+    const authError = params.get("authError");
+    if (authError) setErr(authError);
     if (params.get("timeout") === "1") setNotice("You were signed out after 30 minutes of inactivity. Please sign in again.");
-    if (v != null || params.get("timeout") != null) {
+    if (authError != null || params.get("timeout") != null) {
       try { window.history.replaceState({}, "", window.location.pathname); } catch (e) {}
     }
-  }, []);
-
-  // After a password-reset email link redirects back with ?reset=<token>, show the set-new-password form.
-  useEffect(() => {
-    let t;
-    try { t = new URLSearchParams(window.location.search).get("reset"); } catch (e) { return; }
-    if (!t) return;
-    setResetToken(t);
-    try { window.history.replaceState({}, "", window.location.pathname); } catch (e) {}
   }, []);
 
   useEffect(() => {
@@ -373,6 +355,7 @@ export function AuthGate({ children }) {
     authAvailable().then(async (ok) => {
       if (!active) return;
       setAuthMode(ok ? "remote" : "local");
+      // The session cookie is httpOnly, so only the server can tell us who we are.
       if (ok) { await refreshUser(); if (active) setSession(currentUser()); }
     });
     return () => { active = false; unsub(); };
@@ -390,145 +373,33 @@ export function AuthGate({ children }) {
   }
 
   const typedAddr = email.trim().toLowerCase();
-  const softCreating = !remote && EMAIL_RE.test(typedAddr) && !hasPassword(typedAddr);
-  const creating = remote ? mode === "signup" : softCreating;
+  const creating = !remote && EMAIL_RE.test(typedAddr) && !hasPassword(typedAddr);
 
-  async function handleSubmit(e) {
+  // Local gate only: set or check a password held in this browser. The remote
+  // path never reaches here — it leaves the SPA entirely for WorkOS.
+  async function handleLocalSubmit(e) {
     e.preventDefault();
     setErr(""); setNotice("");
     const addr = email.trim().toLowerCase();
     if (!addr) { setErr("Enter your email."); return; }
     if (!EMAIL_RE.test(addr)) { setErr("Enter a valid email address."); return; }
-
-    if (!remote) {
-      setBusy(true);
-      try {
-        if (!hasPassword(addr)) {
-          if (!password || password.length < 6) { setErr("Choose a password of at least 6 characters."); setBusy(false); return; }
-          if (password !== password2) { setErr("The two passwords don't match."); setBusy(false); return; }
-          await setLocalPw(addr, password);
-        } else {
-          if (!(await verifyPassword(addr, password))) { setErr("Wrong password."); setBusy(false); return; }
-        }
-        try { localStorage.setItem(LS_KEY, addr); } catch (e2) {}
-        setLocalEmail(addr);
-      } catch (e4) { setErr("Could not process the password. Try again."); }
-      setBusy(false);
-      return;
-    }
-
-    if (!password || password.length < 8) { setErr("Use a password of at least 8 characters."); return; }
-    if (mode === "signup" && password !== password2) { setErr("The two passwords don't match."); return; }
     setBusy(true);
     try {
-      if (mode === "signup") {
-        const r = await signUp({ email: addr, password, firstName: firstName.trim(), lastName: lastName.trim(), adminCode: adminCode.trim() });
-        if (r && r.needsVerification) {
-          // Email confirmation required — don't log in; prompt them to check their inbox.
-          setNotice(r.message || "Account created. Check your email for a confirmation link, then sign in.");
-          setMode("signin"); setPassword(""); setPassword2(""); setShowResend(true);
-        }
-        // else: verification off → signUp logged us in; onAuthChange flips the gate.
-      } else {
-        await signIn({ email: addr, password });
-        // onAuthChange updates `session`, which flips the gate to the app.
+      if (!hasPassword(addr)) {
+        if (!password || password.length < 6) { setErr("Choose a password of at least 6 characters."); setBusy(false); return; }
+        if (password !== password2) { setErr("The two passwords don't match."); setBusy(false); return; }
+        await setLocalPw(addr, password);
+      } else if (!(await verifyPassword(addr, password))) {
+        setErr("Wrong password."); setBusy(false); return;
       }
-    } catch (e3) {
-      const msg = (e3 && e3.message) || "Could not sign in. Check your details and try again.";
-      setErr(msg);
-      if (/confirm your email/i.test(msg)) setShowResend(true);
-    }
-    setBusy(false);
-  }
-
-  async function resend() {
-    setErr(""); setNotice("");
-    const addr = email.trim().toLowerCase();
-    if (!EMAIL_RE.test(addr)) { setErr("Enter your email first, then tap Resend."); return; }
-    setBusy(true);
-    try {
-      const r = await resendVerification(addr);
-      setNotice((r && r.message) || "If that account exists and is unconfirmed, a new confirmation email is on its way.");
-    } catch (e) { setErr("Could not resend right now. Try again in a moment."); }
-    setBusy(false);
-  }
-
-  async function forgot() {
-    setErr(""); setNotice("");
-    const addr = email.trim().toLowerCase();
-    if (!remote) {
-      if (!EMAIL_RE.test(addr)) { setErr("Enter your email first."); return; }
-      if (!window.confirm("Reset the password for " + addr + "? You'll set a new one.")) return;
-      clearPassword(addr); setPassword(""); setPassword2(""); setNotice("Password cleared. Set a new one below.");
-      return;
-    }
-    if (!EMAIL_RE.test(addr)) { setErr("Enter your email first, then tap Forgot password."); return; }
-    setBusy(true);
-    try {
-      const r = await requestPasswordReset(addr);
-      setNotice((r && r.message) || "If an account exists for that email, a password reset link is on its way.");
-    } catch (e) {
-      setErr((e && e.message) || "Could not start a reset right now. Try again in a moment.");
-    }
-    setBusy(false);
-  }
-
-  // Submit the set-new-password form (reached via the emailed ?reset link).
-  async function handleReset(e) {
-    e.preventDefault();
-    setErr(""); setNotice("");
-    if (!password || password.length < 8) { setErr("Use a password of at least 8 characters."); return; }
-    if (password !== password2) { setErr("The two passwords don't match."); return; }
-    setBusy(true);
-    try {
-      await resetPassword(resetToken, password);
-      // resetPassword logs us in (onAuthChange flips the gate); clear the token to be safe.
-      setResetToken("");
-    } catch (e2) {
-      setErr((e2 && e2.message) || "Could not reset the password. The link may have expired — request a new one.");
-    }
+      try { localStorage.setItem(LS_KEY, addr); } catch (e2) {}
+      setLocalEmail(addr);
+    } catch (e4) { setErr("Could not process the password. Try again."); }
     setBusy(false);
   }
 
   if (authMode === undefined) {
     return <div className="kcauth"><style>{AUTH_CSS}</style><p style={{ color: "#9aa7c4" }}>Loading…</p></div>;
-  }
-
-  // Set-new-password screen, reached from the emailed reset link (?reset=<token>).
-  if (remote && resetToken) {
-    return (
-      <div className="kcauth">
-        <style>{AUTH_CSS}</style>
-        <Backdrop />
-        <div className="center">
-          <div className="brand">
-            <div className="mk"><KarmaIcon w={62} /></div>
-            <h1>Karma <b>Connect</b></h1>
-            <p>AI-Powered Prospect Intelligence</p>
-          </div>
-          <div className="card">
-            <h2>Set a new password</h2>
-            <div className="sub">Choose a new password for your account. You'll be signed in right after.</div>
-            <form onSubmit={handleReset}>
-              <label>New password</label>
-              <div className="field">
-                <span className="ic">{LockIc}</span>
-                <input type={showPw ? "text" : "password"} autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="At least 8 characters" />
-                <button type="button" className="eye" onClick={() => setShowPw((v) => !v)} aria-label={showPw ? "Hide password" : "Show password"}>{showPw ? EyeOffIc : EyeIc}</button>
-              </div>
-              <label>Confirm new password</label>
-              <div className="field"><span className="ic">{LockIc}</span><input type={showPw ? "text" : "password"} autoComplete="new-password" value={password2} onChange={(e) => setPassword2(e.target.value)} placeholder="Re-enter your new password" /></div>
-              <button className="cta" type="submit" disabled={busy}>{busy ? "Working…" : "Reset password"}</button>
-              {err && <p className="msg err">{err}</p>}
-              {notice && <p className="msg ok">{notice}</p>}
-            </form>
-            <div className="foot">
-              <button type="button" className="lk" onClick={() => { setResetToken(""); setPassword(""); setPassword2(""); setErr(""); setNotice(""); }}>Back to sign in</button>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
   }
 
   return (
@@ -579,70 +450,52 @@ export function AuthGate({ children }) {
           <p>AI-Powered Prospect Intelligence</p>
         </div>
 
-        <div className="card">
-          <h2>{creating ? "Create Your Account" : "Welcome Back"}</h2>
-          <div className="sub">{creating ? "Set up your workspace access to Karma Connect." : "Sign in to continue your prospecting journey."}</div>
-
-          <form onSubmit={handleSubmit}>
-            {remote && mode === "signup" && (
-              <div className="row2">
-                <div><label>First name</label><div className="field"><span className="ic">{UserIc}</span><input value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder="Jane" /></div></div>
-                <div><label>Last name</label><div className="field"><span className="ic">{UserIc}</span><input value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder="Doe" /></div></div>
-              </div>
-            )}
-
-            <label>{creating ? "Work email" : "Email address"}</label>
-            <div className="field"><span className="ic">{MailIc}</span><input type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com" /></div>
-
-            <label>Password</label>
-            <div className="field">
-              <span className="ic">{LockIc}</span>
-              <input type={showPw ? "text" : "password"} autoComplete={creating ? "new-password" : "current-password"} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Enter your password" />
-              <button type="button" className="eye" onClick={() => setShowPw((v) => !v)} aria-label={showPw ? "Hide password" : "Show password"}>{showPw ? EyeOffIc : EyeIc}</button>
-            </div>
-
-            {creating && (
-              <>
-                <label>Confirm password</label>
-                <div className="field"><span className="ic">{LockIc}</span><input type={showPw ? "text" : "password"} autoComplete="new-password" value={password2} onChange={(e) => setPassword2(e.target.value)} placeholder="Re-enter your password" /></div>
-              </>
-            )}
-
-            {remote && mode === "signup" && (
-              <>
-                <label>Admin code <span style={{ color: "#6f7fa6", fontWeight: 500 }}>(optional)</span></label>
-                <div className="field"><span className="ic">{LockIc}</span><input type="password" autoComplete="off" value={adminCode} onChange={(e) => setAdminCode(e.target.value)} placeholder="Leave blank — only if you were given one" /></div>
-              </>
-            )}
-
-            {!creating && (
-              <div className="util">
-                <span className="rm" onClick={() => setRemember((v) => !v)}><span className={"box" + (remember ? " on" : "")}>{remember && CheckIc}</span>Remember me</span>
-                <button type="button" className="lk" onClick={forgot}>Forgot password?</button>
-              </div>
-            )}
-
-            <button className="cta" type="submit" disabled={busy}>
-              {busy ? "Working…" : creating ? "Create Account" : "Sign In"}
+        {remote ? (
+          <div className="card">
+            <h2>Welcome Back</h2>
+            <div className="sub">One sign-in covers Karma Connect and Karma Leads.</div>
+            <button className="cta" type="button" disabled={busy}
+              onClick={() => { setBusy(true); startSignIn("/"); }}>
+              {busy ? "Taking you to sign-in…" : "Sign in"}
             </button>
             {err && <p className="msg err">{err}</p>}
             {notice && <p className="msg ok">{notice}</p>}
-            {showResend && remote && (
-              <p className="msg" style={{ marginTop: 10, color: "#9aa7c4" }}>
-                Didn't get the email? <button type="button" className="lk" onClick={resend} disabled={busy}>Resend confirmation</button>
-              </p>
-            )}
-          </form>
-
-          {remote && (
             <div className="foot">
-              {mode === "signup" ? "Already have an account? " : "New here? "}
-              <button type="button" className="lk" onClick={() => { setMode(mode === "signup" ? "signin" : "signup"); setErr(""); setNotice(""); }}>
-                {mode === "signup" ? "Sign in" : "Create an account"}
-              </button>
+              Access is managed by your administrator — there is no separate password to remember.
             </div>
-          )}
-        </div>
+          </div>
+        ) : (
+          <div className="card">
+            <h2>{creating ? "Set a Password" : "Welcome Back"}</h2>
+            <div className="sub">
+              This browser is using a local workspace — no server accounts are configured.
+            </div>
+            <form onSubmit={handleLocalSubmit}>
+              <label>Email address</label>
+              <div className="field"><span className="ic">{MailIc}</span><input type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com" /></div>
+
+              <label>Password</label>
+              <div className="field">
+                <span className="ic">{LockIc}</span>
+                <input type={showPw ? "text" : "password"} autoComplete={creating ? "new-password" : "current-password"} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Enter your password" />
+                <button type="button" className="eye" onClick={() => setShowPw((v) => !v)} aria-label={showPw ? "Hide password" : "Show password"}>{showPw ? EyeOffIc : EyeIc}</button>
+              </div>
+
+              {creating && (
+                <>
+                  <label>Confirm password</label>
+                  <div className="field"><span className="ic">{LockIc}</span><input type={showPw ? "text" : "password"} autoComplete="new-password" value={password2} onChange={(e) => setPassword2(e.target.value)} placeholder="Re-enter your password" /></div>
+                </>
+              )}
+
+              <button className="cta" type="submit" disabled={busy}>
+                {busy ? "Working…" : creating ? "Continue" : "Sign In"}
+              </button>
+              {err && <p className="msg err">{err}</p>}
+              {notice && <p className="msg ok">{notice}</p>}
+            </form>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -5,7 +5,7 @@
 // The last-activity time is persisted, so a tab left open then revisited — or reloaded —
 // past the limit is logged out immediately rather than getting a fresh 30 minutes.
 
-import { getAccessToken, signOut } from "./auth.js";
+import { currentUser, signOut } from "./auth.js";
 
 const IDLE_MS = 30 * 60 * 1000; // 30 minutes
 const LAST_ACTIVE_KEY = "kc_last_active";
@@ -17,7 +17,7 @@ let lastWrite = 0;
 
 function loggedIn() {
   try {
-    return !!getAccessToken() || !!localStorage.getItem(LOCAL_GATE_KEY);
+    return !!currentUser() || !!localStorage.getItem(LOCAL_GATE_KEY);
   } catch (e) { return false; }
 }
 

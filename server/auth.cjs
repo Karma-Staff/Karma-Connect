@@ -41,16 +41,57 @@ function baseUrl(req) {
   return proto + "://" + req.headers.host;
 }
 
-// Middleware: require a valid login token; attaches req.userId / req.email.
-function requireUser(req, res, next) {
-  if (!JWT_SECRET) return res.status(500).json({ error: { message: "Server not configured (missing AUTH_JWT_SECRET)." } });
-  const h = req.headers.authorization || "";
-  const token = h.startsWith("Bearer ") ? h.slice(7) : "";
-  const claims = token ? verifyJWT(token, JWT_SECRET, JWT_ISS) : null;
-  if (!claims || !claims.sub) return res.status(401).json({ error: { message: "Please sign in again." } });
-  req.userId = claims.sub;
-  req.email = claims.email || "";
-  next();
+// ── Single sign-on ──────────────────────────────────────────────────────────
+// Identity is the WorkOS session both Karma products share (sealed into the
+// kl_session cookie by leads/server/auth.js). Karma Connect no longer mints or
+// verifies its own tokens; it maps the email on that session to a row in its
+// OWN users table, because every query here is keyed by users.id.
+//
+// Required lazily: leads/server/db.js throws at require time when its database
+// is unconfigured, and that must not stop Karma Connect from booting.
+function leadsAuth() {
+  return require("../leads/server/auth.js");
+}
+
+// The Connect-side user for an SSO identity, created on first sign-in so people
+// who have only ever used Leads get a Connect account the moment they open it.
+// Matching is by EMAIL, which is what keeps existing Connect history attached to
+// the right person after the cutover from passwords.
+async function connectUserFor(email, name) {
+  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  const first = parts.shift() || "";
+  const last = parts.join(" ");
+  // password_hash is NOT NULL and passwords are retired, so store a sentinel
+  // that no bcrypt compare can ever match.
+  const { rows } = await q(
+    `insert into users (email, password_hash, first_name, last_name)
+          values ($1, '!sso', $2, $3)
+     on conflict (email) do update
+        set first_name = case when users.first_name = '' then excluded.first_name else users.first_name end,
+            last_name  = case when users.last_name  = '' then excluded.last_name  else users.last_name  end
+      returning id, email, first_name, last_name, is_admin`,
+    [email, first, last],
+  );
+  return rows[0];
+}
+
+// Middleware: require a signed-in user; attaches req.userId / req.email / req.user.
+async function requireUser(req, res, next) {
+  try {
+    const session = await leadsAuth().resolve(req, res);
+    if (!session || !session.email) return res.status(401).json({ error: { message: "Please sign in." } });
+    if (!emailAllowed(session.email)) {
+      return res.status(403).json({ error: { message: "This account is not allowed to use Karma Connect." } });
+    }
+    const user = await connectUserFor(session.email, session.name);
+    req.userId = user.id;
+    req.email = user.email;
+    req.user = user;
+    next();
+  } catch (e) {
+    console.error("auth: could not resolve the session —", e.message);
+    return res.status(503).json({ error: { message: "Sign-in is temporarily unavailable." } });
+  }
 }
 
 // Middleware (after requireUser): admin via the ADMIN_EMAILS list OR the is_admin DB flag.

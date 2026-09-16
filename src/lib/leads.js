@@ -1,8 +1,7 @@
 // Leads + pipeline stats reads for the dashboard, board, and export. No AI tokens used.
-import { getAccessToken } from "./auth.js";
 
 async function get(path) {
-  const res = await fetch(path, { headers: { Authorization: "Bearer " + getAccessToken() } });
+  const res = await fetch(path);
   if (!res.ok) throw new Error("Request failed (" + res.status + ").");
   return res.json();
 }
@@ -21,7 +20,7 @@ export async function getStats() {
 
 // Branded PDF of all leads (generated server-side). Returns a Blob.
 export async function getLeadsPdf() {
-  const res = await fetch("/api/connect/leads/export.pdf", { headers: { Authorization: "Bearer " + getAccessToken() } });
+  const res = await fetch("/api/connect/leads/export.pdf");
   if (!res.ok) throw new Error("Could not generate the PDF.");
   return res.blob();
 }
@@ -30,7 +29,7 @@ export async function getLeadsPdf() {
 export async function getProspectBriefPdf(payload) {
   const res = await fetch("/api/connect/leads/brief.pdf", {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: "Bearer " + getAccessToken() },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload || {}),
   });
   if (!res.ok) throw new Error("Could not generate the PDF.");

@@ -153,6 +153,10 @@ a:hover { text-decoration: underline; }
 }
 .btn-appswitch .ic { width: 14px; height: 14px; flex: 0 0 14px; }
 .btn-appswitch:hover { color: var(--ink); border-color: var(--accent); }
+/* way back to Karma Connect from the sign-in card */
+.login-alt { margin: 14px 0 0; text-align: center; font-size: 12.5px; }
+.login-alt a { color: var(--ink-2); text-decoration: none; }
+.login-alt a:hover { color: var(--accent); text-decoration: underline; }
 :root[data-theme="dark"] .theme-ic-dark { display: none; }
 :root:not([data-theme="dark"]) .theme-ic-light { display: none; }
 

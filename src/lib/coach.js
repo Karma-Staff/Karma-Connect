@@ -1,7 +1,6 @@
 // Message coach — the "learn from results" loop. Pulls the account's sent messages + outcomes,
 // asks Claude to distill a short playbook of what works per message kind, saves it, and (via
 // KarmaConnectAI's sysFor) injects it into future generation so the engine keeps improving.
-import { getAccessToken } from "./auth.js";
 import { callClaude } from "./claude.js";
 import { SYSTEM } from "./brand.js";
 import { pLearnPlaybook } from "./prompts.js";
@@ -9,7 +8,7 @@ import { pLearnPlaybook } from "./prompts.js";
 async function api(path, { method = "GET", body } = {}) {
   const res = await fetch(path, {
     method,
-    headers: { "Content-Type": "application/json", Authorization: "Bearer " + getAccessToken() },
+    headers: { "Content-Type": "application/json" },
     body: body ? JSON.stringify(body) : undefined,
   });
   let data = {};

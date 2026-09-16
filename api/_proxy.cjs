@@ -189,7 +189,11 @@ function sanitizeBody(body) {
 // ── The single request handler both entry points call ──
 // opts.requireAuth: enforce login + rate limits + usage (prod). Off for localhost dev.
 // opts.recordUsage: optional async fn(row) that persists one usage row (server.js → Postgres).
-async function handleClaude({ method, authHeader, bodyString }, opts = {}) {
+// opts/identity: when the caller has ALREADY authenticated the request (the merged
+// Karma site resolves the shared WorkOS session in requireUser before reaching
+// here), it passes { userId, email } and no bearer token is looked for. The
+// authHeader path is kept for the standalone entry point that still mints JWTs.
+async function handleClaude({ method, authHeader, bodyString, identity }, opts = {}) {
   const requireAuth = !!opts.requireAuth;
   if (method !== "POST") return jr(405, { error: { message: "Method not allowed." } });
 
@@ -198,17 +202,25 @@ async function handleClaude({ method, authHeader, bodyString }, opts = {}) {
 
   let userId = null;
   if (requireAuth) {
-    const secret = process.env.AUTH_JWT_SECRET;
-    if (!secret) return jr(500, { error: { message: "Server not configured (missing AUTH_JWT_SECRET)." } });
-    const token = (authHeader || "").startsWith("Bearer ") ? authHeader.slice(7) : "";
-    const claims = token ? verifyJWT(token, secret, JWT_ISS) : null;
-    if (!claims) return jr(401, { error: { message: "Please sign in again." } });
-    const email = (claims.email || "").toLowerCase();
+    let email = "";
+    if (identity && identity.userId) {
+      // Already authenticated upstream against the shared WorkOS session.
+      userId = identity.userId;
+      email = String(identity.email || "").toLowerCase();
+    } else {
+      const secret = process.env.AUTH_JWT_SECRET;
+      if (!secret) return jr(500, { error: { message: "Server not configured (missing AUTH_JWT_SECRET)." } });
+      const token = (authHeader || "").startsWith("Bearer ") ? authHeader.slice(7) : "";
+      const claims = token ? verifyJWT(token, secret, JWT_ISS) : null;
+      if (!claims) return jr(401, { error: { message: "Please sign in again." } });
+      email = (claims.email || "").toLowerCase();
+      userId = claims.sub; // trusted: from the verified token, never the client
+    }
+    // The allowlist applies however the identity arrived.
     const allowEmails = (process.env.ALLOWED_EMAILS || "").toLowerCase().split(",").map((s) => s.trim()).filter(Boolean);
     const domain = (process.env.ALLOWED_EMAIL_DOMAIN || "karmastaff.com").toLowerCase();
     const allowed = allowEmails.length ? allowEmails.includes(email) : (!domain || email.endsWith("@" + domain));
     if (!allowed) return jr(403, { error: { message: "This account is not allowed to use Karma Connect." } });
-    userId = claims.sub; // trusted: from the verified token, never the client
   }
 
   // Global circuit breaker.

@@ -1,12 +1,10 @@
 // Client helper for the lead-approval gate. Members request approval for a lead to unlock
 // the Relationship / Meeting / Follow-up engines; admins approve or deny.
-import { getAccessToken } from "./auth.js";
 
 async function api(path, { method = "GET", body } = {}) {
-  const token = getAccessToken();
   const res = await fetch(path, {
     method,
-    headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+    headers: { "Content-Type": "application/json" },
     body: body ? JSON.stringify(body) : undefined,
   });
   let data = {};

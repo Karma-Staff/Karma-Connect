@@ -1,10 +1,9 @@
 // Per-lead notes & activity timeline. No AI tokens used.
-import { getAccessToken } from "./auth.js";
 
 async function api(path, { method = "GET", body } = {}) {
   const res = await fetch(path, {
     method,
-    headers: { "Content-Type": "application/json", Authorization: "Bearer " + getAccessToken() },
+    headers: { "Content-Type": "application/json" },
     body: body ? JSON.stringify(body) : undefined,
   });
   let data = {};

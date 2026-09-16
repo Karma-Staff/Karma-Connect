@@ -1,11 +1,9 @@
 // Admin-only member management. All calls are admin-gated server-side. No AI tokens used.
-import { getAccessToken } from "./auth.js";
 
 async function adminFetch(path, { method = "GET", body } = {}) {
-  const token = getAccessToken();
   const res = await fetch(path, {
     method,
-    headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+    headers: { "Content-Type": "application/json" },
     body: body ? JSON.stringify(body) : undefined,
   });
   let data = {};
