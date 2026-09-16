@@ -3314,20 +3314,26 @@ async function init() {
   setDensity(localStorage.getItem("kl_density") || "compact");
   setDetailWidth(+localStorage.getItem("kl_detail_w") || 460);
   try { wire(); } catch (e) { console.error("[karma] wiring failed", e); }
-  // ?next= so the shared sign-in returns here rather than to whichever
-  // product the server happens to treat as the default landing place
-  $("login-workos")?.addEventListener("click",
-    () => { location.href = "/api/auth/login?next=" + encodeURIComponent(location.pathname); });
   let stored = authError;
   // always attempt boot: the WorkOS session lives in a cookie
   try { await boot(); return; } catch (ex) { stored = stored || ex.message; }
+
+  /* No session. There is one sign-in on this site and it belongs to Karma
+     Connect, so go straight to it and return here afterwards — a second
+     sign-in card here would only duplicate it. */
+  if (!stored || /unauthorized|invalid|Not signed in/i.test(stored)) {
+    location.replace("/api/auth/login?next=" + encodeURIComponent(location.pathname));
+    return;
+  }
+
+  /* Signed in, but this account cannot use Leads (the API said so). Sending
+     them to the sign-in would bounce them back here forever, so say what
+     happened and offer the way back to Connect. */
   $("login-screen").classList.remove("hidden");
   $("app").classList.add("hidden");
-  if (stored && !/unauthorized|invalid|Not signed in/i.test(stored)) {
-    const err = $("login-error");                 // say why, don't just bounce
-    err.textContent = stored;
-    err.classList.remove("hidden");
-  }
+  const err = $("login-error");                   // say why, don't just bounce
+  err.textContent = stored;
+  err.classList.remove("hidden");
 }
 
 init();

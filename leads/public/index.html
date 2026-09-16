@@ -13,11 +13,16 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@400;500;600;700&display=swap">
 <!-- bump ?v= whenever app.js/app.css change so no one gets a half-old app -->
-<link rel="stylesheet" href="app.css?v=39">
+<link rel="stylesheet" href="app.css?v=40">
 </head>
 <body>
 
-<!-- ============ LOGIN ============ -->
+<!-- ============ NO ACCESS ============ -->
+<!-- There is ONE sign-in on this site and it is not here: anyone arriving
+     without a session is sent straight to it (see init() in app.js), so this
+     panel never shows a sign-in button. It is reached only by someone who IS
+     signed in and still cannot use Karma Leads — where redirecting them would
+     just bounce them between here and the sign-in forever. -->
 <div id="login-screen" class="login-screen hidden">
   <div class="login-card">
     <div class="login-logo">
@@ -27,12 +32,8 @@
       </svg>
       <span class="wordmark"><b>Karma</b>Leads</span>
     </div>
-    <p class="login-sub" id="login-sub">Continue to the team sign-in</p>
-    <!-- sign-in happens on WorkOS's hosted page; this button just goes there -->
-    <button id="login-workos" class="btn-primary btn-block">Sign in</button>
+    <p class="login-sub" id="login-sub">You don't have access to Karma Leads.</p>
     <div id="login-error" class="login-error hidden"></div>
-    <!-- the topbar switcher lives inside #app, which is hidden until sign-in, so
-         without this anyone who lands here from Connect is stranded -->
     <p class="login-alt"><a href="/">Back to Karma Connect</a></p>
   </div>
 </div>
@@ -321,6 +322,6 @@
   </div>
 </div>
 
-<script src="app.js?v=43"></script>
+<script src="app.js?v=44"></script>
 </body>
 </html>
