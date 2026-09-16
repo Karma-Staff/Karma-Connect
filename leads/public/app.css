@@ -211,6 +211,11 @@ a:hover { text-decoration: underline; }
   background: var(--accent); opacity: .75; min-width: 2px; }
 .asg-ghost .asg-bar { background: var(--ink-3); opacity: .5; }
 .asg-foot { color: var(--ink-3); font-size: 12.5px; margin-top: 14px; }
+/* a phone number that can be dialled in-page still looks like the link it is */
+.dg-value a.dial { display: inline-flex; align-items: center; gap: 6px; }
+.dg-value a.dial::before { content: ""; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--good); flex: 0 0 6px; }
+
 /* unmistakable: these numbers are invented */
 .asg-demo { border: 1px dashed var(--gold); border-radius: var(--radius);
   background: rgba(255,207,0,.07); color: var(--ink-2);

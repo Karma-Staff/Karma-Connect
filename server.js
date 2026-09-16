@@ -79,14 +79,50 @@ const CSP = [
   "font-src 'self' https://fonts.gstatic.com data:",
   "connect-src 'self'",
 ].join("; ");
+
+// ── Karma Leads' softphone exception ──
+// Zoho Voice's click-to-call is a WebRTC softphone that runs IN the page: its
+// SDK is served from js.zohostatic.com and it talks to Zoho over HTTPS and
+// WebSocket, none of which the policy above permits. So /leads gets a widened
+// policy and the rest of the site — all of Karma Connect — keeps the strict
+// one. Widening it globally would hand every page the right to load and talk
+// to a third party for the sake of one feature on one route.
+//
+// Scoped to Zoho's hosts rather than opened to the web. Wildcards are used for
+// connect-src because the SDK's signalling and TURN hosts are regional
+// (us-relay2.zohovoice.com and friends) and are not a fixed published list.
+const ZOHO_SCRIPT = "https://js.zohostatic.com";
+const ZOHO_CONNECT = "https://*.zoho.com https://*.zohovoice.com https://*.zohostatic.com "
+  + "wss://*.zoho.com wss://*.zohovoice.com";
+const LEADS_CSP = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "object-src 'none'",
+  "frame-ancestors 'none'",
+  "img-src 'self' data: https://*.zohostatic.com https://*.zoho.com",
+  `script-src 'self' ${ZOHO_SCRIPT}`,
+  `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com ${ZOHO_SCRIPT}`,
+  "font-src 'self' https://fonts.gstatic.com data: https://*.zohostatic.com",
+  `connect-src 'self' ${ZOHO_CONNECT}`,
+  `media-src 'self' blob: ${ZOHO_CONNECT}`,
+  `frame-src 'self' https://*.zoho.com`,
+].join("; ");
+
+const onLeads = (req) => req.path === "/leads" || req.path.startsWith("/leads/");
+
 app.use((req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
-  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  /* The microphone is denied everywhere except /leads, where denying it would
+     make the softphone impossible — a WebRTC call cannot happen without it.
+     Camera and geolocation stay denied everywhere, including there. */
+  res.setHeader("Permissions-Policy", onLeads(req)
+    ? "camera=(), microphone=(self), geolocation=()"
+    : "camera=(), microphone=(), geolocation=()");
   if (!DEV) {
     res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
-    res.setHeader("Content-Security-Policy", CSP);
+    res.setHeader("Content-Security-Policy", onLeads(req) ? LEADS_CSP : CSP);
   }
   next();
 });

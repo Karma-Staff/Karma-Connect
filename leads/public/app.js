@@ -904,7 +904,11 @@ function renderDetail(r) {
         ? `<button class="copyable" data-copy="${esc(r.Email)}"
                    title="Click to copy · shift-click to compose">${esc(r.Email)}</button>`
         : "")}
-      ${dgItem("Phone", r.Phone ? `<a href="tel:${esc(r.Phone)}">${esc(r.Phone)}</a>` : "")}
+      ${dgItem("Phone", r.Phone
+        ? `<a class="dial" href="tel:${esc(r.Phone)}" data-dial="${esc(r.Phone)}"
+              data-dial-name="${esc(r.Company || r.Name || "")}"
+              title="Call with Zoho Voice">${esc(r.Phone)}</a>`
+        : "")}
       ${dgItem("Website", r.Website ? `<a href="${esc(/^https?:/.test(r.Website) ? r.Website : "https://" + r.Website)}" target="_blank">${esc(r.Website)}</a>` : "")}
       ${dgItem("Location", esc(locationLabel(r)))}
       ${band ? dgItem("Company size", `${r.Employees.toLocaleString()} employees <span class="size-tag ${band.cls}">${band.label}</span>`) : ""}
@@ -2629,6 +2633,80 @@ async function runPhoneRefresh() {
   }
 }
 
+/* ---------------- click-to-call (Zoho Voice) ----------------
+
+   The number stays a real tel: link in the markup. If the softphone is
+   configured AND loads AND registers, a click is intercepted and dialled
+   in-page; in every other case the browser follows the link and the desk
+   phone or Zoho's desktop app answers it, exactly as before. That ordering is
+   deliberate: a telephony integration that is down must not cost somebody the
+   ability to ring a lead.
+
+   The SDK is fetched only when the server says the feature is on, so a team
+   without Zoho pays nothing for it. */
+
+const VOICE = { on: false, sdk: null, ready: false, loading: null };
+
+async function voiceInit() {
+  try {
+    const cfg = await api("/api/voice/config");
+    VOICE.on = !!cfg.enabled;
+  } catch (e) { VOICE.on = false; }       // config unreachable = stay on tel:
+  if (!VOICE.on) return;
+  loadVoiceSdk().catch((e) =>
+    console.warn("[karma] click-to-call unavailable:", e.message));
+}
+
+function loadVoiceSdk() {
+  if (VOICE.loading) return VOICE.loading;
+  VOICE.loading = new Promise((resolve, reject) => {
+    const el = document.createElement("script");
+    // -ui build: Zoho renders its own draggable call widget, so we do not have
+    // to build and maintain a dialpad, mute button and call timer of our own
+    el.src = "https://js.zohostatic.com/zvoice_plugin/latest/js/zohovoice-ui.min.js";
+    el.async = true;
+    el.onerror = () => reject(new Error("could not load the Zoho Voice SDK"));
+    el.onload = () => {
+      try {
+        if (typeof ZohoVoice === "undefined") throw new Error("SDK did not define ZohoVoice");
+        const zv = new ZohoVoice({ development: false, debug: false, draggable: true });
+        // the SDK asks for a token whenever it needs one; the server holds the
+        // refresh token and hands back a short-lived access token
+        zv.ajaxOpts.isOAuth = true;
+        zv.ajaxOpts.oAuthCallBack = (cb) => {
+          api("/api/voice/token", { method: "POST" })
+            .then((r) => cb(r.access_token))
+            .catch((e) => {
+              console.warn("[karma] voice token:", e.message);
+              cb(null);                  // SDK reports an error; we fall back
+            });
+        };
+        zv.on?.("ready", () => { VOICE.ready = true; });
+        zv.on?.("regState", (st) => { VOICE.ready = String(st?.state || st) !== "unregistered"; });
+        zv.on?.("error", (err) => console.warn("[karma] voice:", err?.description || err));
+        zv.initialize();
+        VOICE.sdk = zv;
+        resolve(zv);
+      } catch (e) { reject(e); }
+    };
+    document.head.appendChild(el);
+  });
+  return VOICE.loading;
+}
+
+/* Returns true when the call was placed in-page, false to let the tel: link
+   do its job. Never throws at a click handler. */
+function dialInPage(number, name) {
+  if (!VOICE.on || !VOICE.sdk || !VOICE.ready) return false;
+  try {
+    VOICE.sdk.makeCall({ number, name: name || undefined });
+    return true;
+  } catch (e) {
+    console.warn("[karma] could not dial:", e.message);
+    return false;
+  }
+}
+
 /* ---------------- assignments board (admin) ----------------
 
    Read-only on the way in: GET /api/assignments is one aggregate pass.
@@ -3409,6 +3487,20 @@ function wire() {
   on("act-days", "change", loadStats);
   on("act-refresh", "click", loadStats);
   on("assign-refresh", "click", loadAssignments);
+
+  /* Delegated so it covers the reading pane, which is re-rendered constantly.
+     A modified click (new tab, copy link) is left alone — the number is still
+     an ordinary link and should behave like one. */
+  document.addEventListener("click", (e) => {
+    const a = e.target.closest?.("a.dial");
+    if (!a || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+    if (dialInPage(a.dataset.dial, a.dataset.dialName)) {
+      e.preventDefault();
+      toast("Calling " + (a.dataset.dialName || a.dataset.dial) + "…");
+    }
+    // otherwise: not prevented, so the browser follows tel: as it always did
+  });
+  voiceInit();
   on("act-phones", "click", runPhoneRefresh);
   on("act-logs", "click", () => { actFull = !actFull; loadStats(); });
   on("import-btn", "click", openImportModal);

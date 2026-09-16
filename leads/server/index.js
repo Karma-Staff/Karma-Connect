@@ -107,6 +107,8 @@ function mount(app, opts = {}) {
   /* the assignments board (admin): read-only workload per person — assigning
      itself still goes through bulk.js, mounted above */
   app.use(require("./assignments").router);
+  /* click-to-call config + the OAuth token the in-page softphone asks for */
+  app.use(require("./voice").router);
 
   /* the trash bin, plus its 30-day sweep — mounted after leads so the leads
      router's requireUser has already run for /api/leads/:id paths */
