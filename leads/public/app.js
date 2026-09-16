@@ -3314,8 +3314,10 @@ async function init() {
   setDensity(localStorage.getItem("kl_density") || "compact");
   setDetailWidth(+localStorage.getItem("kl_detail_w") || 460);
   try { wire(); } catch (e) { console.error("[karma] wiring failed", e); }
+  // ?next= so the shared sign-in returns here rather than to whichever
+  // product the server happens to treat as the default landing place
   $("login-workos")?.addEventListener("click",
-    () => { location.href = "/api/auth/login"; });
+    () => { location.href = "/api/auth/login?next=" + encodeURIComponent(location.pathname); });
   let stored = authError;
   // always attempt boot: the WorkOS session lives in a cookie
   try { await boot(); return; } catch (ex) { stored = stored || ex.message; }

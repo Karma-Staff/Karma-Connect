@@ -126,7 +126,17 @@ async function resolve(req, res) {
   const wu = await workosUser(req, res);
   if (wu) email = String(wu.email || "").trim().toLowerCase();
   if (!email) return null;
-  const u = await userByEmail(email);
+  let u = await userByEmail(email);
+  /* Auto-enrol here as well as in the callback. One sign-in now covers both
+     Karma products, so somebody can arrive holding a perfectly valid session
+     that was minted before they had a Leads row — signed in through Connect,
+     or invited after their session began. Without this they would land on a
+     403 dead end with no way to fix it but signing out. Same rule as the
+     callback: AUTO_INVITE_DOMAIN walks in as a member, nobody else. */
+  if (!u) {
+    const name = wu ? ([wu.firstName, wu.lastName].filter(Boolean).join(" ") || null) : null;
+    u = await autoInvite(email, name);
+  }
   if (!u) return { email, id: null, role: null };
   return { id: u.id, email: u.email, name: u.display_name, role: u.role || "member" };
 }
@@ -192,16 +202,19 @@ function mountAuthRoutes(app) {
           .filter(Boolean).join(" ") || null;
         let u = await userByEmail(email);
         if (!u) u = await autoInvite(email, name);  // @karmastaff.com walks in as member
-        if (!u) {                       // authenticated, but not invited
-          clearSession(res);
-          // one sign-in now covers both products, so the copy can't name just one
-          return back(`${email} is not invited to Karma — ask your manager.`);
+        /* Authenticated but not invited to Leads is NO LONGER a refusal. This
+           sign-in is shared with Karma Connect, and clearing the session here
+           would lock someone out of Connect for the unrelated reason that they
+           have no Leads row. Authentication is shared; AUTHORIZATION stays with
+           each product — Leads' requireUser still 403s this person, Connect
+           still applies its own allowlist. */
+        if (u) {
+          // remember the provider's stable id and a display name, once known
+          await query(
+            `UPDATE app_users SET oidc_sub = $1,
+               display_name = COALESCE(display_name, $2) WHERE id = $3`,
+            [out.user.id, name, u.id]);
         }
-        // remember the provider's stable id and a display name, once known
-        await query(
-          `UPDATE app_users SET oidc_sub = $1,
-             display_name = COALESCE(display_name, $2) WHERE id = $3`,
-          [out.user.id, name, u.id]);
         setSession(res, out.sealedSession);
         res.redirect(dest);
       } catch (e) {
