@@ -85,8 +85,64 @@ function build() {
   return leads;
 }
 
+/* KARMA_DEMO_XLSX points at a spreadsheet to use INSTEAD of the generated set —
+   a real export makes the board behave like the real thing (real pile sizes,
+   real proportion with a phone) without a database.
+
+   The file is read from wherever it sits on disk and is never copied into the
+   repo: these exports are real companies, names and phone numbers, and Leads'
+   own .gitignore excludes *.xlsx for exactly that reason. Only this loader is
+   committed. If the file is missing or unreadable the generated set is used,
+   because a demo that cannot start is worse than an invented one. */
+function fromSpreadsheet(file) {
+  const XLSX = require("xlsx");
+  const wb = XLSX.readFile(file);
+  const rows = [];
+  for (const sheet of wb.SheetNames) {
+    for (const r of XLSX.utils.sheet_to_json(wb.Sheets[sheet], { defval: "" })) rows.push(r);
+  }
+  // header names vary between exports, so match loosely rather than exactly
+  const pick = (row, ...names) => {
+    for (const n of names) {
+      const key = Object.keys(row).find((k) => k.trim().toLowerCase() === n);
+      if (key && String(row[key]).trim()) return String(row[key]).trim();
+    }
+    return "";
+  };
+  return rows.map((r, i) => ({
+    id: i + 1,
+    owner: pick(r, "owner", "assigned to") || null,
+    status: pick(r, "lead status", "status") || "New",
+    phone: pick(r, "phone", "phone number", "telephone"),
+    email: pick(r, "email", "email address"),
+    // carried for the banner only — the board counts, it does not list leads
+    label: pick(r, "company", "name", "job title posted") || `Lead ${i + 1}`,
+  }));
+}
+
+function load() {
+  if (!ON) return { leads: [], source: null };
+  const file = (process.env.KARMA_DEMO_XLSX || "").trim();
+  if (file) {
+    try {
+      const leads = fromSpreadsheet(file);
+      if (leads.length) {
+        console.warn(`[karma] DEMO using ${leads.length} rows from ${file}`);
+        return { leads, source: file.split(/[\\/]/).pop() };
+      }
+      console.error("[karma] DEMO spreadsheet had no rows — using generated data");
+    } catch (e) {
+      console.error("[karma] DEMO could not read the spreadsheet (" + e.message
+        + ") — using generated data");
+    }
+  }
+  return { leads: build(), source: null };
+}
+
 // module-level so an assignment survives a page reload, the way a database would
-const LEADS = ON ? build() : [];
+const loaded = load();
+const LEADS = loaded.leads;
+const SOURCE = loaded.source;
 
 // the same three predicates the real board counts, kept in one place here too
 const isReady = (l) => l.status === "New" && !!String(l.phone || "").trim();
@@ -118,6 +174,7 @@ router.get("/api/assignments", (req, res) => {
   const assigned = people.reduce((a, p) => a + p.total, 0);
   res.json({
     demo: true,
+    demoSource: SOURCE,          // names the spreadsheet when one is loaded
     people,
     unassigned: { total: pool.total, ready: pool.ready, enrich: pool.enrich },
     totals: { leads: LEADS.length, assigned, members: TEAM.length },
