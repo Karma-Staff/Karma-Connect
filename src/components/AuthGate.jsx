@@ -372,7 +372,10 @@ export function AuthGate({ children }) {
     const unsub = onAuthChange((u) => { if (active) setSession(u); });
     authAvailable().then(async (ok) => {
       if (!active) return;
-      setAuthMode(ok ? "remote" : "local");
+      /* With the local sign-in bypass on, the server answers every request as
+         the configured developer, so a login screen here would ask for a
+         password nothing checks. Treat it as signed in. */
+      setAuthMode(ok || authAvailable.devAuth ? "remote" : "local");
       if (ok) { await refreshUser(); if (active) setSession(currentUser()); }
     });
     return () => { active = false; unsub(); };

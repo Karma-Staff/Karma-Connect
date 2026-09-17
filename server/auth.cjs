@@ -48,9 +48,35 @@ function baseUrl(req) {
 // depending on an outside identity provider nobody here can administer.
 const session = require("./session.cjs");
 
+/* DEV ONLY: the same bypass Karma Leads has, so one setting covers the whole
+   site. Before the sign-in moved here it lived only in Leads, which meant
+   local development suddenly demanded a password from Karma Connect that it
+   never used to. Guarded identically — not production, set deliberately, and
+   loopback only — so it cannot be reached on a deploy. */
+const DEV_AUTH_EMAIL = (process.env.DEV_AUTH_EMAIL || "").trim().toLowerCase();
+const DEV_BYPASS = !!DEV_AUTH_EMAIL && process.env.NODE_ENV !== "production";
+const isLoopback = (req) => {
+  const ip = String((req && (req.ip || (req.socket && req.socket.remoteAddress))) || "");
+  return ip === "::1" || ip === "127.0.0.1" || ip === "::ffff:127.0.0.1";
+};
+
 // Middleware: require a signed-in user; attaches req.userId / req.email / req.user.
 async function requireUser(req, res, next) {
   try {
+    if (DEV_BYPASS && isLoopback(req)) {
+      /* Use the real row when there is a database to read it from, so ids and
+         history stay real; fall back to a synthetic one when Karma Connect has
+         no database configured, so the app still runs. */
+      let user = null;
+      try {
+        const { rows } = await q("select * from users where email = $1", [DEV_AUTH_EMAIL]);
+        user = rows[0] || null;
+      } catch (e) { /* no database — synthesise below */ }
+      req.userId = user ? user.id : "00000000-0000-0000-0000-00000000dev0";
+      req.email = DEV_AUTH_EMAIL;
+      req.user = user || { id: req.userId, email: DEV_AUTH_EMAIL, first_name: "Dev", last_name: "", is_admin: true };
+      return next();
+    }
     const claims = session.readSession(req);
     if (!claims) return res.status(401).json({ error: { message: "Please sign in." } });
     const { rows } = await q("select * from users where id = $1", [claims.id]);

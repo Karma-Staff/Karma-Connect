@@ -345,9 +345,16 @@ app.post("/api/auth/signout", (req, res) => {
 app.get("/api/auth/me", requireUser, async (req, res) => {
   try {
     const { rows } = await q("select * from users where id = $1", [req.userId]);
-    if (!rows[0]) return res.status(401).json({ error: { message: "Please sign in again." } });
-    res.json({ user: publicUser(rows[0]) });
-  } catch (e) { res.status(500).json({ error: { message: "Could not load your account." } }); }
+    if (rows[0]) return res.json({ user: publicUser(rows[0]) });
+    /* requireUser resolved someone, but no row came back. Under the local
+       sign-in bypass that is expected — there may be no database at all — so
+       answer with what it resolved rather than claiming the session is bad. */
+    if (req.user) return res.json({ user: publicUser(req.user) });
+    return res.status(401).json({ error: { message: "Please sign in again." } });
+  } catch (e) {
+    if (req.user) return res.json({ user: publicUser(req.user) });
+    res.status(500).json({ error: { message: "Could not load your account." } });
+  }
 });
 
 // Delete the signed-in user's own account (password-confirmed). Cascades to their
@@ -1227,7 +1234,13 @@ app.post("/api/claude", ...(DEV ? [] : [requireUser]), async (req, res) => {
 });
 
 // Health check for Render.
-app.get("/api/health", (_req, res) => res.json({ ok: true, db: dbOn }));
+// Health check for Render. devAuth tells the client that the local sign-in
+// bypass is active, so it should not put a login in the way of a developer.
+app.get("/api/health", (_req, res) => res.json({
+  ok: true,
+  db: dbOn,
+  devAuth: !!(process.env.DEV_AUTH_EMAIL && process.env.NODE_ENV !== "production"),
+}));
 
 // ──────────────────── Karma Leads (the other half of the site) ────────────────────
 // One Render service serves both products: Connect at /, Leads at /leads, and a

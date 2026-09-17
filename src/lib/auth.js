@@ -144,6 +144,9 @@ export async function authAvailable() {
   try {
     const res = await fetch("/api/health");
     const data = await res.json();
+    // the local bypass makes every request authenticated, so the gate should
+    // stand aside even when there is no database behind it
+    authAvailable.devAuth = !!data.devAuth;
     _available = !!data.db;
   } catch (e) { _available = false; }
   return _available;
