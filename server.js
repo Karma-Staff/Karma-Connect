@@ -97,21 +97,36 @@ const CSP = [
 // Scoped to Zoho's hosts rather than opened to the web. Wildcards are used for
 // connect-src because the SDK's signalling and TURN hosts are regional
 // (us-relay2.zohovoice.com and friends) and are not a fixed published list.
-const ZOHO_SCRIPT = "https://js.zohostatic.com";
-const ZOHO_CONNECT = "https://*.zoho.com https://*.zohovoice.com https://*.zohostatic.com "
-  + "wss://*.zoho.com wss://*.zohovoice.com";
+/* The softphone authenticates on localhost and failed on the deploy, which
+   pointed at this policy rather than at Zoho: development serves no CSP at all
+   (see !DEV below), so the browser was blocking a host here that it never
+   blocked locally, and the SDK reported the result as "Unauthorized access".
+   A blocked request and a refused credential look identical from inside it.
+   Zoho spreads across more domains than the two I first allowed — API calls on
+   zohoapis.com, assets on zohocdn.com, hosted pages on zohopublic.com — so the
+   family is listed rather than guessed at one host at a time. */
+const ZOHO_HOSTS = [
+  "https://*.zoho.com", "https://*.zohoapis.com", "https://*.zohostatic.com",
+  "https://*.zohocdn.com", "https://*.zohopublic.com", "https://*.zohovoice.com",
+].join(" ");
+const ZOHO_SOCKETS = [
+  "wss://*.zoho.com", "wss://*.zohoapis.com", "wss://*.zohovoice.com",
+  "wss://*.zohopublic.com",
+].join(" ");
 const LEADS_CSP = [
   "default-src 'self'",
   "base-uri 'self'",
   "object-src 'none'",
   "frame-ancestors 'none'",
-  "img-src 'self' data: https://*.zohostatic.com https://*.zoho.com",
-  `script-src 'self' ${ZOHO_SCRIPT}`,
-  `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com ${ZOHO_SCRIPT}`,
-  "font-src 'self' https://fonts.gstatic.com data: https://*.zohostatic.com",
-  `connect-src 'self' ${ZOHO_CONNECT}`,
-  `media-src 'self' blob: ${ZOHO_CONNECT}`,
-  `frame-src 'self' https://*.zoho.com`,
+  `img-src 'self' data: blob: ${ZOHO_HOSTS}`,
+  `script-src 'self' 'unsafe-inline' ${ZOHO_HOSTS}`,
+  `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com ${ZOHO_HOSTS}`,
+  `font-src 'self' https://fonts.gstatic.com data: ${ZOHO_HOSTS}`,
+  `connect-src 'self' ${ZOHO_HOSTS} ${ZOHO_SOCKETS}`,
+  `media-src 'self' blob: ${ZOHO_HOSTS}`,
+  `frame-src 'self' ${ZOHO_HOSTS}`,
+  // the SDK's call widget is its own window in some flows
+  `child-src 'self' ${ZOHO_HOSTS}`,
 ].join("; ");
 
 const onLeads = (req) => req.path === "/leads" || req.path.startsWith("/leads/");
