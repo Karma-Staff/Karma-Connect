@@ -3662,7 +3662,10 @@ async function init() {
      Connect, so go straight to it and return here afterwards — a second
      sign-in card here would only duplicate it. */
   if (!stored || /unauthorized|invalid|Not signed in/i.test(stored)) {
-    location.replace("/api/auth/login?next=" + encodeURIComponent(location.pathname));
+    /* Karma Connect's sign-in page, at the site root — not /api/auth/login,
+       which is WorkOS's route and now only a fallback for sessions minted
+       before the cutover. ?next= brings you back here once you are in. */
+    location.replace("/?next=" + encodeURIComponent(location.pathname));
     return;
   }
 

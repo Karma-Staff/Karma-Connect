@@ -381,6 +381,19 @@ export function AuthGate({ children }) {
   const remote = authMode === "remote";
   const sessionEmail = session?.email;
   function grant(userEmail, onSignOut) {
+    /* Someone sent here from elsewhere on the site — Karma Leads redirects to
+       this page when it finds no session — goes back where they came from
+       rather than landing on Connect's dashboard.
+
+       Only a same-site path is honoured: never "//elsewhere.com" and never a
+       full URL, so ?next= cannot be used to bounce anyone off the site. */
+    try {
+      const next = new URLSearchParams(window.location.search).get("next");
+      if (next && next.startsWith("/") && !next.startsWith("//")) {
+        window.location.replace(next);
+        return null;
+      }
+    } catch (e) { /* no query to read — just render */ }
     return cloneElement(children, { key: userEmail || "anon", userEmail: userEmail || "", onSignOut });
   }
   if (remote) {
