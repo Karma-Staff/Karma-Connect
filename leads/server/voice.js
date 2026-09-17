@@ -24,9 +24,16 @@ const router = express.Router();
 
 const ACCOUNTS = (process.env.ZOHO_ACCOUNTS_DOMAIN || "https://accounts.zoho.com")
   .replace(/\/$/, "");
-const CLIENT_ID = process.env.ZOHO_CLIENT_ID || "";
-const CLIENT_SECRET = process.env.ZOHO_CLIENT_SECRET || "";
-const REFRESH_TOKEN = process.env.ZOHO_REFRESH_TOKEN || "";
+/* Cleaned, because these are pasted into a dashboard field by hand.
+   A .env file strips surrounding quotes; Render does not, so "abc" arrives as
+   a five-character value including the quotes — and Zoho answers that with a
+   bare HTTP 400 and an HTML page, which reads as a broken integration rather
+   than a stray character. Verified: quoted values 400, every other corruption
+   returns a named error. Trailing whitespace is stripped for the same reason. */
+const clean = (v) => String(v || "").trim().replace(/^["']|["']$/g, "").trim();
+const CLIENT_ID = clean(process.env.ZOHO_CLIENT_ID);
+const CLIENT_SECRET = clean(process.env.ZOHO_CLIENT_SECRET);
+const REFRESH_TOKEN = clean(process.env.ZOHO_REFRESH_TOKEN);
 const ENABLED = process.env.ZOHO_VOICE_ENABLED === "1"
   && !!(CLIENT_ID && CLIENT_SECRET && REFRESH_TOKEN);
 
@@ -54,10 +61,15 @@ async function accessToken() {
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
   });
-  const data = await r.json().catch(() => ({}));
+  const raw = await r.text();
+  let data = {};
+  try { data = JSON.parse(raw); } catch { /* not JSON — keep the text below */ }
   if (!r.ok || !data.access_token) {
-    // Zoho reports failures with HTTP 200 and an `error` field, so check both
-    const why = data.error || `HTTP ${r.status}`;
+    /* Zoho reports failures with HTTP 200 and an `error` field, so check both.
+       A bare 400 with no error field means the REQUEST was malformed rather
+       than the credentials refused, so carry the body: without it the message
+       is "failed (400)" and says nothing about why. */
+    const why = data.error || `HTTP ${r.status}: ${raw.slice(0, 200) || "(empty body)"}`;
     const hint = {
       invalid_client: "client id/secret do not match, or are from another data centre",
       invalid_code: "the refresh token was revoked — rotating the client secret does that; mint a new one",
