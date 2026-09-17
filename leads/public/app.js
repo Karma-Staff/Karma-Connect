@@ -2685,7 +2685,21 @@ function loadVoiceSdk() {
         };
         zv.on?.("ready", () => { VOICE.ready = true; });
         zv.on?.("regState", (st) => { VOICE.ready = String(st?.state || st) !== "unregistered"; });
-        zv.on?.("error", (err) => console.warn("[karma] voice:", err?.description || err));
+        zv.on?.("error", (err) => {
+          const msg = String(err?.description || err?.message || err || "");
+          console.warn("[karma] voice:", msg);
+          /* The softphone could not sign in — usually the Zoho identity behind
+             the API credentials is not a Voice agent with a seat. Nothing the
+             rep can do about it, and leaving the widget up means every click
+             lands on an error panel. Drop to copy-and-open so the number is
+             still one click from being dialled. */
+          if (/unauthor|forbidden|invalid|denied|401|403/i.test(msg)) {
+            VOICE.ready = false;
+            VOICE.mode = "web";
+            console.warn("[karma] click-to-call fell back to the Zoho dialler tab "
+              + "(the SDK could not authenticate)");
+          }
+        });
         zv.initialize();
         VOICE.sdk = zv;
         resolve(zv);
