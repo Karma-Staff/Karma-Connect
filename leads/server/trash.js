@@ -71,6 +71,17 @@ async function sweep() {
 }
 
 function startSweeper() {
+  /* The sweep PERMANENTLY deletes binned leads past the 30-day window. That is
+     correct for the deployed service, and wrong for a developer who has merely
+     pointed their machine at the production database to look at something:
+     starting the app would quietly destroy rows nobody asked to destroy.
+
+     KARMA_NO_SWEEP=1 keeps the connection and skips the purge. The deployed
+     service does not set it, so production behaviour is unchanged. */
+  if (process.env.KARMA_NO_SWEEP === "1") {
+    console.warn("[karma] KARMA_NO_SWEEP=1 — the 30-day trash purge will NOT run");
+    return null;
+  }
   sweep();
   const t = setInterval(sweep, 24 * 3600e3);
   t.unref?.();                       // never hold the process open on its own
