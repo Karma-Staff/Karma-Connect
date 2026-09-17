@@ -2645,14 +2645,15 @@ async function runPhoneRefresh() {
    The SDK is fetched only when the server says the feature is on, so a team
    without Zoho pays nothing for it. */
 
-const VOICE = { on: false, sdk: null, ready: false, loading: null };
+const VOICE = { mode: "tel", dialUrl: "", sdk: null, ready: false, loading: null };
 
 async function voiceInit() {
   try {
     const cfg = await api("/api/voice/config");
-    VOICE.on = !!cfg.enabled;
-  } catch (e) { VOICE.on = false; }       // config unreachable = stay on tel:
-  if (!VOICE.on) return;
+    VOICE.mode = cfg.mode || "tel";
+    VOICE.dialUrl = cfg.dialUrl || "";
+  } catch (e) { VOICE.mode = "tel"; }     // config unreachable = stay on tel:
+  if (VOICE.mode !== "sdk") return;       // tel and web need nothing loaded
   loadVoiceSdk().catch((e) =>
     console.warn("[karma] click-to-call unavailable:", e.message));
 }
@@ -2694,17 +2695,61 @@ function loadVoiceSdk() {
   return VOICE.loading;
 }
 
-/* Returns true when the call was placed in-page, false to let the tel: link
-   do its job. Never throws at a click handler. */
+/* Handles the click, or returns false to let the tel: link do its job.
+   Never throws at a click handler. */
 function dialInPage(number, name) {
-  if (!VOICE.on || !VOICE.sdk || !VOICE.ready) return false;
-  try {
-    VOICE.sdk.makeCall({ number, name: name || undefined });
-    return true;
-  } catch (e) {
-    console.warn("[karma] could not dial:", e.message);
-    return false;
+  if (VOICE.mode === "sdk") {
+    if (!VOICE.sdk || !VOICE.ready) return false;
+    try {
+      VOICE.sdk.makeCall({ number, name: name || undefined });
+      toast("Calling " + (name || number) + "…");
+      return true;
+    } catch (e) {
+      console.warn("[karma] could not dial:", e.message);
+      return false;
+    }
   }
+
+  if (VOICE.mode === "web") {
+    /* Put the number on the clipboard and open Zoho's dialler. If the
+       configured URL carries a {number} placeholder the dialler fills itself
+       and the clipboard is just a safety net; without one, this is the
+       copy-and-paste flow with the copying already done. */
+    const digits = String(number || "").replace(/[^\d+]/g, "");
+    copyText(digits);
+    const hasSlot = VOICE.dialUrl.includes("{number}");
+    const url = hasSlot
+      ? VOICE.dialUrl.replace("{number}", encodeURIComponent(digits))
+      : VOICE.dialUrl;
+    /* One reused tab, not a new one per click: a rep working a list would
+       otherwise end the morning with forty diallers open. */
+    window.open(url, "zohoDialer");
+    toast(hasSlot
+      ? "Opening the dialler for " + digits
+      : digits + " copied — paste it into the dialler (Ctrl+V)");
+    return true;
+  }
+
+  return false;                            // "tel" — let the link through
+}
+
+/* Clipboard with a fallback: the async API needs a secure context and a
+   permission the browser may refuse, and failing to copy must not stop the
+   dialler opening. */
+function copyText(text) {
+  try {
+    if (navigator.clipboard?.writeText) { navigator.clipboard.writeText(text); return; }
+  } catch (e) { /* fall through */ }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.cssText = "position:absolute;left:-9999px";
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    ta.remove();
+  } catch (e) { /* the number is still on screen to read */ }
 }
 
 /* ---------------- assignments board (admin) ----------------
@@ -3494,10 +3539,7 @@ function wire() {
   document.addEventListener("click", (e) => {
     const a = e.target.closest?.("a.dial");
     if (!a || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-    if (dialInPage(a.dataset.dial, a.dataset.dialName)) {
-      e.preventDefault();
-      toast("Calling " + (a.dataset.dialName || a.dataset.dial) + "…");
-    }
+    if (dialInPage(a.dataset.dial, a.dataset.dialName)) e.preventDefault();
     // otherwise: not prevented, so the browser follows tel: as it always did
   });
   voiceInit();

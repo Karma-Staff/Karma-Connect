@@ -66,9 +66,31 @@ async function accessToken() {
   return cached.token;
 }
 
-/* What the front end needs to decide between a Call button and a tel: link. */
+/* How a click on a phone number should behave. Three ways to reach the same
+   Zoho account, in increasing order of what they demand from us:
+
+     tel  (default) — leave it a plain tel: link. Zoho's ZDialer browser
+                      extension and its desktop app both answer tel:, so this
+                      is click-to-call with no integration at all, and it is
+                      what someone should try FIRST.
+     web            — copy the number and open Zoho's dialler in a tab. No
+                      credentials, no SDK; one paste per call unless
+                      ZOHO_DIAL_URL carries a {number} placeholder.
+     sdk            — the in-page softphone (server/voice.js + the WebSDK).
+                      Best experience, needs OAuth credentials.
+
+   None of these changes what Zoho charges: the subscription and the per-minute
+   credits are the same whichever way the call is placed. They differ only in
+   how much of the dialling happens inside Karma Leads. */
+const MODE = ["tel", "web", "sdk"].includes(process.env.ZOHO_DIAL_MODE)
+  ? process.env.ZOHO_DIAL_MODE : "tel";
+const DIAL_URL = (process.env.ZOHO_DIAL_URL || "https://voice.zoho.com").trim();
+
 router.get("/api/voice/config", requireUser, (req, res) => {
-  res.json({ provider: "zoho", enabled: ENABLED });
+  // sdk falls back to tel when the credentials are not there, rather than
+  // rendering a Call button that cannot possibly work
+  const mode = MODE === "sdk" && !ENABLED ? "tel" : MODE;
+  res.json({ provider: "zoho", mode, enabled: ENABLED, dialUrl: DIAL_URL });
 });
 
 /* The SDK's oAuthCallBack fetches this. Signed-in users only: an open endpoint
