@@ -82,8 +82,23 @@ async function accessToken() {
    None of these changes what Zoho charges: the subscription and the per-minute
    credits are the same whichever way the call is placed. They differ only in
    how much of the dialling happens inside Karma Leads. */
-const MODE = ["tel", "web", "sdk"].includes(process.env.ZOHO_DIAL_MODE)
+/* The in-page softphone needs more than API credentials: the Zoho identity
+   behind them must be a Voice AGENT holding a seat. Ours is an API-console
+   admin, which is not the same thing, so the SDK answers "Unauthorized access"
+   and puts a Zoho sign-in in front of the rep — worse than no integration.
+   The token exchange succeeds, so the server cannot detect this itself.
+   Until a seat is confirmed, sdk is treated as web: the number is copied and
+   Zoho's dialler opens, which still dials in one click.
+   Set ZOHO_SDK_AGENT_READY=1 once that Zoho user really is an agent. */
+const REQUESTED = ["tel", "web", "sdk"].includes(process.env.ZOHO_DIAL_MODE)
   ? process.env.ZOHO_DIAL_MODE : "tel";
+const SDK_READY = process.env.ZOHO_SDK_AGENT_READY === "1";
+const MODE = (REQUESTED === "sdk" && !SDK_READY) ? "web" : REQUESTED;
+if (REQUESTED === "sdk" && !SDK_READY) {
+  console.warn("[karma] ZOHO_DIAL_MODE=sdk but ZOHO_SDK_AGENT_READY is not set — "
+    + "using the dialler tab instead. The in-page softphone needs the Zoho user "
+    + "behind the API credentials to hold a Voice agent seat.");
+}
 const DIAL_URL = (process.env.ZOHO_DIAL_URL || "https://voice.zoho.com").trim();
 
 /* Leads hold numbers the way people typed them, usually without a country
