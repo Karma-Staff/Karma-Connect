@@ -39,11 +39,20 @@ const leadsTypes = {
     (oid === 20 ? (v) => parseInt(v, 10) : types.getTypeParser(oid, format)),
 };
 
+/* Render REQUIRES SSL on external connections and merely permits it on internal
+   ones, so SSL is on by default and works for both. Without it an external
+   connection dies as ECONNRESET, which reads like a network fault rather than a
+   missing option. rejectUnauthorized stays false because Render terminates TLS
+   with its own certificate chain, the same trade Karma Connect's pool makes
+   against the same platform. PGSSL=off for a local Postgres that has no TLS. */
 const pool = new Pool({
   connectionString: CONNECTION,
   types: leadsTypes,
+  ssl: process.env.PGSSL === "off" ? false : { rejectUnauthorized: false },
   max: 10,                       // single instance, ~12 concurrent users — plenty
   idleTimeoutMillis: 30_000,
+  connectionTimeoutMillis: 10_000,
+  keepAlive: true,
 });
 
 pool.on("error", (e) => console.error("[karma] idle pg client error:", e.message));
