@@ -57,7 +57,13 @@ async function accessToken() {
   const data = await r.json().catch(() => ({}));
   if (!r.ok || !data.access_token) {
     // Zoho reports failures with HTTP 200 and an `error` field, so check both
-    throw new Error(data.error || `token request failed (${r.status})`);
+    const why = data.error || `HTTP ${r.status}`;
+    const hint = {
+      invalid_client: "client id/secret do not match, or are from another data centre",
+      invalid_code: "the refresh token was revoked — rotating the client secret does that; mint a new one",
+      invalid_grant: "the refresh token is no longer valid; mint a new one",
+    }[data.error];
+    throw new Error(hint ? `${why} (${hint})` : why);
   }
   cached = {
     token: data.access_token,
@@ -118,8 +124,19 @@ router.post("/api/voice/token", requireUser, async (req, res) => {
   try {
     res.json({ access_token: await accessToken() });
   } catch (e) {
+    /* Pass Zoho's own reason through. "Could not get a token" alone sends
+       whoever is debugging into the server logs, and the causes here are
+       configuration, not secrets: invalid_client means the id/secret do not
+       match, invalid_code means the refresh token was revoked — usually by
+       rotating the client secret without minting a new one. The endpoint is
+       already behind requireUser, so this is visible to signed-in staff only. */
     console.error("[karma] zoho voice token:", e.message);
-    res.status(502).json({ error: "Could not get a calling token from Zoho." });
+    res.status(502).json({
+      error: "Could not get a calling token from Zoho.",
+      reason: e.message,
+      accountsDomain: ACCOUNTS,
+      clientIdPrefix: CLIENT_ID.slice(0, 12) + "…",   // enough to spot a wrong or placeholder value
+    });
   }
 });
 
