@@ -443,6 +443,12 @@ export function AuthGate({ children }) {
           // Email confirmation required — don't log in; prompt them to check their inbox.
           setNotice(r.message || "Account created. Check your email for a confirmation link, then sign in.");
           setMode("signin"); setPassword(""); setPassword2(""); setShowResend(true);
+        } else if (r && r.warning) {
+          /* Signed in, but something the operator should know about happened on
+             the way — email delivery failing, most likely. Say so rather than
+             letting it pass silently: the person who just signed up is the one
+             who can report it. */
+          setErr(r.warning);
         }
         // else: verification off → signUp logged us in; onAuthChange flips the gate.
       } else {

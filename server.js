@@ -214,12 +214,28 @@ app.post("/api/auth/signup", signupLimiter, async (req, res) => {
     if (emailVerifyOn) {
       try {
         await sendVerificationEmail(email, firstName, baseUrl(req) + "/api/auth/verify?token=" + token);
+        return res.json({ needsVerification: true, email, message: "Account created. Check your email for a confirmation link, then sign in." });
       } catch (e) {
-        // Don't leave a stuck account if the email fails — remove it so they can retry.
-        await q("delete from users where id = $1", [user.id]).catch(() => {});
-        return res.status(502).json({ error: { message: "Could not send the confirmation email. Please try again in a moment." } });
+        /* Sending failed. Deleting the account and refusing was the old
+           behaviour, and it means a misconfigured mail provider stops ANYONE
+           signing up — which is what happened here: wiring Resend switched
+           verification on, and a provider fault then became a total block.
+
+           Registration is already restricted to one email domain, and before
+           email was wired at all these accounts were created verified. So the
+           account stands, verified, and the operator is told loudly. A mail
+           outage should not be an outage of the product. */
+        console.error("[karma] signup: could not send verification to " + email
+          + " — " + e.message + " — account created WITHOUT email confirmation.");
+        await q("update users set email_verified = true, verify_token = null where id = $1",
+          [user.id]).catch(() => {});
+        session.setSession(res, { ...user, email_verified: true });
+        return res.json({
+          user: publicUser(user),
+          warning: "We could not send a confirmation email, so you are signed in directly. "
+            + "Tell your administrator that email delivery is failing.",
+        });
       }
-      return res.json({ needsVerification: true, email, message: "Account created. Check your email for a confirmation link, then sign in." });
     }
     session.setSession(res, user);
     res.json({ user: publicUser(user) });
