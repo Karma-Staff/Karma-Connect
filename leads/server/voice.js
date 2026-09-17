@@ -86,11 +86,20 @@ const MODE = ["tel", "web", "sdk"].includes(process.env.ZOHO_DIAL_MODE)
   ? process.env.ZOHO_DIAL_MODE : "tel";
 const DIAL_URL = (process.env.ZOHO_DIAL_URL || "https://voice.zoho.com").trim();
 
+/* Leads hold numbers the way people typed them, usually without a country
+   code. Zoho dials in international form, so a bare local number gets this
+   prefix. Defaults to +1 because the lead base is US and Canada, both of which
+   are +1; set ZOHO_DIAL_COUNTRY_CODE for anywhere else, or "" to send the
+   digits untouched. */
+const COUNTRY_CODE = process.env.ZOHO_DIAL_COUNTRY_CODE === undefined
+  ? "+1" : String(process.env.ZOHO_DIAL_COUNTRY_CODE).trim();
+
 router.get("/api/voice/config", requireUser, (req, res) => {
   // sdk falls back to tel when the credentials are not there, rather than
   // rendering a Call button that cannot possibly work
   const mode = MODE === "sdk" && !ENABLED ? "tel" : MODE;
-  res.json({ provider: "zoho", mode, enabled: ENABLED, dialUrl: DIAL_URL });
+  res.json({ provider: "zoho", mode, enabled: ENABLED, dialUrl: DIAL_URL,
+    countryCode: COUNTRY_CODE });
 });
 
 /* The SDK's oAuthCallBack fetches this. Signed-in users only: an open endpoint

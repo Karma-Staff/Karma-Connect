@@ -2645,13 +2645,14 @@ async function runPhoneRefresh() {
    The SDK is fetched only when the server says the feature is on, so a team
    without Zoho pays nothing for it. */
 
-const VOICE = { mode: "tel", dialUrl: "", sdk: null, ready: false, loading: null };
+const VOICE = { mode: "tel", dialUrl: "", countryCode: "+1", sdk: null, ready: false, loading: null };
 
 async function voiceInit() {
   try {
     const cfg = await api("/api/voice/config");
     VOICE.mode = cfg.mode || "tel";
     VOICE.dialUrl = cfg.dialUrl || "";
+    if (cfg.countryCode !== undefined) VOICE.countryCode = cfg.countryCode;
   } catch (e) { VOICE.mode = "tel"; }     // config unreachable = stay on tel:
   if (VOICE.mode !== "sdk") return;       // tel and web need nothing loaded
   loadVoiceSdk().catch((e) =>
@@ -2695,13 +2696,37 @@ function loadVoiceSdk() {
   return VOICE.loading;
 }
 
+/* Leads carry numbers as people wrote them — "(702) 834-3440", "702.834.3440",
+   sometimes with an extension. Zoho rejects anything but digits
+   ("Invalid character found in calleeNumber"), and a tel: link is happier with
+   digits too, so both paths normalise first.
+
+   A bare 10-digit number is local, and Zoho wants it in international form, so
+   the configured country code is added. Anything already carrying a + is
+   trusted as-is beyond stripping punctuation — it was written deliberately. */
+function normalizeNumber(raw) {
+  /* Drop a trailing extension first. "702 834 3440 ext 12" would otherwise
+     become +702834344012 — the extension silently glued onto the number, which
+     dials something that is not the lead. Zoho has no way to know. */
+  const s = String(raw || "").trim()
+    .replace(/\s*(?:ext\.?|extension|x|#|,)\s*\d+\s*$/i, "")
+    .trim();
+  if (s.startsWith("+")) return "+" + s.slice(1).replace(/\D/g, "");
+  const d = s.replace(/\D/g, "");
+  const cc = VOICE.countryCode || "";
+  if (!cc) return d;
+  if (d.length === 10) return cc + d;                    // 7028343440 -> +17028343440
+  if (cc === "+1" && d.length === 11 && d[0] === "1") return "+" + d;  // already has the 1
+  return d.length > 11 ? "+" + d : d;                    // long = already international
+}
+
 /* Handles the click, or returns false to let the tel: link do its job.
    Never throws at a click handler. */
 function dialInPage(number, name) {
   if (VOICE.mode === "sdk") {
     if (!VOICE.sdk || !VOICE.ready) return false;
     try {
-      VOICE.sdk.makeCall({ number, name: name || undefined });
+      VOICE.sdk.makeCall({ number: normalizeNumber(number), name: name || undefined });
       toast("Calling " + (name || number) + "…");
       return true;
     } catch (e) {
@@ -2715,7 +2740,7 @@ function dialInPage(number, name) {
        configured URL carries a {number} placeholder the dialler fills itself
        and the clipboard is just a safety net; without one, this is the
        copy-and-paste flow with the copying already done. */
-    const digits = String(number || "").replace(/[^\d+]/g, "");
+    const digits = normalizeNumber(number);
     copyText(digits);
     const hasSlot = VOICE.dialUrl.includes("{number}");
     const url = hasSlot
