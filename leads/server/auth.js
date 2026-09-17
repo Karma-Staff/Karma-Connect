@@ -14,6 +14,9 @@
    'admin' | 'member' — never from the identity provider. */
 
 const { query, tx } = require("./db");
+/* The site's own cookie session (Karma Connect's sign-in). Leads reads it so
+   one login covers both products without an external identity provider. */
+const ownSession = require("../../server/session.cjs");
 
 /* Where a completed sign-in lands. "/" when Leads runs on its own (and is
    mirrored at /app); "/leads/" on the merged Karma site, where "/" is Karma
@@ -80,7 +83,11 @@ const isLoopback = (req) => {
 };
 
 function getCookie(req, name) {
-  for (const part of (req.get("cookie") || "").split(/; */)) {
+  /* req.get() is Express's; fall back to the raw header so this works for any
+     request-shaped object — a test, or a call from somewhere that is not an
+     Express route. It threw TypeError before, which read as a WorkOS failure. */
+  const raw = (typeof req.get === "function" ? req.get("cookie") : req.headers?.cookie) || "";
+  for (const part of raw.split(/; */)) {
     const i = part.indexOf("=");
     if (i > 0 && part.slice(0, i) === name)
       return decodeURIComponent(part.slice(i + 1));
@@ -160,11 +167,20 @@ async function resolve(req, res) {
   let email = null;
   let wu = null;
   if (DEV_BYPASS && isLoopback(req)) {
-    // stand in for the WorkOS session; everything below is unchanged
+    // stand in for a real session; everything below is unchanged
     email = DEV_AUTH_EMAIL;
   } else {
-    wu = await workosUser(req, res);
-    if (wu) email = String(wu.email || "").trim().toLowerCase();
+    /* The site's own sign-in comes first: one cookie, set by Karma Connect's
+       login, read by both products. WorkOS is still accepted so a session
+       issued before the cutover keeps working and nobody is thrown out
+       mid-afternoon — and so this can be rolled back without locking anyone
+       out. Remove the WorkOS branch once no sealed cookies remain in the wild. */
+    const own = ownSession.readSession(req);
+    if (own && own.email) email = own.email;
+    if (!email) {
+      wu = await workosUser(req, res);
+      if (wu) email = String(wu.email || "").trim().toLowerCase();
+    }
   }
   if (!email) return null;
   let u;

@@ -1,19 +1,19 @@
-// Client auth for the merged Karma site. Karma Connect and Karma Leads share ONE
-// sign-in: WorkOS AuthKit, sealed into an httpOnly `kl_session` cookie by the
-// server (leads/server/auth.js). Signing in here signs you into both.
+// Client auth against our own backend (server.js).
 //
-// Consequences of that cookie being httpOnly, which shape this whole module:
-//   - There is no token for JavaScript to read, store or attach. The browser
-//     sends the cookie on same-origin requests by itself, so API callers build
-//     no Authorization header at all.
-//   - "Am I signed in?" cannot be answered locally. It is answered by asking the
-//     server (refreshUser → /api/auth/me) and caching the reply.
-//   - Signing in is a full-page navigation to WorkOS, not a fetch. `next` tells
-//     the callback which half of the site to come back to.
+// The session is an httpOnly cookie the server sets at sign-in, NOT a token
+// this code holds. Two consequences shape everything here:
 //
-// The cached user in localStorage is a convenience only — it lets the UI paint
-// before /api/auth/me answers. The cookie is the actual authority, so a stale
-// cache costs nothing: the next request either succeeds or 401s.
+//   - There is nothing to attach to requests. The browser sends the cookie on
+//     same-origin calls by itself, so no caller builds an Authorization
+//     header. It is also why Karma Leads, which never sets headers, shares the
+//     same sign-in for free.
+//   - "Am I signed in?" cannot be answered locally — the cookie is invisible
+//     to page scripts, which is the point. It is answered by asking the server
+//     (refreshUser → /api/auth/me) and caching the reply.
+//
+// The cached user in localStorage is a convenience only: it lets the UI paint
+// before /api/auth/me answers. The cookie is the authority, so a stale cache
+// costs nothing — the next request either succeeds or 401s and clears it.
 //
 // When the backend has no database (local dev without DATABASE_URL),
 // `authAvailable()` resolves false and the app falls back to the per-browser
@@ -43,37 +43,77 @@ function setUser(u) {
   notify();
 }
 
-// Where to send the browser to sign in. A navigation, not a fetch: WorkOS hosts
-// the form. `next` is where the callback returns to once it succeeds.
-export function signInUrl(next) {
-  const to = next || (window.location.pathname + window.location.search);
-  return "/api/auth/login?next=" + encodeURIComponent(to);
+async function post(path, body) {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {}),
+  });
+  let data = {};
+  try { data = await res.json(); } catch (e) { /* ignore */ }
+  if (!res.ok) throw new Error(data?.error?.message || "Request failed (" + res.status + ").");
+  return data;
 }
 
-export function startSignIn(next) {
-  window.location.assign(signInUrl(next));
+export async function signUp({ email, password, firstName, lastName, adminCode }) {
+  const data = await post("/api/auth/signup", { email, password, firstName, lastName, adminCode });
+  // With email confirmation on, the server returns { needsVerification: true }
+  // and sets no cookie — don't treat that as being signed in; the caller shows
+  // a "check your email" notice instead.
+  if (data.user) setUser(data.user);
+  return data;
 }
 
-// Ends the WorkOS session as well as the local one, so signing out of Connect
-// also signs you out of Leads — one session, one sign-out.
+// Ask the server to re-send the confirmation email for an unverified account.
+export async function resendVerification(email) {
+  return post("/api/auth/resend", { email });
+}
+
+// Request a password-reset email (the server replies the same way whether or
+// not the account exists, so this cannot be used to discover who has one).
+export async function requestPasswordReset(email) {
+  return post("/api/auth/forgot", { email });
+}
+
+// Complete a reset with the emailed token + a new password. The server signs
+// you in on success by setting the cookie.
+export async function resetPassword(token, password) {
+  const data = await post("/api/auth/reset", { token, password });
+  if (data.user) setUser(data.user);
+  return data;
+}
+
+export async function signIn({ email, password }) {
+  const data = await post("/api/auth/signin", { email, password });
+  setUser(data.user);
+  return data;
+}
+
+// Clears the cookie server-side as well as the cached user — dropping the
+// local copy alone would leave a live session on the browser.
 export async function signOut() {
   setUser(null);
-  try {
-    const res = await fetch("/api/auth/logout?next=%2F", { method: "POST" });
-    const data = await res.json().catch(() => ({}));
-    window.location.assign(data.url || "/");
-  } catch (e) {
-    window.location.assign("/");
-  }
+  try { await fetch("/api/auth/signout", { method: "POST" }); } catch (e) { /* ignore */ }
 }
 
-// Permanently delete the signed-in account. There is no password to confirm with
-// any more, so the server asks for the account's own email address instead.
-export async function deleteAccount(confirmEmail) {
+// Self-promote to admin using the signup code. Updates the cached user.
+export async function promoteToAdmin(adminCode) {
+  const data = await post("/api/auth/promote", { adminCode: adminCode || "" });
+  setUser(data.user);
+  return data;
+}
+
+// Change password while signed in (current password required).
+export async function changePassword(currentPassword, newPassword) {
+  return post("/api/auth/password", { currentPassword, newPassword });
+}
+
+// Permanently delete the signed-in account (password-confirmed). Signs out.
+export async function deleteAccount(password) {
   const res = await fetch("/api/auth/account", {
     method: "DELETE",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ confirmEmail: confirmEmail || "" }),
+    body: JSON.stringify({ password: password || "" }),
   });
   let data = {};
   try { data = await res.json(); } catch (e) { /* ignore */ }
@@ -92,7 +132,7 @@ export async function refreshUser() {
     setUser(data.user || null);
     return user;
   } catch (e) {
-    // Network blip — keep whatever we had rather than falsely signing out.
+    // Network blip — keep what we had rather than falsely signing out.
     return user;
   }
 }

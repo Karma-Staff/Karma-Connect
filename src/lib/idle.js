@@ -30,7 +30,7 @@ function writeLastActive(now) {
 
 function doLogout() {
   if (!loggedIn()) return;
-  try { signOut(); } catch (e) {}                              // clears the JWT, flips the gate
+  try { signOut(); } catch (e) {}                              // clears the session cookie, flips the gate
   try { localStorage.removeItem(LOCAL_GATE_KEY); } catch (e) {} // local-mode session
   try { localStorage.removeItem(LAST_ACTIVE_KEY); } catch (e) {}
   // Reload so the per-browser gate (React state) also drops to the login screen, and add a

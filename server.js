@@ -42,13 +42,19 @@ const PORT = parseInt(process.env.PORT || (DEV ? "8787" : "3000"), 10);
 // Data-access (pool, q, ensureSchema, usage rollup) and auth (JWT, allowlist, middleware)
 // live in their own modules so server.js stays a thin HTTP/routing layer.
 const { pool, dbOn, q, ensureSchema, writeUsageRow, logActivity } = require("./server/db.cjs");
-const { publicUser, baseUrl, requireUser, requireAdmin } = require("./server/auth.cjs");
+const bcrypt = require("bcryptjs");
+const crypto = require("node:crypto");
+const { rateLimit } = require("./server/ratelimit.cjs");
+const session = require("./server/session.cjs");
+const { JWT_SECRET, DUMMY_HASH, emailAllowed, publicUser, baseUrl, requireUser, requireAdmin } = require("./server/auth.cjs");
+const EMAIL_RE = /\S+@\S+\.\S+/;
 
 // ── Outbound email via the internal mail gateway (optional, env-gated) ──
 // Sign-up confirmation went with the passwords — WorkOS verifies identity now.
 // What remains is the lead-approval notifications, which only send when
 // GATEWAY_URL + GATEWAY_TOKEN are configured (emailVerifyOn reports that).
-const { emailVerifyOn, sendApprovalRequestEmail, sendApprovalDecisionEmail } = require("./server/email.cjs");
+const { emailVerifyOn, VERIFY_TTL_HOURS, RESET_TTL_HOURS, sendVerificationEmail, sendResetEmail,
+  sendApprovalRequestEmail, sendApprovalDecisionEmail } = require("./server/email.cjs");
 
 // Outreach queue + the agent tick (auto-sends approved email; LinkedIn goes via the agent).
 const outreach = require("./server/outreach.cjs");
@@ -132,16 +138,209 @@ app.use("/api/claude", express.text({ type: () => true, limit: "4mb" }));
 // Everything else is JSON.
 app.use(express.json({ limit: "2mb" }));
 
+// Rate limiters for the auth endpoints (factory in server/ratelimit.cjs). Runs after
+// express.json, so req.body is available to the key function.
+const reqEmail = (req) => String((req.body && req.body.email) || "").toLowerCase();
+const signinLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 12, message: "Too many sign-in attempts. Please wait a few minutes and try again.", keyFn: (req) => "signin:" + req.ip + ":" + reqEmail(req) });
+const signupLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 8, message: "Too many sign-up attempts from this network. Please try again later.", keyFn: (req) => "signup:" + req.ip });
+const resendLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 6, message: "Too many requests. Please try again later.", keyFn: (req) => "resend:" + req.ip + ":" + reqEmail(req) });
+const forgotLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 6, message: "Too many reset requests. Please try again later.", keyFn: (req) => "forgot:" + req.ip + ":" + reqEmail(req) });
+const resetLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 15, message: "Too many attempts. Please try again later.", keyFn: (req) => "reset:" + req.ip });
+const promoteLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 8, message: "Too many attempts. Please wait a few minutes and try again.", keyFn: (req) => "promote:" + (req.userId || req.ip) });
+const passwordLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, message: "Too many attempts. Please wait a few minutes and try again.", keyFn: (req) => "pwchange:" + (req.userId || req.ip) });
+
 // ─────────────────────────────── Auth ───────────────────────────────
-// Karma Connect and Karma Leads share ONE sign-in. The login, callback and
-// logout routes come from leads/server/auth.js and are mounted further down:
-// they seal a WorkOS session into the kl_session cookie, and requireUser (in
-// server/auth.cjs) maps the email on that session to this app's users row.
+// Karma Connect's own sign-in, shared with Karma Leads through one httpOnly
+// cookie (server/session.cjs). This replaced a WorkOS dependency that nobody
+// here could administer: the account had been set up by someone who left, so a
+// change as small as allowlisting a new callback URL could not be made.
 //
-// Everything that used to live here went with the passwords — signup, signin,
-// email verification, resend, forgot, reset, change-password and the admin
-// signup code. WorkOS owns credentials now, and who may sign in is governed by
-// app_users plus AUTO_INVITE_DOMAIN rather than by a password we store.
+// Everything below is the sign-in this app always had — signup, email
+// confirmation, resend, forgot, reset, and the rate limits on each. The one
+// change is that a successful sign-in sets a cookie instead of returning a
+// token for the browser to store: Karma Leads' front end never sends an
+// Authorization header, and an httpOnly cookie cannot be read by page scripts.
+
+app.post("/api/auth/signup", signupLimiter, async (req, res) => {
+  try {
+    if (!JWT_SECRET) return res.status(500).json({ error: { message: "Server not configured (missing AUTH_JWT_SECRET)." } });
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    const password = String(req.body?.password || "");
+    const firstName = String(req.body?.firstName || "").trim();
+    const lastName = String(req.body?.lastName || "").trim();
+    if (!EMAIL_RE.test(email)) return res.status(400).json({ error: { message: "Enter a valid email address." } });
+    if (password.length < 8) return res.status(400).json({ error: { message: "Use a password of at least 8 characters." } });
+    if (!emailAllowed(email)) return res.status(403).json({ error: { message: "Registration is limited to @" + ALLOWED_DOMAIN + " email addresses." } });
+
+    // Optional admin signup code. Empty = normal member. Non-empty must match ADMIN_SIGNUP_CODE,
+    // otherwise reject so the person knows the code was wrong (rather than silently demoting them).
+    const adminCode = String(req.body?.adminCode || "");
+    let wantsAdmin = false;
+    if (adminCode) {
+      const expected = process.env.ADMIN_SIGNUP_CODE || "";
+      if (!expected || adminCode !== expected) return res.status(403).json({ error: { message: "Invalid admin code." } });
+      wantsAdmin = true;
+    }
+
+    const exists = await q("select 1 from users where email = $1", [email]);
+    if (exists.rowCount) return res.status(409).json({ error: { message: "An account with that email already exists. Sign in instead." } });
+
+    const hash = await bcrypt.hash(password, 12);
+    // When email verification is on, create the user unverified with a one-time token.
+    // When it's off (gateway not configured), create them already-verified and log them straight in.
+    const token = emailVerifyOn ? crypto.randomBytes(32).toString("hex") : null;
+    const { rows } = await q(
+      `insert into users (email, password_hash, first_name, last_name, email_verified, verify_token, verify_sent_at, is_admin)
+       values ($1,$2,$3,$4,$5,$6,$7,$8) returning *`,
+      [email, hash, firstName, lastName, !emailVerifyOn, token, token ? new Date() : null, wantsAdmin],
+    );
+    const user = rows[0];
+
+    if (emailVerifyOn) {
+      try {
+        await sendVerificationEmail(email, firstName, baseUrl(req) + "/api/auth/verify?token=" + token);
+      } catch (e) {
+        // Don't leave a stuck account if the email fails — remove it so they can retry.
+        await q("delete from users where id = $1", [user.id]).catch(() => {});
+        return res.status(502).json({ error: { message: "Could not send the confirmation email. Please try again in a moment." } });
+      }
+      return res.json({ needsVerification: true, email, message: "Account created. Check your email for a confirmation link, then sign in." });
+    }
+    session.setSession(res, user);
+    res.json({ user: publicUser(user) });
+  } catch (e) { console.error("signup error:", (e && e.stack) || e); res.status(500).json({ error: { message: "Could not create the account. Try again." } }); }
+});
+
+app.post("/api/auth/signin", signinLimiter, async (req, res) => {
+  try {
+    if (!JWT_SECRET) return res.status(500).json({ error: { message: "Server not configured (missing AUTH_JWT_SECRET)." } });
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    const password = String(req.body?.password || "");
+    if (!EMAIL_RE.test(email) || !password) return res.status(400).json({ error: { message: "Enter your email and password." } });
+    if (!emailAllowed(email)) return res.status(403).json({ error: { message: "This email is not allowed to use Karma Connect." } });
+
+    const { rows } = await q("select * from users where email = $1", [email]);
+    const user = rows[0];
+    // Compare even when the user is missing (timing-safe-ish: avoid leaking which emails exist).
+    const ok = await bcrypt.compare(password, user ? user.password_hash : DUMMY_HASH);
+    if (!user || !ok) return res.status(401).json({ error: { message: "Wrong email or password." } });
+    if (emailVerifyOn && !user.email_verified) {
+      return res.status(403).json({ error: { message: "Please confirm your email first — check your inbox for the link.", needsVerification: true } });
+    }
+    session.setSession(res, user);
+    res.json({ user: publicUser(user) });
+  } catch (e) { res.status(500).json({ error: { message: "Could not sign in. Try again." } }); }
+});
+
+// Click target from the confirmation email. Marks the user verified, then redirects to the
+// app with ?verified=1 (or ?verified=0 on a bad/expired token) so the UI can show a notice.
+app.get("/api/auth/verify", async (req, res) => {
+  const home = baseUrl(req);
+  try {
+    const token = String(req.query.token || "");
+    if (!token) return res.redirect(home + "/?verified=0");
+    const { rows } = await q(
+      `update users set email_verified = true, verify_token = null
+       where verify_token = $1 and verify_sent_at > now() - interval '${VERIFY_TTL_HOURS} hours'
+       returning id`,
+      [token],
+    );
+    return res.redirect(home + (rows.length ? "/?verified=1" : "/?verified=0"));
+  } catch (e) { return res.redirect(home + "/?verified=0"); }
+});
+
+// Re-send the confirmation email for an unverified account. Always replies the same way
+// (don't reveal whether the email exists).
+app.post("/api/auth/resend", resendLimiter, async (req, res) => {
+  const done = () => res.json({ ok: true, message: "If that account exists and is unconfirmed, a new confirmation email is on its way." });
+  try {
+    if (!emailVerifyOn) return done();
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    if (!EMAIL_RE.test(email)) return done();
+    const { rows } = await q("select id, first_name, email_verified from users where email = $1", [email]);
+    const user = rows[0];
+    if (!user || user.email_verified) return done();
+    const token = crypto.randomBytes(32).toString("hex");
+    await q("update users set verify_token = $1, verify_sent_at = now() where id = $2", [token, user.id]);
+    await sendVerificationEmail(email, user.first_name, baseUrl(req) + "/api/auth/verify?token=" + token).catch(() => {});
+    return done();
+  } catch (e) { return done(); }
+});
+
+// Request a password reset. Always replies the same way (don't reveal whether the email
+// exists). Sends a one-time reset link via Resend when the account is found.
+app.post("/api/auth/forgot", forgotLimiter, async (req, res) => {
+  const done = () => res.json({ ok: true, message: "If an account exists for that email, a password reset link is on its way." });
+  try {
+    if (!emailVerifyOn) return res.status(503).json({ error: { message: "Password reset isn't available — email isn't configured. Contact your administrator." } });
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    if (!EMAIL_RE.test(email) || !emailAllowed(email)) return done();
+    const { rows } = await q("select id, first_name from users where email = $1", [email]);
+    const user = rows[0];
+    if (!user) return done();
+    const token = crypto.randomBytes(32).toString("hex");
+    await q("update users set reset_token = $1, reset_sent_at = now() where id = $2", [token, user.id]);
+    await sendResetEmail(email, user.first_name, baseUrl(req) + "/?reset=" + token).catch(() => {});
+    return done();
+  } catch (e) { return done(); }
+});
+
+// Complete a password reset: set a new password from a valid, unexpired token, then log in.
+// Proving control of the emailed link also confirms the email address.
+app.post("/api/auth/reset", resetLimiter, async (req, res) => {
+  try {
+    if (!JWT_SECRET) return res.status(500).json({ error: { message: "Server not configured (missing AUTH_JWT_SECRET)." } });
+    const token = String(req.body?.token || "");
+    const password = String(req.body?.password || "");
+    if (!token) return res.status(400).json({ error: { message: "Missing or invalid reset link." } });
+    if (password.length < 8) return res.status(400).json({ error: { message: "Use a password of at least 8 characters." } });
+    const hash = await bcrypt.hash(password, 12);
+    const { rows } = await q(
+      `update users set password_hash = $1, reset_token = null, email_verified = true
+        where reset_token = $2 and reset_sent_at > now() - interval '${RESET_TTL_HOURS} hour'
+        returning *`,
+      [hash, token],
+    );
+    const user = rows[0];
+    if (!user) return res.status(400).json({ error: { message: "This reset link is invalid or has expired. Request a new one." } });
+    session.setSession(res, user);
+    res.json({ user: publicUser(user) });
+  } catch (e) { res.status(500).json({ error: { message: "Could not reset the password. Try again." } }); }
+});
+// Self-promote to admin with the signup code — for someone who created a normal account.
+app.post("/api/auth/promote", requireUser, promoteLimiter, async (req, res) => {
+  try {
+    const expected = process.env.ADMIN_SIGNUP_CODE || "";
+    if (!expected) return res.status(400).json({ error: { message: "Admin promotion isn't configured. Contact your administrator." } });
+    if (String(req.body?.adminCode || "") !== expected) return res.status(403).json({ error: { message: "Invalid admin code." } });
+    const { rows } = await q("update users set is_admin = true where id = $1 returning *", [req.userId]);
+    if (!rows[0]) return res.status(404).json({ error: { message: "Account not found." } });
+    res.json({ user: publicUser(rows[0]) });
+  } catch (e) { res.status(500).json({ error: { message: "Could not update your role." } }); }
+});
+
+// Change password while signed in (current password required).
+app.post("/api/auth/password", requireUser, passwordLimiter, async (req, res) => {
+  try {
+    const current = String(req.body?.currentPassword || "");
+    const next = String(req.body?.newPassword || "");
+    if (next.length < 8) return res.status(400).json({ error: { message: "Use a new password of at least 8 characters." } });
+    const { rows } = await q("select password_hash from users where id = $1", [req.userId]);
+    const user = rows[0];
+    if (!user) return res.status(404).json({ error: { message: "Account not found." } });
+    if (!(await bcrypt.compare(current, user.password_hash))) {
+      return res.status(403).json({ error: { message: "Your current password is incorrect." } });
+    }
+    await q("update users set password_hash = $1 where id = $2", [await bcrypt.hash(next, 12), req.userId]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: { message: "Could not change the password." } }); }
+});
+
+
+app.post("/api/auth/signout", (req, res) => {
+  session.clearSession(res);
+  res.json({ ok: true });
+});
 
 app.get("/api/auth/me", requireUser, async (req, res) => {
   try {
@@ -151,14 +350,16 @@ app.get("/api/auth/me", requireUser, async (req, res) => {
   } catch (e) { res.status(500).json({ error: { message: "Could not load your account." } }); }
 });
 
-// Delete the signed-in user's own account. There is no password left to confirm
-// with, so the confirmation is typing the account's own email address.
-// Cascades to their prospects / usage / approvals via the schema's ON DELETE CASCADE.
+// Delete the signed-in user's own account (password-confirmed). Cascades to their
+// prospects / usage / approvals via the schema's ON DELETE CASCADE.
 app.delete("/api/auth/account", requireUser, async (req, res) => {
   try {
-    const typed = String(req.body?.confirmEmail || "").trim().toLowerCase();
-    if (!typed || typed !== String(req.email || "").toLowerCase()) {
-      return res.status(403).json({ error: { message: "Type your email address exactly to confirm." } });
+    const password = String(req.body?.password || "");
+    const { rows } = await q("select password_hash from users where id = $1", [req.userId]);
+    const user = rows[0];
+    if (!user) return res.status(404).json({ error: { message: "Account not found." } });
+    if (!(await bcrypt.compare(password, user.password_hash))) {
+      return res.status(403).json({ error: { message: "Password is incorrect." } });
     }
     await q("delete from users where id = $1", [req.userId]);
     res.json({ ok: true });
