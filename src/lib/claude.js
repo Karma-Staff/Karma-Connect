@@ -1,6 +1,5 @@
 // Anthropic client. Calls go through our own /api/claude proxy (Vercel function in prod,
 // Vite dev-middleware locally) so the API key stays server-side, never in the browser bundle.
-import { getAccessToken } from "./auth.js";
 import { withRetry } from "./backoff.js";
 
 // Models (hybrid for cost control):
@@ -36,10 +35,9 @@ export async function anthropicMsg(system, user, { maxTokens = 1000, useSearch =
   // means far fewer input tokens, since each search pulls fetched page content into context.
   if (useSearch) body.tools = [{ type: "web_search_20250305", name: "web_search", max_uses: useSearch === "deep" ? 4 : useSearch === "light" ? 1 : 2 }];
 
-  const token = getAccessToken();
   const doFetch = () => fetch("/api/claude", {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}) },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
 

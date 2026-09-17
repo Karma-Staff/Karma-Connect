@@ -58,6 +58,16 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
 .kc .nav .ic{width:17px; height:17px; flex:0 0 17px}
 .kc .nav .ct{margin-left:auto; font-size:11px; background:var(--panel2); color:var(--ice);
   padding:1px 7px; border-radius:20px; font-weight:700; border:1px solid var(--border)}
+/* the Karma Leads switcher, directly under the brand — reads as a companion to
+   the product name, not as one more nav destination */
+.kc .appswitch{display:flex; align-items:center; gap:9px; margin:0 0 14px; padding:9px 11px;
+  border:1px solid var(--border); border-radius:9px; background:var(--panel2);
+  color:var(--ice); font-size:12.5px; font-weight:600; letter-spacing:.02em;
+  text-decoration:none; transition:border-color .15s, color .15s}
+.kc .appswitch b{font-weight:800; color:var(--text)}
+.kc .appswitch .ic{width:15px; height:15px; flex:0 0 15px; opacity:.8}
+.kc .appswitch:hover{border-color:var(--border2); color:var(--text)}
+.kc .appswitch:hover .ic{opacity:1}
 .kc .sidefoot{margin-top:auto; padding:12px 10px 2px; font-size:11px; color:var(--faint); line-height:1.6}
 .kc .dot{display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--yellow);
   box-shadow:0 0 8px var(--yellow); margin-right:7px; vertical-align:middle}

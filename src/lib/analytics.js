@@ -1,11 +1,10 @@
 // Analytics + A/B client. Pipeline funnel, conversion KPIs, per-sender and per-angle
 // performance, plus logging a "message sent" event (the A/B signal). No AI tokens.
-import { getAccessToken } from "./auth.js";
 
 async function api(path, { method = "GET", body } = {}) {
   const res = await fetch(path, {
     method,
-    headers: { "Content-Type": "application/json", Authorization: "Bearer " + getAccessToken() },
+    headers: { "Content-Type": "application/json" },
     body: body ? JSON.stringify(body) : undefined,
   });
   let data = {};

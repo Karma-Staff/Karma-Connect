@@ -5,7 +5,7 @@
 //
 // Signatures are unchanged for the app (listHistory / writeHistory / deleteHistory). They
 // are async (DB reads can't be synchronous) and paginated (page size 25, newest first).
-import { getAccessToken, currentUser } from "./auth.js";
+import { currentUser } from "./auth.js";
 
 const PAGE_SIZE = 25;
 const lsKey = (email) => "kc_hist_" + (email || "anon").toLowerCase();
@@ -23,10 +23,9 @@ const rowToEntry = (r) => ({ id: r.id, label: r.label, sub: r.sub, status: r.sta
 const entryToRow = (e) => ({ id: e.id, label: e.label || "", sub: e.sub || "", status: e.status || "new", data: e.snapshot || {} });
 
 async function api(path, { method = "GET", body } = {}) {
-  const token = getAccessToken();
   const res = await fetch(path, {
     method,
-    headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+    headers: { "Content-Type": "application/json" },
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) throw new Error("History request failed (" + res.status + ").");
@@ -48,7 +47,7 @@ async function reconcile(email, userId) {
 // in; client-side over the local list when offline). Returns [{ id, label, sub, status, savedAt, snapshot }].
 export async function listHistory(email, page = 0, { q = "", status = "" } = {}) {
   const user = currentUser();
-  if (!user || !getAccessToken()) {
+  if (!user) {
     let list = lsRead(email);
     if (q) { const s = q.toLowerCase(); list = list.filter((e) => (e.label || "").toLowerCase().includes(s) || (e.sub || "").toLowerCase().includes(s)); }
     if (status) list = list.filter((e) => (e.status || "new") === status);
@@ -68,7 +67,7 @@ export async function listHistory(email, page = 0, { q = "", status = "" } = {})
 // must show everything the user has saved rather than whatever the current page/filters show.
 export async function countHistory(email) {
   const user = currentUser();
-  if (!user || !getAccessToken()) return lsRead(email).length;
+  if (!user) return lsRead(email).length;
   try {
     const data = await api("/api/stats");
     return Number(data?.stats?.total) || 0;
@@ -78,7 +77,7 @@ export async function countHistory(email) {
 // Update the pipeline status of one saved lead.
 export async function setLeadStatus(email, id, status) {
   const user = currentUser();
-  if (!user || !getAccessToken()) {
+  if (!user) {
     const list = lsRead(email).map((e) => (e.id === id ? { ...e, status } : e));
     lsWrite(email, list);
     return;
@@ -92,7 +91,7 @@ export async function setLeadStatus(email, id, status) {
 export async function writeHistory(email, entries) {
   const list = Array.isArray(entries) ? entries : [entries];
   const user = currentUser();
-  if (!user || !getAccessToken()) { lsMerge(email, list); return; }
+  if (!user) { lsMerge(email, list); return; }
   try {
     await api("/api/history", { method: "POST", body: { entries: list.map(entryToRow) } });
   } catch (e) { lsMerge(email, list); }
@@ -101,7 +100,7 @@ export async function writeHistory(email, entries) {
 // Delete one saved prospect by id.
 export async function deleteHistory(email, id) {
   const user = currentUser();
-  if (!user || !getAccessToken()) { lsWrite(email, lsRead(email).filter((e) => e.id !== id)); return; }
+  if (!user) { lsWrite(email, lsRead(email).filter((e) => e.id !== id)); return; }
   try {
     await api("/api/history/" + encodeURIComponent(id), { method: "DELETE" });
   } catch (e) { lsWrite(email, lsRead(email).filter((e) => e.id !== id)); }

@@ -1,17 +1,28 @@
-// Client auth against our own backend (server.js). Replaces the old Supabase client.
-// We hold a JWT (minted by the server, HS256) in localStorage and attach it as a Bearer
-// token on API calls. The token carries the user id/email the server trusts for scoping.
+// Client auth for the merged Karma site. Karma Connect and Karma Leads share ONE
+// sign-in: WorkOS AuthKit, sealed into an httpOnly `kl_session` cookie by the
+// server (leads/server/auth.js). Signing in here signs you into both.
 //
-// When the backend has no database (local dev without DATABASE_URL), `authAvailable()`
-// resolves false and the app falls back to the per-browser password gate (see AuthGate).
+// Consequences of that cookie being httpOnly, which shape this whole module:
+//   - There is no token for JavaScript to read, store or attach. The browser
+//     sends the cookie on same-origin requests by itself, so API callers build
+//     no Authorization header at all.
+//   - "Am I signed in?" cannot be answered locally. It is answered by asking the
+//     server (refreshUser → /api/auth/me) and caching the reply.
+//   - Signing in is a full-page navigation to WorkOS, not a fetch. `next` tells
+//     the callback which half of the site to come back to.
+//
+// The cached user in localStorage is a convenience only — it lets the UI paint
+// before /api/auth/me answers. The cookie is the actual authority, so a stale
+// cache costs nothing: the next request either succeeds or 401s.
+//
+// When the backend has no database (local dev without DATABASE_URL),
+// `authAvailable()` resolves false and the app falls back to the per-browser
+// password gate (see AuthGate).
 
-const TOKEN_KEY = "kc_token";
 const USER_KEY = "kc_user";
 
-let token = null;
 let user = null;
 try {
-  token = localStorage.getItem(TOKEN_KEY) || null;
   user = JSON.parse(localStorage.getItem(USER_KEY) || "null");
 } catch (e) { /* ignore */ }
 
@@ -19,125 +30,71 @@ const listeners = new Set();
 function notify() { for (const fn of listeners) { try { fn(user); } catch (e) {} } }
 
 export function onAuthChange(fn) { listeners.add(fn); return () => listeners.delete(fn); }
-export function getAccessToken() { return token; }
 export function currentUser() { return user; }
+// Best-effort, cache-based. Authoritative answers come from the server.
+export function isSignedIn() { return !!user; }
 
-function setSession(data) {
-  token = data?.token || null;
-  user = data?.user || null;
+function setUser(u) {
+  user = u || null;
   try {
-    if (token) localStorage.setItem(TOKEN_KEY, token); else localStorage.removeItem(TOKEN_KEY);
-    if (user) localStorage.setItem(USER_KEY, JSON.stringify(user)); else localStorage.removeItem(USER_KEY);
+    if (user) localStorage.setItem(USER_KEY, JSON.stringify(user));
+    else localStorage.removeItem(USER_KEY);
   } catch (e) { /* ignore */ }
   notify();
 }
 
-async function post(path, body) {
-  const res = await fetch(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body || {}),
-  });
-  let data = {};
-  try { data = await res.json(); } catch (e) { /* ignore */ }
-  if (!res.ok) throw new Error(data?.error?.message || "Request failed (" + res.status + ").");
-  return data;
+// Where to send the browser to sign in. A navigation, not a fetch: WorkOS hosts
+// the form. `next` is where the callback returns to once it succeeds.
+export function signInUrl(next) {
+  const to = next || (window.location.pathname + window.location.search);
+  return "/api/auth/login?next=" + encodeURIComponent(to);
 }
 
-export async function signUp({ email, password, firstName, lastName, adminCode }) {
-  const data = await post("/api/auth/signup", { email, password, firstName, lastName, adminCode });
-  // When email verification is on, the server returns { needsVerification: true } and no
-  // token — don't log in; the caller shows a "check your email" notice instead.
-  if (data.token) setSession(data);
-  return data;
+export function startSignIn(next) {
+  window.location.assign(signInUrl(next));
 }
 
-// Ask the server to re-send the confirmation email for an unverified account.
-export async function resendVerification(email) {
-  return post("/api/auth/resend", { email });
+// Ends the WorkOS session as well as the local one, so signing out of Connect
+// also signs you out of Leads — one session, one sign-out.
+export async function signOut() {
+  setUser(null);
+  try {
+    const res = await fetch("/api/auth/logout?next=%2F", { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    window.location.assign(data.url || "/");
+  } catch (e) {
+    window.location.assign("/");
+  }
 }
 
-// Request a password-reset email (server replies uniformly whether or not the account exists).
-export async function requestPasswordReset(email) {
-  return post("/api/auth/forgot", { email });
-}
-
-// Complete a reset with the emailed token + a new password. On success the server returns a
-// session token and we log straight in.
-export async function resetPassword(token, password) {
-  const data = await post("/api/auth/reset", { token, password });
-  if (data.token) setSession(data);
-  return data;
-}
-
-export async function signIn({ email, password }) {
-  const data = await post("/api/auth/signin", { email, password });
-  setSession(data);
-  return data;
-}
-
-export function signOut() { setSession(null); }
-
-// Update just the stored user object (keeps the current token) and notify listeners.
-function setUser(u) {
-  if (!u) return;
-  user = u;
-  try { localStorage.setItem(USER_KEY, JSON.stringify(user)); } catch (e) { /* ignore */ }
-  notify();
-}
-
-// Self-promote to admin using the signup code. Updates the local session on success.
-export async function promoteToAdmin(adminCode) {
-  const res = await fetch("/api/auth/promote", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}) },
-    body: JSON.stringify({ adminCode: adminCode || "" }),
-  });
-  let data = {};
-  try { data = await res.json(); } catch (e) { /* ignore */ }
-  if (!res.ok) throw new Error(data?.error?.message || "Could not update your role.");
-  setUser(data.user);
-  return data;
-}
-
-// Change password while signed in (current password required).
-export async function changePassword(currentPassword, newPassword) {
-  const res = await fetch("/api/auth/password", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}) },
-    body: JSON.stringify({ currentPassword, newPassword }),
-  });
-  let data = {};
-  try { data = await res.json(); } catch (e) { /* ignore */ }
-  if (!res.ok) throw new Error(data?.error?.message || "Could not change the password.");
-  return data;
-}
-
-// Permanently delete the signed-in account (password-confirmed). Signs out on success.
-export async function deleteAccount(password) {
+// Permanently delete the signed-in account. There is no password to confirm with
+// any more, so the server asks for the account's own email address instead.
+export async function deleteAccount(confirmEmail) {
   const res = await fetch("/api/auth/account", {
     method: "DELETE",
-    headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}) },
-    body: JSON.stringify({ password: password || "" }),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ confirmEmail: confirmEmail || "" }),
   });
   let data = {};
   try { data = await res.json(); } catch (e) { /* ignore */ }
   if (!res.ok) throw new Error(data?.error?.message || "Could not delete the account.");
-  signOut();
+  await signOut();
   return data;
 }
 
-// Validate the stored token against the server; clears it if rejected. Returns the user or null.
+// Ask the server who we are. This is the real signed-in check: a 401 means the
+// cookie is missing or expired, so drop the cached user.
 export async function refreshUser() {
-  if (!token) return null;
   try {
-    const res = await fetch("/api/auth/me", { headers: { Authorization: "Bearer " + token } });
-    if (!res.ok) { if (res.status === 401) setSession(null); return null; }
+    const res = await fetch("/api/auth/me");
+    if (!res.ok) { if (res.status === 401 || res.status === 403) setUser(null); return null; }
     const data = await res.json();
-    user = data.user || user;
-    try { localStorage.setItem(USER_KEY, JSON.stringify(user)); } catch (e) {}
+    setUser(data.user || null);
     return user;
-  } catch (e) { return user; }
+  } catch (e) {
+    // Network blip — keep whatever we had rather than falsely signing out.
+    return user;
+  }
 }
 
 // Whether real (database-backed) accounts are available. Cached after the first probe.

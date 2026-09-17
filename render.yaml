@@ -31,6 +31,33 @@ services:
         sync: false                  # set in the dashboard (secret)
       - key: NODE_ENV
         value: production
+
+      # ── Karma Leads (the other half of the site, served at /leads) ──
+      # Leads keeps its OWN database — the paid karma-db that already holds the
+      # lead codes. Nothing is migrated; this service just talks to both.
+      # Set it to karma-db's connection string. IMPORTANT: Render's INTERNAL
+      # connection string only works from the same region, and karma-db is in
+      # virginia — if this service is elsewhere, use the external URL instead.
+      - key: LEADS_DATABASE_URL
+        sync: false
+      # WorkOS AuthKit — Leads' sign-in. WORKOS_REDIRECT_URI must be this
+      # service's callback, https://<this-host>/api/auth/callback, and the SAME
+      # string must be allowlisted in the WorkOS dashboard (Redirects) or no one
+      # can log into Leads.
+      - key: WORKOS_API_KEY
+        sync: false
+      - key: WORKOS_CLIENT_ID
+        sync: false
+      - key: WORKOS_REDIRECT_URI
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true          # seals the kl_session cookie; rotating it just re-logs everyone in
+      - key: APIFY_TOKEN
+        sync: false                  # admin "Find jobs" button; leave blank to disable job search
+      # Set to 0 to unmount Karma Leads without a code change (escape hatch).
+      # - key: LEADS_ENABLED
+      #   value: "0"
+
       # Optional lock-down + rate-limit / cache — set in the dashboard as needed:
       # - key: ALLOWED_EMAIL_DOMAIN
       #   sync: false
