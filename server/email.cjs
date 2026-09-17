@@ -1,22 +1,70 @@
-// Email (internal mail gateway) + the email-verification/reset config, extracted from server.js.
-// Reads GATEWAY_* / MAIL_FROM env at load, so require this AFTER the .env loader has run.
-// The gateway holds the real Resend key server-side; this app only carries a per-client
-// bearer token and POSTs to ${GATEWAY_URL}/send (a body that mirrors Resend's /emails shape).
+// Email + the email-verification/reset config, extracted from server.js.
+// Reads its env at load, so require this AFTER the .env loader has run.
+//
+// TWO ways to send, checked in this order:
+//
+//   1. RESEND_API_KEY — talk to Resend directly. This is what the deployed
+//      service actually has, and for a long time nothing read it: the key was
+//      set in the environment while the code below looked only for the gateway,
+//      so emailVerifyOn was false and every password-reset request succeeded
+//      silently without sending anything.
+//   2. GATEWAY_URL + GATEWAY_TOKEN — the internal mail gateway, which holds a
+//      Resend key of its own and exposes /send. Kept because other deployments
+//      use it and it keeps the key off this service.
+//
+// Neither configured: sending is OFF, and signups are created already-verified
+// rather than waiting for a confirmation that can never arrive.
 const GATEWAY_URL = (process.env.GATEWAY_URL || "").replace(/\/+$/, ""); // trim trailing slash
 const GATEWAY_TOKEN = process.env.GATEWAY_TOKEN || "";
-const MAIL_FROM = process.env.MAIL_FROM || "Karma Connect <karmaconnect@karmastaff.com>";
-const emailVerifyOn = !!(GATEWAY_URL && GATEWAY_TOKEN); // when off (unconfigured), signups are created already-verified
+const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
+/* RESEND_FROM is the deployed name for it; MAIL_FROM is what this code has
+   always called it. Accept both so neither environment has to be renamed. */
+const MAIL_FROM = process.env.RESEND_FROM || process.env.MAIL_FROM
+  || "Karma Connect <karmaconnect@karmastaff.com>";
+const gatewayOn = !!(GATEWAY_URL && GATEWAY_TOKEN);
+const resendOn = !!RESEND_API_KEY;
+const emailVerifyOn = resendOn || gatewayOn;
 const VERIFY_TTL_HOURS = 24;
 const RESET_TTL_HOURS = 1; // password-reset links expire fast
+
+if (!emailVerifyOn) {
+  console.warn("[karma] email is OFF (no RESEND_API_KEY, no GATEWAY_URL/GATEWAY_TOKEN) — "
+    + "signups are auto-verified and password resets cannot be sent.");
+}
 
 // Escape user-supplied text before embedding it in email HTML.
 function escapeHtml(s) {
   return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
-// Deliver one email via the gateway. Returns the gateway's message_id on success.
-// Never logs the bearer token. Maps gateway error statuses to clear, actionable messages.
+// Deliver one email. Resend directly when a key is present, otherwise the
+// gateway. Returns a message id on success; never logs a credential.
 async function send(to, subject, html) {
+  if (!emailVerifyOn) throw new Error("Email is not configured (set RESEND_API_KEY).");
+  return resendOn ? sendViaResend(to, subject, html) : sendViaGateway(to, subject, html);
+}
+
+/* Resend's API is one POST. Its failures are worth naming individually: the
+   403 in particular means the sending domain is not verified in Resend, which
+   looks like a code problem and is not one. */
+async function sendViaResend(to, subject, html) {
+  const r = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { Authorization: "Bearer " + RESEND_API_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({ from: MAIL_FROM, to: [to], subject, html }),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (r.ok && data.id) return data.id;
+  if (r.status === 401) throw new Error("Resend: bad API key (401) — check RESEND_API_KEY.");
+  if (r.status === 403) throw new Error("Resend: not allowed to send as " + MAIL_FROM
+    + " (403) — verify that domain in the Resend dashboard.");
+  if (r.status === 422) throw new Error("Resend rejected the message (422): "
+    + (data.message || "check the from address and recipient."));
+  if (r.status === 429) throw new Error("Resend: rate limited (429) — try again shortly.");
+  throw new Error("Resend " + r.status + ": " + (data.message || "send failed"));
+}
+
+async function sendViaGateway(to, subject, html) {
   const r = await fetch(GATEWAY_URL + "/send", {
     method: "POST",
     headers: { Authorization: "Bearer " + GATEWAY_TOKEN, "Content-Type": "application/json" },
