@@ -2654,6 +2654,25 @@ const VOICE = { mode: "tel", dialUrl: "", countryCode: "+1", sdk: null, ready: f
    refused. Catch that and put it on screen, so the blocked host can be read off
    the page instead of hunted for in devtools. Only violations involving the
    phone system are shown; anything else is left to the console. */
+/* Turn whatever the SDK threw into something readable. It may be an Error, a
+   plain object, or a nested structure; JSON.stringify covers the common cases
+   and the key list covers the ones it cannot serialise. */
+function describeErr(err) {
+  if (err == null) return "(no detail)";
+  if (typeof err === "string") return err;
+  const parts = [];
+  for (const k of ["code", "status", "message", "description", "reason", "error", "type"]) {
+    if (err[k] !== undefined && typeof err[k] !== "object") parts.push(k + "=" + err[k]);
+  }
+  if (parts.length) return parts.join(" ");
+  try {
+    const s = JSON.stringify(err);
+    if (s && s !== "{}") return s.slice(0, 300);
+  } catch (e) { /* circular — fall through */ }
+  const keys = Object.keys(err || {});
+  return keys.length ? "fields: " + keys.join(",") : String(err);
+}
+
 function watchVoiceBlocks() {
   document.addEventListener("securitypolicyviolation", (e) => {
     const uri = e.blockedURI || "(inline)";
@@ -2694,21 +2713,32 @@ function loadVoiceSdk() {
         zv.ajaxOpts.isOAuth = true;
         zv.ajaxOpts.oAuthCallBack = (cb) => {
           api("/api/voice/token", { method: "POST" })
-            .then((r) => cb(r.access_token))
+            .then((r) => {
+              /* Say whether a token actually reached the SDK. Without this the
+                 next failure is ambiguous again: "Unauthorized access" looks
+                 the same whether we handed over nothing or handed over a token
+                 Zoho then refused. */
+              console.log("[karma] voice token handed to SDK:", !!r.access_token);
+              if (!r.access_token) toast("Zoho: no token was returned", 12000);
+              cb(r.access_token);
+            })
             .catch((e) => {
               console.warn("[karma] voice token:", e.message);
+              toast("Zoho token failed: " + e.message, 15000);
               cb(null);                  // SDK reports an error; we fall back
             });
         };
         zv.on?.("ready", () => { VOICE.ready = true; });
         zv.on?.("regState", (st) => { VOICE.ready = String(st?.state || st) !== "unregistered"; });
         zv.on?.("error", (err) => {
-          const msg = String(err?.description || err?.message || err || "");
-          /* Log the whole object, not just the message. "Unauthorized access"
-             is what the SDK says for every failure; the fields around it are
-             the only place the actual cause shows up. */
-          console.warn("[karma] voice error:", msg, err);
-          toast("Zoho softphone: " + msg, 10000);
+          /* The SDK hands back an object, not a string, and String() on it
+             gives "[object Object]" — which is what the first version of this
+             showed and told nobody anything. Serialise it instead: the message
+             is always "Unauthorized access", so the surrounding fields are the
+             only place the real cause appears. */
+          const msg = describeErr(err);
+          console.warn("[karma] voice error:", err);
+          toast("Zoho softphone: " + msg, 15000);
           /* The softphone could not sign in — usually the Zoho identity behind
              the API credentials is not a Voice agent with a seat. Nothing the
              rep can do about it, and leaving the widget up means every click
