@@ -801,7 +801,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
     { id: "board", label: "Board", ic: Ic.board },
     { id: "reminders", label: "Reminders", ic: Ic.fup, count: remindersDue },
     { id: "coach", label: "Message Coach", ic: Ic.dash },
-    { id: "queue", label: "Send Queue", ic: SendIc },
+    { id: "queue", label: "Send Queue", ic: Ic.send },
     ...(isAdmin ? [
       { id: "approvals", label: "Approvals", ic: Ic.intel, admin: true, count: adminList.filter((a) => a.status === "pending").length },
       { id: "team", label: "Team activity", ic: Ic.team, admin: true },
