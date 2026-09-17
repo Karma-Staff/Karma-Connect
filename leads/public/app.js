@@ -2712,20 +2712,26 @@ function loadVoiceSdk() {
         // refresh token and hands back a short-lived access token
         zv.ajaxOpts.isOAuth = true;
         zv.ajaxOpts.oAuthCallBack = (cb) => {
-          api("/api/voice/token", { method: "POST" })
-            .then((r) => {
-              /* Say whether a token actually reached the SDK. Without this the
-                 next failure is ambiguous again: "Unauthorized access" looks
-                 the same whether we handed over nothing or handed over a token
-                 Zoho then refused. */
-              console.log("[karma] voice token handed to SDK:", !!r.access_token);
-              if (!r.access_token) toast("Zoho: no token was returned", 12000);
-              cb(r.access_token);
+          /* Deliberately not the shared api() helper: it throws away everything
+             but the `error` string, and the whole point here is the `reason`
+             field beside it — Zoho's own words for why the exchange failed. */
+          fetch("/api/voice/token", { method: "POST" })
+            .then(async (res) => {
+              const d = await res.json().catch(() => ({}));
+              if (res.ok && d.access_token) {
+                console.log("[karma] voice token handed to SDK: yes");
+                return cb(d.access_token);
+              }
+              const detail = [d.reason, d.clientIdPrefix && ("id " + d.clientIdPrefix),
+                d.accountsDomain].filter(Boolean).join(" · ");
+              console.warn("[karma] voice token failed:", res.status, d);
+              toast("Zoho token: " + (detail || d.error || ("HTTP " + res.status)), 20000);
+              cb(null);                  // SDK reports an error; we fall back
             })
             .catch((e) => {
-              console.warn("[karma] voice token:", e.message);
-              toast("Zoho token failed: " + e.message, 15000);
-              cb(null);                  // SDK reports an error; we fall back
+              console.warn("[karma] voice token request failed:", e.message);
+              toast("Zoho token request failed: " + e.message, 15000);
+              cb(null);
             });
         };
         zv.on?.("ready", () => { VOICE.ready = true; });
