@@ -2647,7 +2647,24 @@ async function runPhoneRefresh() {
 
 const VOICE = { mode: "tel", dialUrl: "", countryCode: "+1", sdk: null, ready: false, loading: null };
 
+/* The softphone authenticates locally and fails on the deploy, and the SDK
+   reports every cause as "Unauthorized access" — a blocked request and a
+   refused credential look identical from inside it. The browser does know the
+   difference: it fires securitypolicyviolation naming the exact address it
+   refused. Catch that and put it on screen, so the blocked host can be read off
+   the page instead of hunted for in devtools. Only violations involving the
+   phone system are shown; anything else is left to the console. */
+function watchVoiceBlocks() {
+  document.addEventListener("securitypolicyviolation", (e) => {
+    const uri = e.blockedURI || "(inline)";
+    console.warn("[karma] CSP blocked", e.violatedDirective, uri);
+    if (!/zoho/i.test(uri)) return;
+    toast("Blocked by security policy: " + e.violatedDirective + " -> " + uri, 12000);
+  });
+}
+
 async function voiceInit() {
+  watchVoiceBlocks();
   try {
     const cfg = await api("/api/voice/config");
     VOICE.mode = cfg.mode || "tel";
@@ -2687,7 +2704,11 @@ function loadVoiceSdk() {
         zv.on?.("regState", (st) => { VOICE.ready = String(st?.state || st) !== "unregistered"; });
         zv.on?.("error", (err) => {
           const msg = String(err?.description || err?.message || err || "");
-          console.warn("[karma] voice:", msg);
+          /* Log the whole object, not just the message. "Unauthorized access"
+             is what the SDK says for every failure; the fields around it are
+             the only place the actual cause shows up. */
+          console.warn("[karma] voice error:", msg, err);
+          toast("Zoho softphone: " + msg, 10000);
           /* The softphone could not sign in — usually the Zoho identity behind
              the API credentials is not a Voice agent with a seat. Nothing the
              rep can do about it, and leaving the widget up means every click
@@ -3110,12 +3131,14 @@ function renderStats(d) {
 }
 
 let toastTimer;
-function toast(msg) {
+// ms is optional: a diagnostic worth copying down needs longer than a
+// confirmation that something saved.
+function toast(msg, ms) {
   const el = $("toast");
   el.textContent = msg;
   el.classList.remove("hidden");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.add("hidden"), 3500);
+  toastTimer = setTimeout(() => el.classList.add("hidden"), ms || 3500);
 }
 
 /* Undo toast (bottom right, 5 seconds): restores exactly the id set the
