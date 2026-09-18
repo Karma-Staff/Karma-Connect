@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, cloneElement } from "react";
+import { useState, useEffect, cloneElement } from "react";
 import { signIn, signUp, signOut, currentUser, onAuthChange, refreshUser, authAvailable, resendVerification, requestPasswordReset, resetPassword } from "../lib/auth.js";
 import { hasPassword, setPassword as setLocalPw, verifyPassword, clearPassword } from "../lib/localpass.js";
 import { KarmaIcon } from "./icons.jsx";
@@ -114,32 +114,6 @@ const AUTH_CSS = `
   -webkit-backdrop-filter:blur(10px) saturate(1.4); backdrop-filter:blur(10px) saturate(1.4)}
 .kcauth .field input:focus{background:rgba(255,255,255,.1); box-shadow:0 0 0 4px rgba(124,92,255,.18), inset 0 1px 0 rgba(255,255,255,.25)}
 
-/* ── Cinematic stick-figure handshake intro ── */
-.kcauth-intro{position:fixed; inset:0; z-index:60; display:flex; align-items:center; justify-content:center; cursor:pointer; overflow:hidden;
-  background:radial-gradient(900px 700px at 50% 42%, rgba(22,56,90,.55), transparent 60%), linear-gradient(160deg,#071426 0%,#081B38 50%,#020B1C 100%);
-  animation:kcIntroOut .7s ease 3.7s both}
-.kcauth-intro .stage{position:relative; width:min(560px,88vw); display:flex; align-items:center; justify-content:center}
-.kcauth-intro svg{width:100%; height:auto; transform-origin:50% 54%; animation:kcIntroZoom 3.7s cubic-bezier(.55,0,.2,1) both}
-.kcauth-intro .hands{transform-origin:50% 54%; animation:kcHandshake .26s ease-in-out 5 alternate}
-/* Green-screen clip: the green is keyed out per-pixel onto a canvas (see ChromaVideo), so the
-   hands arrive with real transparency and need no blend mode. */
-.kcauth-intro .vid{display:block; width:min(640px,92vw); height:auto; max-height:76vh; object-fit:contain; transform-origin:50% 50%;
-  animation:kcVidZoom 3.7s cubic-bezier(.55,0,.2,1) both}
-@keyframes kcVidZoom{0%{transform:scale(1.55)}60%{transform:scale(1)}100%{transform:scale(1)}}
-.kcauth-intro .figs{animation:kcFigsFade .7s ease 2.6s both}
-.kcauth-intro .logo{position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:15px; opacity:0; animation:kcLogoReveal .9s cubic-bezier(.22,1,.36,1) 2.6s both}
-.kcauth-intro .logo .mk{width:88px; height:88px; display:flex; align-items:center; justify-content:center}
-.kcauth-intro .logo .mk .kicon{width:100%; height:100%; object-fit:contain; display:block;
-  filter:drop-shadow(0 18px 44px rgba(124,92,255,.6))}
-.kcauth-intro .logo h1{font-family:'Lora',serif; font-size:30px; font-weight:700; color:#eef2fb; letter-spacing:-.02em}
-.kcauth-intro .logo h1 b{background:linear-gradient(135deg,#FFD83A,#E7B74B); -webkit-background-clip:text; background-clip:text; color:transparent}
-.kcauth-intro .skip{position:absolute; bottom:26px; left:0; right:0; text-align:center; font-size:10.5px; letter-spacing:.2em; text-transform:uppercase; color:#5f72a0; font-weight:700}
-@keyframes kcIntroZoom{0%{transform:scale(3.6)}28%{transform:scale(3.6)}62%{transform:scale(1)}100%{transform:scale(1)}}
-@keyframes kcHandshake{from{transform:translateY(-5px)}to{transform:translateY(5px)}}
-@keyframes kcFigsFade{to{opacity:0}}
-@keyframes kcLogoReveal{0%{opacity:0; transform:scale(.7)}100%{opacity:1; transform:scale(1)}}
-@keyframes kcIntroOut{to{opacity:0; visibility:hidden}}
-@media(prefers-reduced-motion:reduce){ .kcauth-intro{display:none} }
 `;
 
 function I({ d, c }) { return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">{c || <path d={d} />}</svg>; }
@@ -149,146 +123,6 @@ const UserIc = <I c={<><circle cx="12" cy="8" r="3.5" /><path d="M5 20a7 7 0 0 1
 const EyeIc = <I c={<><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" /><circle cx="12" cy="12" r="3" /></>} />;
 const EyeOffIc = <I c={<><path d="M3 3l18 18" /><path d="M10.6 10.6a3 3 0 0 0 4.2 4.2" /><path d="M9.9 5.2A10.4 10.4 0 0 1 12 5c6.5 0 10 7 10 7a17.8 17.8 0 0 1-3.3 4.1M6.6 6.6A17.6 17.6 0 0 0 2 12s3.5 7 10 7a10.3 10.3 0 0 0 3.4-.6" /></>} />;
 const CheckIc = <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5"><path d="M5 13l4 4L19 7" /></svg>;
-
-// The login intro clip is shot on a green screen, and CSS has no chroma key — `mix-blend-mode`
-// can only drop black. So we key the green out ourselves to get real per-pixel alpha.
-//
-// This runs on the GPU. The obvious implementation (canvas 2D + getImageData + a per-pixel JS
-// loop + putImageData) stalls the main thread every frame: getImageData forces a synchronous
-// pixel readback, and the readback plus the loop is long enough to drop frames and visibly
-// judder the CSS zoom animating alongside it. A fragment shader does the same work per pixel
-// in parallel with no readback at all, so the main thread stays free for the animation.
-//
-// Frames are pushed by requestVideoFrameCallback where it exists, which fires exactly once per
-// decoded video frame — so we upload one texture per real frame instead of re-keying the same
-// frame 60x a second. rAF is the fallback. Canvas 2D remains as a last resort for no-WebGL.
-const CHROMA_VS = `attribute vec2 p; varying vec2 uv;
-void main(){ uv = vec2(p.x * .5 + .5, .5 - p.y * .5); gl_Position = vec4(p, 0., 1.); }`;
-// `lo`/`hi` ramp the alpha instead of hard-cutting it, which antialiases the edge of the hands
-// rather than leaving the stair-stepped border a boolean test gives you.
-const CHROMA_FS = `precision mediump float; uniform sampler2D t; varying vec2 uv;
-void main(){
-  vec4 c = texture2D(t, uv);
-  float rest = (c.r + c.b) * .5;
-  float green = c.g - rest;                      // how far into green this pixel leans
-  float a = 1. - smoothstep(.04, .16, green);    // soft edge, not a hard threshold
-  if (c.g < .20) a = 1.;                         // dark shadows are never the backdrop
-  c.g = min(c.g, rest + .02);                    // suppress green spill on skin and cuffs
-  gl_FragColor = vec4(c.rgb, a);
-}`;
-
-function compile(gl, type, src) {
-  const s = gl.createShader(type);
-  gl.shaderSource(s, src);
-  gl.compileShader(s);
-  return gl.getShaderParameter(s, gl.COMPILE_STATUS) ? s : null;
-}
-
-function ChromaVideo({ src, onFail }) {
-  const vRef = useRef(null);
-  const cRef = useRef(null);
-  useEffect(() => {
-    const v = vRef.current, c = cRef.current;
-    if (!v || !c) return;
-    let stopped = false, rafId = 0, vfcId = 0;
-    let gl = null, tex = null, ctx2d = null;
-
-    // GPU path. premultipliedAlpha:false keeps the shader's straight alpha from darkening the
-    // edge pixels when the compositor blends the canvas over the page.
-    function initGL() {
-      try {
-        gl = c.getContext("webgl", { premultipliedAlpha: false, antialias: false, depth: false, stencil: false })
-          || c.getContext("experimental-webgl", { premultipliedAlpha: false });
-      } catch (e) { gl = null; }
-      if (!gl) return false;
-      const vs = compile(gl, gl.VERTEX_SHADER, CHROMA_VS);
-      const fs = compile(gl, gl.FRAGMENT_SHADER, CHROMA_FS);
-      if (!vs || !fs) return false;
-      const prog = gl.createProgram();
-      gl.attachShader(prog, vs); gl.attachShader(prog, fs); gl.linkProgram(prog);
-      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return false;
-      gl.useProgram(prog);
-      const buf = gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
-      const loc = gl.getAttribLocation(prog, "p");
-      gl.enableVertexAttribArray(loc);
-      gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-      tex = gl.createTexture();
-      gl.bindTexture(gl.TEXTURE_2D, tex);
-      // CLAMP + LINEAR so the non-power-of-two 640x360 frame is a legal texture in WebGL 1.
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-      gl.clearColor(0, 0, 0, 0);
-      return true;
-    }
-
-    // CPU fallback, only reached when WebGL is unavailable.
-    function initCPU() {
-      try { ctx2d = c.getContext("2d", { willReadFrequently: true }); } catch (e) { ctx2d = null; }
-      return !!ctx2d;
-    }
-
-    function paint() {
-      if (v.readyState < 2 || !c.width) return;
-      if (gl) {
-        gl.viewport(0, 0, c.width, c.height);
-        gl.bindTexture(gl.TEXTURE_2D, tex);
-        try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, v); } catch (e) { return; }
-        gl.clear(gl.COLOR_BUFFER_BIT);
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-        return;
-      }
-      ctx2d.drawImage(v, 0, 0, c.width, c.height);
-      let frame;
-      try { frame = ctx2d.getImageData(0, 0, c.width, c.height); } catch (e) { return; }
-      const d = frame.data;
-      for (let i = 0; i < d.length; i += 4) {
-        const rest = (d[i] + d[i + 2]) / 2;
-        if (d[i + 1] > 70 && d[i + 1] > rest * 1.35) d[i + 3] = 0;
-        else if (d[i + 1] > rest * 1.06) d[i + 1] = rest;
-      }
-      ctx2d.putImageData(frame, 0, 0);
-    }
-
-    function tick() {
-      if (stopped) return;
-      paint();
-      schedule();
-    }
-    function schedule() {
-      if (stopped) return;
-      if (v.requestVideoFrameCallback) vfcId = v.requestVideoFrameCallback(tick);
-      else rafId = requestAnimationFrame(tick);
-    }
-
-    function start() {
-      c.width = v.videoWidth || 640;
-      c.height = v.videoHeight || 360;
-      if (!initGL() && !initCPU()) { onFail && onFail(); return; }
-      schedule();
-    }
-
-    v.addEventListener("loadeddata", start);
-    const p = v.play();
-    if (p && p.catch) p.catch(() => {}); // autoplay rejection is harmless; the frame loop still runs
-    return () => {
-      stopped = true;
-      cancelAnimationFrame(rafId);
-      if (vfcId && v.cancelVideoFrameCallback) { try { v.cancelVideoFrameCallback(vfcId); } catch (e) {} }
-      v.removeEventListener("loadeddata", start);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  return (
-    <>
-      <video ref={vRef} src={src} muted playsInline preload="auto" onError={onFail} style={{ display: "none" }} />
-      <canvas ref={cRef} className="vid" />
-    </>
-  );
-}
 
 // Decorative background: particles + a faint intelligence-network.
 function Backdrop() {
@@ -328,20 +162,6 @@ export function AuthGate({ children }) {
   const [err, setErr] = useState("");
   const [showResend, setShowResend] = useState(false);
   const [resetToken, setResetToken] = useState(""); // set from a ?reset=<token> email link
-  // Cinematic handshake intro — plays whenever the login screen loads; click to skip.
-  const [intro, setIntro] = useState(true);
-  // Use /login-intro.mp4 if present; otherwise fall back to the silhouette animation.
-  const [videoOk, setVideoOk] = useState(true);
-  function endIntro() { setIntro(false); }
-  useEffect(() => {
-    if (!intro) return;
-    let reduce = false;
-    try { reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) {}
-    if (reduce) { endIntro(); return; }
-    const t = setTimeout(endIntro, 4400);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // After the email-confirmation link redirects back with ?verified=1 / ?verified=0,
   // or after an inactivity auto-logout redirects with ?timeout=1.
@@ -556,43 +376,6 @@ export function AuthGate({ children }) {
     <div className="kcauth">
       <style>{AUTH_CSS}</style>
       <Backdrop />
-      {intro && (
-        <div className="kcauth-intro" onClick={endIntro} title="Click to skip">
-          <div className="stage">
-            {videoOk ? (
-            <ChromaVideo src="/login-intro.mp4" onFail={() => setVideoOk(false)} />
-            ) : (
-            <svg viewBox="0 0 400 300" fill="none" stroke="#e7eefb" strokeWidth="16" strokeLinecap="round" strokeLinejoin="round">
-              <g className="figs">
-                {/* left silhouette (facing right) */}
-                <circle cx="118" cy="72" r="21" fill="#e7eefb" stroke="none" />
-                <path d="M118 94 L118 184" />
-                <path d="M118 184 L98 248" />
-                <path d="M118 184 L138 248" />
-                <path d="M118 120 L94 158" />
-                {/* right silhouette (facing left) */}
-                <circle cx="282" cy="72" r="21" fill="#e7eefb" stroke="none" />
-                <path d="M282 94 L282 184" />
-                <path d="M282 184 L302 248" />
-                <path d="M282 184 L262 248" />
-                <path d="M282 120 L306 158" />
-                {/* clasped hands — the focal point, shakes */}
-                <g className="hands">
-                  <path d="M118 120 L190 162" />
-                  <path d="M282 120 L210 162" />
-                  <path d="M185 162 L215 162" stroke="#FFCF00" strokeWidth="22" />
-                </g>
-              </g>
-            </svg>
-            )}
-            <div className="logo">
-              <div className="mk"><KarmaIcon w={88} /></div>
-              <h1>Karma <b>Connect</b></h1>
-            </div>
-          </div>
-          <div className="skip">click to skip</div>
-        </div>
-      )}
       <div className="center">
         <div className="brand">
           <div className="mk"><KarmaIcon w={62} /></div>
