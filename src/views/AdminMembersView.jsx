@@ -1,5 +1,10 @@
-// Admin-only member management: list users, grant/revoke admin, remove a member.
-// All actions are admin-gated server-side. No AI tokens used.
+// Member management. Admins read this screen; only the owner can act on it.
+//
+// The split is deliberate: a manager should be able to see who is on the team
+// and what they are spending, but appointing another admin and deleting an
+// account are the two moves that change who has access and cannot be taken
+// back. Both are owner-gated on the routes; the buttons below just stop
+// promising something the server will refuse.
 import { useState, useEffect } from "react";
 import { listUsers, setUserRole, removeUser } from "../lib/admin.js";
 
@@ -10,10 +15,11 @@ export function AdminMembersView({ meId, askConfirm, showToast }) {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [busyId, setBusyId] = useState("");
+  const [isOwner, setIsOwner] = useState(false);
 
   function load() {
     setLoading(true); setErr("");
-    listUsers().then((u) => { setUsers(u); setLoading(false); })
+    listUsers().then(({ users: u, youAreOwner }) => { setUsers(u); setIsOwner(youAreOwner); setLoading(false); })
       .catch((e) => { setErr((e && e.message) || "Could not load members."); setLoading(false); });
   }
   useEffect(() => { load(); }, []);
@@ -41,7 +47,10 @@ export function AdminMembersView({ meId, askConfirm, showToast }) {
 
   return (
     <div>
-      <div className="head"><div className="eyebrow">Admin</div><h2>Members</h2><p>Everyone with an account. Grant or revoke admin, see usage, or remove a member.</p></div>
+      <div className="head"><div className="eyebrow">Admin</div><h2>Members</h2>
+        <p>Everyone with an account, and what they have spent.{isOwner
+          ? " As the owner you can also grant admin or remove someone."
+          : " Granting admin and removing an account are the owner's — ask them."}</p></div>
       <div className="toprow"><button className="btn ghost sm" onClick={load}>Refresh</button></div>
 
       {loading && <div className="panel" style={{ color: "var(--muted)" }}>Loading members…</div>}
@@ -59,7 +68,7 @@ export function AdminMembersView({ meId, askConfirm, showToast }) {
                   <div className="pn" style={{ fontSize: 13.5, fontWeight: 700 }}>{[u.first_name, u.last_name].filter(Boolean).join(" ") || u.email}</div>
                   <div className="pr" style={{ fontSize: 11.5, color: "var(--muted)" }}>{u.email}</div>
                 </div>
-                {u.is_admin && <span style={{ marginLeft: "auto", fontSize: 10.5, fontWeight: 700, color: "#52d39e", border: "1px solid #52d39e55", background: "#52d39e1a", borderRadius: 999, padding: "2px 9px" }}>Admin</span>}
+                {(u.is_owner || u.is_admin) && <span style={{ marginLeft: "auto", fontSize: 10.5, fontWeight: 700, color: u.is_owner ? "#FFCF00" : "#52d39e", border: "1px solid " + (u.is_owner ? "#FFCF0055" : "#52d39e55"), background: (u.is_owner ? "#FFCF00" : "#52d39e") + "1a", borderRadius: 999, padding: "2px 9px" }}>{u.is_owner ? "Owner" : "Admin"}</span>}
               </div>
               <div style={{ fontSize: 11.5, color: "var(--faint)", display: "flex", gap: 12, flexWrap: "wrap" }}>
                 <span>Joined {new Date(u.created_at).toLocaleDateString()}</span>
@@ -67,10 +76,17 @@ export function AdminMembersView({ meId, askConfirm, showToast }) {
                 {!u.email_verified && <span style={{ color: "#E7B74B" }}>Unverified</span>}
               </div>
               <div className="mact">
-                <button className="iconbtn" onClick={() => toggleRole(u)} disabled={busyId === u.id || u.id === meId}>
+                {/* An owner's rank comes from OWNER_EMAILS, so there is no
+                    button that could revoke it — the server says the same. */}
+                <button className="iconbtn" onClick={() => toggleRole(u)}
+                        disabled={busyId === u.id || u.id === meId || !isOwner || u.is_owner}
+                        title={u.is_owner ? "Owners are set in OWNER_EMAILS" : isOwner ? "" : "Only the owner can change this"}>
                   {u.is_admin ? "Revoke admin" : "Make admin"}
                 </button>
-                <button className="iconbtn" onClick={() => confirmRemove(u)} disabled={busyId === u.id || u.id === meId} style={{ marginLeft: "auto", color: u.id === meId ? "var(--faint)" : "#ff9a9a" }}>
+                <button className="iconbtn" onClick={() => confirmRemove(u)}
+                        disabled={busyId === u.id || u.id === meId || !isOwner || u.is_owner}
+                        title={isOwner ? "" : "Only the owner can remove an account"}
+                        style={{ marginLeft: "auto", color: (u.id === meId || !isOwner || u.is_owner) ? "var(--faint)" : "#ff9a9a" }}>
                   {u.id === meId ? "You" : "Remove"}
                 </button>
               </div>

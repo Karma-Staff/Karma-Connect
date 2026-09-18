@@ -92,10 +92,17 @@ step(3, "Click Approve to unlock Relationship/Meeting/Follow-up for that member 
 step(4, "Use \"Refresh\" to pull the latest requests.");
 p("As an admin, your own leads are never locked - you can use every engine immediately.", LIGHT);
 
-h2("Making someone an admin (the person who runs the app)");
-b("Admin code: set ADMIN_SIGNUP_CODE in the hosting environment (Render). Share it privately; new signups who enter it become admins.");
-b("Admin list: set ADMIN_EMAILS (comma-separated) in Render. Anyone on the list is an admin.");
-b("After a change, the admin should sign out and back in so the app picks up their new status.");
+h2("Who can do what");
+b("Member: works the leads assigned to them. Nothing else is visible.");
+b("Admin (the manager): assigns work, imports, runs job searches, and reads the whole team's numbers. Everything an admin can do is either recoverable or costs money.");
+b("Owner: the things that change who has access or cannot be undone - appointing admins, deleting accounts, emptying the Leads bin, lifting a do-not-call ban.");
+
+h2("Making someone an admin");
+b("The owner opens Members and clicks \"Make admin\". That is the only way in the app.");
+b("Admin list: set ADMIN_EMAILS (comma-separated) in Render to grant it from configuration instead.");
+b("Owner list: set OWNER_EMAILS in Render. The owner tier lives only there, never in the database, so it holds even if a row is wrong and cannot be granted from inside the app.");
+b("There is no longer an admin signup code. One shared string that promoted whoever typed it could not be revoked for a single person and left no record of who had used it.");
+b("After a change, the person should sign out and back in so the app picks up their new status.");
 
 h2("Keeping costs sensible (admins + power users)");
 b("Only open the engines you'll actually use - each one is a separate paid AI call.");
@@ -121,7 +128,7 @@ qa("Messages won't generate / an error appears.", "Click Generate again (the app
 qa("I don't see a new feature / the page looks old.", "Your browser cached old files. Hard refresh with Ctrl+Shift+R, then sign out and back in.");
 
 h2("Admin-side / setup problems");
-qa("Nobody can approve leads (no Approvals panel for anyone).", "No admin is configured. Set ADMIN_EMAILS or ADMIN_SIGNUP_CODE in Render, save (the service restarts), then the admin signs out and back in.");
+qa("Nobody can approve leads (no Approvals panel for anyone).", "No admin is configured. Set ADMIN_EMAILS (or OWNER_EMAILS) in Render, save (the service restarts), then the admin signs out and back in.");
 qa("I'm an admin but don't see \"Approvals\".", "Sign out, hard refresh (Ctrl+Shift+R), and sign back in so the app re-reads your admin status.");
 qa("Signup fails with \"Could not create the account.\"", "Usually the database tables aren't set up. The operator runs the one-time schema setup (npm run db:init) against the database.");
 qa("Confirmation emails never send.", "Email isn't configured: set GATEWAY_URL, GATEWAY_TOKEN and MAIL_FROM in Render, and ask an admin to allowlist your MAIL_FROM address on the mail gateway.");

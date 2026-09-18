@@ -707,7 +707,13 @@ function renderList() {
    mutations the reading pane offers on one lead, applied by the server under
    the same rules (server/bulk.js). Members never see any of it, and the routes
    403 them anyway. */
-const isAdmin = () => S.me?.role === "admin";
+/* The same ladder the API enforces (leads/server/auth.js). Presentation
+   only — every gate below is also a 403 — but it has to agree, or an owner
+   loses the manager screens they outrank. */
+const RANK = { member: 0, admin: 1, owner: 2 };
+const rankOf = (role) => RANK[role] ?? 0;
+const isAdmin = () => rankOf(S.me?.role) >= RANK.admin;
+const isOwner = () => rankOf(S.me?.role) >= RANK.owner;
 const BULK_MAX = 500;                 // keep in step with MAX_IDS in server/bulk.js
 let lastPick = null;                  // row index, for shift-click ranges
 
@@ -958,7 +964,7 @@ function renderDetail(r) {
       <button class="remove-btn" id="d-remove"
               title="${r.Removed ? "Restore this lead and un-ban its number" : "DNC — bans the phone number from calling"}">${
                 r.Removed ? "↩ Restore" : "🚫 DNC"}</button>
-      ${S.me?.role === "admin" ? `<button class="delete-btn" id="d-delete"
+      ${isAdmin() ? `<button class="delete-btn" id="d-delete"
               title="Delete — moves this lead to the trash bin">🗑 Delete</button>` : ""}
     </div>
 
@@ -1165,7 +1171,7 @@ async function loadComments(r) {
     }
     el.innerHTML = list.map((c) => {
       const who = c.author_email || "someone";
-      const mine = c.author_user_id === S.me?.id || S.me?.role === "admin";
+      const mine = c.author_user_id === S.me?.id || isAdmin();
       return `
       <div class="comment" data-cid="${c.id}">
         <span class="avatar avatar-sm" style="background:${avColor(who)}">${esc(initials(who))}</span>
@@ -1349,7 +1355,7 @@ function wireGlobalDrop() {
   window.addEventListener("dragover", (e) => {
     if (!hasFile(e)) return;
     e.preventDefault();
-    if (S.me?.role !== "admin") return;
+    if (!isAdmin()) return;
     if ($("modal-backdrop").classList.contains("hidden")) openImportModal();
     document.body.classList.add("dragging");
   });
@@ -1360,7 +1366,7 @@ function wireGlobalDrop() {
     if (!hasFile(e)) return;
     e.preventDefault();                     // never let the browser open the file
     document.body.classList.remove("dragging");
-    if (S.me?.role !== "admin") return;
+    if (!isAdmin()) return;
     const f = e.dataTransfer.files[0];
     if (f && $("dropzone")) runImport(f);
   });
@@ -1380,12 +1386,19 @@ async function openUsersModal() {
   $("modal-title").textContent = "Manage team";
   $("modal-body").innerHTML = `
     <p class="modal-sub">Anyone with a company email joins as a <b>member</b> the
-      first time they sign in. Admins are promoted here — they get imports, job
-      search, this screen and the Team activity tab.</p>
+      first time they sign in — they work the leads assigned to them.
+      <b>Admins</b> run the floor: assigning, imports, job search, the call
+      report and Team activity. <b>Owners</b> hold what cannot be undone —
+      appointing admins, emptying the bin, lifting a do-not-call ban.
+      ${isOwner() ? "" : "Only the owner can change admin access."}</p>
     <div id="users-list" class="users-list"><div class="modal-sub">Loading…</div></div>
     <form id="user-add-row" class="user-add-row">
       <input type="email" id="user-add-email" placeholder="invite an email outside the company…" required>
-      <select id="user-add-role"><option value="member" selected>member</option><option value="admin">admin</option></select>
+      <select id="user-add-role">
+        <option value="member" selected>member</option>
+        ${isOwner() ? `<option value="admin">admin</option>
+        <option value="owner">owner</option>` : ""}
+      </select>
       <button type="submit" class="btn-secondary">Add</button>
     </form>
     <div id="users-error" class="login-error hidden"></div>
@@ -1407,7 +1420,11 @@ async function usersCall(path, method, body) {
   const err = $("users-error");
   err.classList.add("hidden");
   try {
-    await api(path, { method, body: JSON.stringify(body) });
+    const out = await api(path, { method, body: JSON.stringify(body) });
+    /* The route can succeed and still not have done what the click meant —
+       demoting someone the environment keeps as owner, for instance. Saying
+       so beats leaving them to notice the row bounce back. */
+    if (out?.warning) toast(out.warning, 8000);
     await renderUsersList();
   } catch (ex) {
     err.textContent = ex.message;
@@ -1419,6 +1436,14 @@ async function renderUsersList() {
   const { list } = await api("/api/users");
   const rows = list.map((u) => {
     const me = u.id === S.me.id;
+    /* A manager may build their own team but not change its shape: they can
+       grant member, and they cannot touch anyone who already outranks one.
+       Locked here as well as on the route so the control reads as
+       unavailable rather than failing after the click. */
+    const locked = !isOwner() && (rankOf(u.role) >= RANK.admin);
+    const grantable = isOwner()
+      ? ["member", "admin", "owner"]
+      : ["member"];
     const who = esc(u.display_name || u.email.split("@")[0]);
     return `
     <div class="user-row${u.disabled ? " user-disabled" : ""}">
@@ -1428,11 +1453,15 @@ async function renderUsersList() {
         <div class="user-sub">${esc(u.email)}${u.disabled ? " · disabled"
           : u.last_active ? " · active " + relTime(u.last_active) : ""}</div>
       </div>
-      <select class="user-role" data-id="${u.id}" ${u.disabled ? "disabled" : ""}>
-        <option value="member"${u.role !== "admin" ? " selected" : ""}>member</option>
-        <option value="admin"${u.role === "admin" ? " selected" : ""}>admin</option>
+      <select class="user-role" data-id="${u.id}"
+              ${u.disabled || locked ? "disabled" : ""}
+              title="${locked ? "Only the owner can change this" : "Set this person's access"}">
+        ${(grantable.includes(u.role) ? grantable : [u.role, ...grantable]).map((r) =>
+          `<option value="${esc(r)}"${r === u.role ? " selected" : ""}>${esc(r)}</option>`).join("")}
       </select>
-      <button type="button" class="btn-ghost user-toggle" data-id="${u.id}" data-disable="${!u.disabled}">
+      ${u.ownerByConfig ? `<span class="asg-tag" title="Listed in OWNER_EMAILS — this holds whatever the table says">by config</span>` : ""}
+      <button type="button" class="btn-ghost user-toggle" data-id="${u.id}" data-disable="${!u.disabled}"
+              ${locked ? "disabled" : ""}>
         ${u.disabled ? "Restore" : "Disable"}</button>
     </div>`;
   }).join("");
@@ -2174,7 +2203,7 @@ async function openRemoveModal(r) {
       closeModal();
       const msg = `Removed ${out.affected} lead${out.affected === 1 ? "" : "s"}${key ? ` · ${phone} banned` : ""}`;
       // a member has no DNC tab to dig a slip out of — give them 5s to undo
-      if (S.me?.role === "admin") toast(msg);
+      if (isAdmin()) toast(msg);
       else showUndo(msg, r.Id, out.ids);
       S.sel = null;
       $("detail").classList.add("hidden");
@@ -2262,13 +2291,16 @@ async function openTrashModal() {
     <div id="trash-list" class="trash-list"><div class="modal-sub">Loading…</div></div>
     <div id="trash-error" class="login-error hidden"></div>
     <div class="modal-actions">
-      <button type="button" class="btn-danger" id="trash-empty">Empty trash now</button>
+      ${isOwner()
+        ? `<button type="button" class="btn-danger" id="trash-empty">Empty trash now</button>`
+        : `<span class="modal-sub">Only the owner can empty the bin — restoring
+             is the part a manager can undo.</span>`}
       <button type="button" class="btn-secondary" id="modal-cancel">Close</button>
     </div>`;
   $("modal-backdrop").classList.remove("hidden");
   $("modal-cancel").addEventListener("click", closeModal);
   // two clicks, not a second modal: the first arms it, the second destroys
-  $("trash-empty").addEventListener("click", async (e) => {
+  $("trash-empty")?.addEventListener("click", async (e) => {
     const btn = e.target;
     if (btn.dataset.armed !== "1") {
       btn.dataset.armed = "1";
@@ -3248,7 +3280,7 @@ function renderCallReport(d) {
               <td>
                 <span class="avatar avatar-sm" style="background:${avColor(p.email)}">${esc(initials(p.label))}</span>
                 <span class="asg-name">${esc(p.label)}</span>
-                ${p.role === "admin" ? `<span class="asg-tag">admin</span>` : ""}
+                ${p.role !== "member" ? `<span class="asg-tag">${esc(p.role)}</span>` : ""}
                 ${p.ghost ? `<span class="asg-tag" title="Calls under a name that is nobody's account">no account</span>` : ""}
                 ${p.active ? `<span class="live-dot" title="Active just now"></span>` : ""}
               </td>
@@ -3562,7 +3594,7 @@ function showUndo(msg, anchorId, ids) {
 function setTab(tab) {
   // an admin tab reached without the role — a stale deep link, say — lands on
   // Companies instead of an empty pane. The endpoint 403s regardless.
-  if (TABS[tab]?.admin && S.me?.role !== "admin") tab = "companies";
+  if (TABS[tab]?.admin && !isAdmin()) tab = "companies";
   S.tab = tab;
   S.segment = null;                     // any sidebar tab leaves segment browsing
   $("segment-back")?.classList.add("hidden");
@@ -4027,7 +4059,7 @@ async function boot() {
      role is known — a member never sees them flash. This is presentation only:
      job-search, import, apify-usage, users and activity all check the role
      server-side and 403. */
-  if (S.me.role === "admin") {
+  if (isAdmin()) {
     document.querySelectorAll(".admin-only").forEach((el) =>
       el.classList.remove("hidden"));
     // Select stays where it was left, like density and sort. renderBulkTools()
@@ -4043,7 +4075,7 @@ async function boot() {
      do I call next", and Companies would open a list scoped to them anyway.
      An admin lands on Companies, because their first question is about the
      whole base. A deep link beats both. */
-  setTab(TABS[dl.tab] ? dl.tab : (S.me.role === "admin" ? "companies" : "tasks"));
+  setTab(TABS[dl.tab] ? dl.tab : (isAdmin() ? "companies" : "tasks"));
   // only the three real lead tabs can open a record by id
   if (dl.open && TABS[dl.tab]?.kind && !TABS[dl.tab].segment) {
     select({ Id: +dl.open, _t: dl.tab });

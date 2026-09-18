@@ -9,7 +9,7 @@
 
 const express = require("express");
 const { query } = require("./db");
-const { requireUser } = require("./auth");
+const { requireUser, rankOf, RANK } = require("./auth");
 const activity = require("./activity");
 
 const router = express.Router();
@@ -23,7 +23,7 @@ router.get("/api/recents", async (req, res, next) => {
        away after they touched it. Without the owner test a member would keep
        seeing a colleague's lead here after it left them — the one place the
        restriction could be outlived by history. */
-    const isAdmin = req.user.role === "admin";
+    const isAdmin = rankOf(req.user.role) >= RANK.admin;
     const scope = isAdmin ? "" : " AND btrim(l.owner) = $2";
     const args = isAdmin ? [req.user.id] : [req.user.id, String(req.user.email || "").trim()];
     const rows = (await query(

@@ -4,7 +4,7 @@
      node server/cli.js token:create <name> [scope ...]   mint a service token
      node server/cli.js token:revoke <name>               revoke by name
      node server/cli.js token:list
-     node server/cli.js user:add <email> [admin|member]   invite / promote
+     node server/cli.js user:add <email> [owner|admin|member]  invite / promote
 
    The minted token is printed ONCE and stored only as a hash — copy it into
    the pipeline's environment (KARMA_API_TOKEN) right away. */
@@ -35,8 +35,12 @@ async function main() {
       console.log(`${t.revoked_at ? "REVOKED " : "active  "} ${t.name}  ` +
         `[${t.scopes.join(",")}]  since ${t.created_at.toISOString().slice(0, 10)}`);
   } else if (cmd === "user:add") {
-    if (!a) throw new Error("usage: user:add <email> [admin|member]");
-    const role = rest[0] === "admin" ? "admin" : "member";
+    if (!a) throw new Error("usage: user:add <email> [owner|admin|member]");
+    /* The terminal is deliberately the one place that can hand out any rank:
+       it already needs the database password, so there is nothing left to
+       protect. The owner tier still really comes from OWNER_EMAILS — this
+       only keeps the table agreeing with it. */
+    const role = ["owner", "admin", "member"].includes(rest[0]) ? rest[0] : "member";
     const email = a.trim().toLowerCase();
     const u = (await query(
       `INSERT INTO app_users (email) VALUES ($1)

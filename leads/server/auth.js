@@ -25,6 +25,43 @@ const ownSession = require("../../server/session.cjs");
 let APP_URL = process.env.LEADS_APP_PATH || "/";
 const setAppPath = (p) => { APP_URL = p; };
 
+/* ---------------- the role ladder ----------------
+   owner > admin > member. Ranked rather than a set of flags, so every gate
+   is "at least this rank" and an owner keeps every manager screen without
+   holding a second membership row.
+
+   What each tier is FOR (the line is blast radius, not seniority):
+     member  works the leads assigned to them, and nothing else
+     admin   runs the floor — assign, import, enrich, read the team's
+             numbers, bin and restore. Everything here is recoverable or
+             costs money, both of which a manager should own.
+     owner   the things that are irreversible or that change who has power:
+             appointing admins, deleting accounts, purging the bin, lifting
+             a DNC ban.
+
+   Mirrored in server/auth.cjs for Karma Connect's own users table, and in
+   migrations/006_owner_role.sql. Three copies because the two products keep
+   separate user rows on purpose. */
+const RANK = { member: 0, admin: 1, owner: 2 };
+const rankOf = (role) => RANK[role] ?? 0;
+
+/* The owner tier is bootstrapped from the environment, not the database.
+
+   Two reasons, and they are the whole argument for the tier existing. It
+   must survive a database that says otherwise — a bad UPDATE, a restored
+   backup, someone with SQL access — and it must not be grantable from
+   inside the app, or it is just another admin. An env list is the smallest
+   thing with both properties.
+
+   Defaulted rather than left empty: an unset variable that silently means
+   "nobody owns this" is how the previous identity provider became
+   unadministrable. Set OWNER_EMAILS to change hands; set it to a single
+   space to have no owner at all, which locks the owner-only actions for
+   everyone including you. */
+const OWNER_EMAILS = (process.env.OWNER_EMAILS ?? "tenzinwoesel@karmastaff.com")
+  .toLowerCase().split(",").map((s) => s.trim()).filter(Boolean);
+const isOwnerEmail = (email) => OWNER_EMAILS.includes(String(email || "").trim().toLowerCase());
+
 /* Anyone signing in through WorkOS with this email domain is enrolled as a
    MEMBER on first sign-in — no manual invite. Admin stays a deliberate act
    (the Users tab, or cli.js user:add ... admin). Explicitly disabled accounts
@@ -66,7 +103,7 @@ const DEV_BYPASS = !!DEV_AUTH_EMAIL && process.env.NODE_ENV !== "production";
    salesperson's view can be checked without a second account. Admin-only
    surfaces are presentation; the real control is the API's 403s, and this
    exercises both. Only meaningful while the bypass is active. */
-const DEV_AUTH_ROLE = ["admin", "member"].includes(process.env.DEV_AUTH_ROLE)
+const DEV_AUTH_ROLE = ["owner", "admin", "member"].includes(process.env.DEV_AUTH_ROLE)
   ? process.env.DEV_AUTH_ROLE : null;
 if (DEV_AUTH_EMAIL && !DEV_BYPASS) {
   console.error("[karma] DEV_AUTH_EMAIL IGNORED — NODE_ENV=production. Sign-in stays required.");
@@ -198,7 +235,7 @@ async function resolve(req, res) {
     // -1, not 0: requireUser rejects a falsy id, and 0 would fail the very
     // check this synthetic user exists to pass.
     return { id: -1, email, name: email.split("@")[0],
-      role: DEV_AUTH_ROLE || "admin" };
+      role: DEV_AUTH_ROLE || (isOwnerEmail(email) ? "owner" : "admin") };
   }
   /* Auto-enrol here as well as in the callback. One sign-in now covers both
      Karma products, so somebody can arrive holding a perfectly valid session
@@ -211,8 +248,13 @@ async function resolve(req, res) {
     u = await autoInvite(email, name);
   }
   if (!u) return { email, id: null, role: null };
-  return { id: u.id, email: u.email, name: u.display_name,
-    role: (DEV_BYPASS && DEV_AUTH_ROLE) || u.role || "member" };
+  /* OWNER_EMAILS wins over the stored role, never the other way round: the
+     point of the tier is that it holds when the row is wrong. A stored
+     'owner' still counts, so the team list and the session agree for anyone
+     the owner has promoted. */
+  let role = (DEV_BYPASS && DEV_AUTH_ROLE) || u.role || "member";
+  if (isOwnerEmail(u.email)) role = "owner";
+  return { id: u.id, email: u.email, name: u.display_name, role };
 }
 
 function requireUser(req, res, next) {
@@ -225,9 +267,22 @@ function requireUser(req, res, next) {
   }).catch(next);
 }
 
+/* "at least this rank", never an equality test — an owner must not have to
+   be listed separately on every manager route to keep using it. */
+function requireRank(min, message) {
+  return (req, res, next) => requireUser(req, res, () => {
+    if (rankOf(req.user.role) < RANK[min])
+      return res.status(403).json({ error: message });
+    next();
+  });
+}
+
+const requireOwner = requireRank("owner",
+  "Owner only — this changes who has access, or cannot be undone.");
+
 function requireAdmin(req, res, next) {
   requireUser(req, res, () => {
-    if (req.user.role !== "admin")
+    if (rankOf(req.user.role) < RANK.admin)
       return res.status(403).json({ error: "Admins only — ask your manager." });
     next();
   });
@@ -341,5 +396,6 @@ function mountAuthRoutes(app) {
   }
 }
 
-module.exports = { requireUser, requireAdmin, resolve, mountAuthRoutes,
-  autoInvite, WORKOS_ON, setAppPath };
+module.exports = { requireUser, requireAdmin, requireOwner, requireRank,
+  resolve, mountAuthRoutes, autoInvite, WORKOS_ON, setAppPath,
+  RANK, rankOf, isOwnerEmail };

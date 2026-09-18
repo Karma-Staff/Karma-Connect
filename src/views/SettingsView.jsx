@@ -1,6 +1,6 @@
 // Profile & account settings: identity, change password, upgrade to admin, delete account.
 import { useState } from "react";
-import { promoteToAdmin, deleteAccount, changePassword } from "../lib/auth.js";
+import { deleteAccount, changePassword } from "../lib/auth.js";
 
 /* The reveal eye. A password field people cannot read back is where typos
    live, and every one of these forms rejects a typo only after a round trip
@@ -39,10 +39,6 @@ function PwField({ label, value, onChange, placeholder, autoComplete, className 
 }
 
 export function SettingsView({ user, isAdmin, askConfirm, showToast }) {
-  const [code, setCode] = useState("");
-  const [pBusy, setPBusy] = useState(false);
-  const [pMsg, setPMsg] = useState("");
-  const [pErr, setPErr] = useState("");
   const [pw, setPw] = useState("");
   const [dBusy, setDBusy] = useState(false);
   const [dErr, setDErr] = useState("");
@@ -71,18 +67,6 @@ export function SettingsView({ user, isAdmin, askConfirm, showToast }) {
     setCBusy(false);
   }
 
-  async function promote() {
-    setPMsg(""); setPErr("");
-    if (!code.trim()) { setPErr("Enter the admin code."); return; }
-    setPBusy(true);
-    try {
-      await promoteToAdmin(code.trim());
-      setCode("");
-      setPMsg("You're now an admin — the Approvals & Members sections are in the sidebar.");
-      if (showToast) showToast("You're now an admin");
-    } catch (e) { setPErr((e && e.message) || "Could not update your role."); }
-    setPBusy(false);
-  }
 
   function confirmDelete() {
     setDErr("");
@@ -119,7 +103,7 @@ export function SettingsView({ user, isAdmin, askConfirm, showToast }) {
           <span className="rolepill" style={rolePill}><span style={{ width: 6, height: 6, borderRadius: "50%", background: "currentColor" }} />{isAdmin ? "Admin" : "Member"}</span>
         </div>
         <div className="hint" style={{ marginTop: 14 }}>
-          {isAdmin ? "You can approve leads, manage members, and use every engine." : "You can work leads through connection requests. Enter an admin code below to upgrade."}
+          {isAdmin ? "You can approve leads, manage members, and use every engine." : "You can work leads through connection requests. Ask the owner if you need admin access."}
         </div>
       </div>
 
@@ -141,24 +125,10 @@ export function SettingsView({ user, isAdmin, askConfirm, showToast }) {
         {cErr && <div className="err" style={{ marginTop: 12 }}>⚠ {cErr}</div>}
       </div>
 
-      {/* Become an admin */}
-      {!isAdmin && (
-        <div className="panel">
-          <div className="sect-title">Become an admin</div>
-          <p style={{ color: "var(--muted)", fontSize: 13.5, lineHeight: 1.6, marginBottom: 14 }}>
-            Created a normal account but you should be an admin? Enter the admin code to upgrade — admins approve leads and unlock the Relationship, Meeting and Follow-up engines.
-          </p>
-          <div style={{ maxWidth: 380 }}>
-            <PwField className="full" label="Admin code" autoComplete="off"
-                     value={code} onChange={setCode} placeholder="Enter the admin code" />
-          </div>
-          <div className="toprow" style={{ marginTop: 16 }}>
-            <button className="btn primary" onClick={promote} disabled={pBusy}>{pBusy ? "Working…" : "Make me an admin"}</button>
-            {pMsg && <span style={{ color: "#52d39e", fontSize: 12.5 }}>✓ {pMsg}</span>}
-          </div>
-          {pErr && <div className="err" style={{ marginTop: 12 }}>⚠ {pErr}</div>}
-        </div>
-      )}
+      {/* Admin access used to be self-served here with a shared code —
+          anyone who learned the string became an admin, it could not be
+          revoked for one person, and nothing recorded who had used it. The
+          owner grants it from the Members screen now. */}
 
       {/* Danger zone */}
       <div className="panel danger-zone">

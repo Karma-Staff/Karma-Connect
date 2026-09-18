@@ -26,7 +26,7 @@ GATEWAY_TOKEN=<per-client bearer token> # issued by an admin; keep out of source
 MAIL_FROM=Karma Connect <karmaconnect@karmastaff.com>  # must be allowlisted for the token
 APP_URL=http://localhost:3000          # canonical URL used in email links
 ADMIN_EMAILS=you@karmastaff.com        # comma-separated admins
-ADMIN_SIGNUP_CODE=<shared secret>      # signups entering this code become admins
+OWNER_EMAILS=you@karmastaff.com        # the tier above admin: appoints admins, deletes accounts
 ALLOWED_EMAIL_DOMAIN=karmastaff.com    # who may register (defaults to karmastaff.com)
 ```
 

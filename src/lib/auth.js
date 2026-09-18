@@ -55,8 +55,8 @@ async function post(path, body) {
   return data;
 }
 
-export async function signUp({ email, password, firstName, lastName, adminCode }) {
-  const data = await post("/api/auth/signup", { email, password, firstName, lastName, adminCode });
+export async function signUp({ email, password, firstName, lastName }) {
+  const data = await post("/api/auth/signup", { email, password, firstName, lastName });
   // With email confirmation on, the server returns { needsVerification: true }
   // and sets no cookie — don't treat that as being signed in; the caller shows
   // a "check your email" notice instead.
@@ -96,12 +96,6 @@ export async function signOut() {
   try { await fetch("/api/auth/signout", { method: "POST" }); } catch (e) { /* ignore */ }
 }
 
-// Self-promote to admin using the signup code. Updates the cached user.
-export async function promoteToAdmin(adminCode) {
-  const data = await post("/api/auth/promote", { adminCode: adminCode || "" });
-  setUser(data.user);
-  return data;
-}
 
 // Change password while signed in (current password required).
 export async function changePassword(currentPassword, newPassword) {

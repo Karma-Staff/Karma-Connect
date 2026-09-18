@@ -31,8 +31,10 @@ alter table users add column if not exists verify_token   text;
 alter table users add column if not exists verify_sent_at timestamptz;
 create index if not exists users_verify_token_idx on users (verify_token);
 
--- Admin flag. Set at signup when the correct ADMIN_SIGNUP_CODE is supplied (a user can also
--- be made admin via the ADMIN_EMAILS config list, independent of this column).
+-- Admin flag. Granted by an owner from the Members screen, or by the
+-- ADMIN_EMAILS config list independently of this column. It is never set at
+-- signup: the shared ADMIN_SIGNUP_CODE that used to do that is gone.
+-- The tier above admin (OWNER_EMAILS) is config-only and has no column here.
 alter table users add column if not exists is_admin boolean not null default false;
 
 -- Password reset (sent via the internal mail gateway). Same one-time-token

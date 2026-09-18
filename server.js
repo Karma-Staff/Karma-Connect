@@ -46,7 +46,7 @@ const bcrypt = require("bcryptjs");
 const crypto = require("node:crypto");
 const { rateLimit } = require("./server/ratelimit.cjs");
 const session = require("./server/session.cjs");
-const { JWT_SECRET, DUMMY_HASH, emailAllowed, publicUser, baseUrl, requireUser, requireAdmin } = require("./server/auth.cjs");
+const { JWT_SECRET, DUMMY_HASH, emailAllowed, publicUser, baseUrl, requireUser, requireAdmin, requireOwner, isOwnerEmail } = require("./server/auth.cjs");
 const EMAIL_RE = /\S+@\S+\.\S+/;
 
 // ── Outbound email via the internal mail gateway (optional, env-gated) ──
@@ -187,14 +187,19 @@ app.post("/api/auth/signup", signupLimiter, async (req, res) => {
     if (password.length < 8) return res.status(400).json({ error: { message: "Use a password of at least 8 characters." } });
     if (!emailAllowed(email)) return res.status(403).json({ error: { message: "Registration is limited to @" + ALLOWED_DOMAIN + " email addresses." } });
 
-    // Optional admin signup code. Empty = normal member. Non-empty must match ADMIN_SIGNUP_CODE,
-    // otherwise reject so the person knows the code was wrong (rather than silently demoting them).
-    const adminCode = String(req.body?.adminCode || "");
-    let wantsAdmin = false;
-    if (adminCode) {
-      const expected = process.env.ADMIN_SIGNUP_CODE || "";
-      if (!expected || adminCode !== expected) return res.status(403).json({ error: { message: "Invalid admin code." } });
-      wantsAdmin = true;
+    /* Admin is no longer self-served. ADMIN_SIGNUP_CODE was a single shared
+       string that turned whoever typed it into an admin, at signup or later
+       from Settings — so it was only ever as strong as the least careful
+       place it had been pasted, it could not be revoked for one person, and
+       nothing recorded who had used it. The owner grants admin now, from the
+       team screen.
+
+       An old client can still send the field. Answered rather than ignored:
+       somebody typing a code expects to come out an admin, and silently
+       creating them a member would leave them to discover it later. */
+    if (String(req.body?.adminCode || "")) {
+      return res.status(400).json({ error: { message:
+        "Admin access is no longer granted by a code. Sign up without one and ask the owner to grant it." } });
     }
 
     const exists = await q("select 1 from users where email = $1", [email]);
@@ -207,7 +212,7 @@ app.post("/api/auth/signup", signupLimiter, async (req, res) => {
     const { rows } = await q(
       `insert into users (email, password_hash, first_name, last_name, email_verified, verify_token, verify_sent_at, is_admin)
        values ($1,$2,$3,$4,$5,$6,$7,$8) returning *`,
-      [email, hash, firstName, lastName, !emailVerifyOn, token, token ? new Date() : null, wantsAdmin],
+      [email, hash, firstName, lastName, !emailVerifyOn, token, token ? new Date() : null, false],
     );
     const user = rows[0];
 
@@ -338,16 +343,12 @@ app.post("/api/auth/reset", resetLimiter, async (req, res) => {
     res.json({ user: publicUser(user) });
   } catch (e) { res.status(500).json({ error: { message: "Could not reset the password. Try again." } }); }
 });
-// Self-promote to admin with the signup code — for someone who created a normal account.
-app.post("/api/auth/promote", requireUser, promoteLimiter, async (req, res) => {
-  try {
-    const expected = process.env.ADMIN_SIGNUP_CODE || "";
-    if (!expected) return res.status(400).json({ error: { message: "Admin promotion isn't configured. Contact your administrator." } });
-    if (String(req.body?.adminCode || "") !== expected) return res.status(403).json({ error: { message: "Invalid admin code." } });
-    const { rows } = await q("update users set is_admin = true where id = $1 returning *", [req.userId]);
-    if (!rows[0]) return res.status(404).json({ error: { message: "Account not found." } });
-    res.json({ user: publicUser(rows[0]) });
-  } catch (e) { res.status(500).json({ error: { message: "Could not update your role." } }); }
+/* Self-promotion is gone — see the note in /api/auth/signup. The route stays
+   so a browser running cached JavaScript gets an explanation instead of a 404
+   that reads like an outage; it grants nothing. */
+app.post("/api/auth/promote", requireUser, promoteLimiter, (req, res) => {
+  res.status(410).json({ error: { message:
+    "Admin access is no longer granted by a code. Ask the owner to grant it from the team screen." } });
 });
 
 // Change password while signed in (current password required).
@@ -1048,27 +1049,49 @@ app.get("/api/admin/users", requireUser, requireAdmin, async (req, res) => {
          from users u left join usage_daily d on d.user_id = u.id
         group by u.id order by u.created_at desc limit 500`,
     );
-    res.json({ users: rows });
+    // the effective rank, not just the stored flag — see publicUser()
+    const users = rows.map((u) => ({ ...u,
+      is_owner: isOwnerEmail(u.email),
+      is_admin: u.is_admin === true || isOwnerEmail(u.email) }));
+    res.json({ users, you: { isOwner: isOwnerEmail(req.email) } });
   } catch (e) { res.status(500).json({ error: { message: "Could not load members." } }); }
 });
 
 // Grant or revoke admin on a member. Can't revoke your own admin (avoid lock-out).
-app.post("/api/admin/users/:id/role", requireUser, requireAdmin, async (req, res) => {
+/* Owner only. An admin who can appoint admins is an owner in all but name,
+   and one compromised manager account could then mint peers and lock the
+   real owner out. */
+app.post("/api/admin/users/:id/role", requireUser, requireOwner, async (req, res) => {
   try {
     const makeAdmin = req.body?.isAdmin === true;
     const id = String(req.params.id);
     if (id === req.userId && !makeAdmin) return res.status(400).json({ error: { message: "You can't remove your own admin access." } });
+    const { rows: found } = await q("select email from users where id = $1", [id]);
+    if (!found[0]) return res.status(404).json({ error: { message: "User not found." } });
+    /* Say so instead of writing a change that does nothing: an owner's rank
+       comes from OWNER_EMAILS, so clearing the flag here would leave them an
+       admin anyway and look like the button was broken. */
+    if (!makeAdmin && isOwnerEmail(found[0].email)) {
+      return res.status(400).json({ error: { message:
+        found[0].email + " is an owner (OWNER_EMAILS) and keeps admin access. Change that setting to hand ownership over." } });
+    }
     const { rows } = await q("update users set is_admin = $1 where id = $2 returning id, is_admin", [makeAdmin, id]);
     if (!rows[0]) return res.status(404).json({ error: { message: "User not found." } });
     res.json({ ok: true, isAdmin: rows[0].is_admin });
   } catch (e) { res.status(500).json({ error: { message: "Could not update the role." } }); }
 });
 
-// Remove a member (cascades their data). Use Settings to delete your own account.
-app.delete("/api/admin/users/:id", requireUser, requireAdmin, async (req, res) => {
+// Remove a member (cascades their data). Use Settings to delete your own
+// account. Owner only: it cascades, so there is nothing to restore after.
+app.delete("/api/admin/users/:id", requireUser, requireOwner, async (req, res) => {
   try {
     const id = String(req.params.id);
     if (id === req.userId) return res.status(400).json({ error: { message: "Use Settings to delete your own account." } });
+    const { rows: found } = await q("select email from users where id = $1", [id]);
+    if (found[0] && isOwnerEmail(found[0].email)) {
+      return res.status(400).json({ error: { message:
+        "Remove " + found[0].email + " from OWNER_EMAILS before deleting the account." } });
+    }
     const { rowCount } = await q("delete from users where id = $1", [id]);
     if (!rowCount) return res.status(404).json({ error: { message: "User not found." } });
     res.json({ ok: true });

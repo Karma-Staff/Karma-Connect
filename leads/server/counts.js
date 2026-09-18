@@ -6,7 +6,7 @@
 
 const express = require("express");
 const { query } = require("./db");
-const { requireUser } = require("./auth");
+const { requireUser, rankOf, RANK } = require("./auth");
 
 const router = express.Router();
 const TTL = 30_000;
@@ -18,7 +18,7 @@ const cache = new Map();   // key -> { data, at }
 
 router.get("/api/counts", requireUser, async (req, res, next) => {
   try {
-    const isAdmin = req.user.role === "admin";
+    const isAdmin = rankOf(req.user.role) >= RANK.admin;
     const mine = isAdmin ? "" : String(req.user.email || "").trim();
     const hit = cache.get(mine);
     if (hit && Date.now() - hit.at < TTL) return res.json(hit.data);

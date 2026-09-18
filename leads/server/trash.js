@@ -22,7 +22,7 @@
 
 const express = require("express");
 const { query, tx } = require("./db");
-const { requireAdmin } = require("./auth");
+const { requireAdmin, requireOwner } = require("./auth");
 const activity = require("./activity");
 const counts = require("./counts");
 
@@ -185,8 +185,10 @@ router.post("/api/trash/:id/restore", requireAdmin, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-/* empty it now — this is the destructive one */
-router.delete("/api/trash", requireAdmin, async (req, res, next) => {
+/* empty it now — this is the destructive one, and the only action in the app
+   with no way back. A manager can bin and restore all day; ending the
+   restore option is the owner's. */
+router.delete("/api/trash", requireOwner, async (req, res, next) => {
   try {
     const destroyed = await purge(new Date(), req.user.email);
     counts.invalidate();

@@ -23,6 +23,23 @@ function isAdminEmail(email) {
   return admins.includes(e);
 }
 
+/* The owner tier, above admin. Mirrors leads/server/auth.js — see the long
+   note there for why it is ranked and why it lives in the environment rather
+   than the users table.
+
+   Short version: an admin runs the day (approvals, engines, the team screen),
+   an owner holds the things that change who has access or cannot be undone
+   (appointing admins, deleting accounts). Keeping the top tier out of the
+   database means it survives a row being wrong and cannot be granted from
+   inside the app — which is exactly what went wrong with the admin code this
+   replaced, where anyone who learned one string could promote themselves. */
+function isOwnerEmail(email) {
+  const e = String(email || "").trim().toLowerCase();
+  const owners = (process.env.OWNER_EMAILS ?? "tenzinwoesel@karmastaff.com")
+    .toLowerCase().split(",").map((s) => s.trim()).filter(Boolean);
+  return owners.includes(e);
+}
+
 // A real bcrypt hash to compare against when an email doesn't exist, so a missing-user
 // sign-in takes the same time as a real one (no timing-based account enumeration).
 const DUMMY_HASH = bcrypt.hashSync("not-a-real-password-placeholder", 12);
@@ -31,7 +48,10 @@ function tokenFor(user) {
   return signJWT({ sub: user.id, email: user.email, first_name: user.first_name, last_name: user.last_name }, JWT_SECRET);
 }
 function publicUser(u) {
-  return { id: u.id, email: u.email, firstName: u.first_name || "", lastName: u.last_name || "", isAdmin: u.is_admin === true || isAdminEmail(u.email) };
+  // an owner outranks an admin, so they are one too — nothing downstream has
+  // to know about the tier to keep working
+  const owner = isOwnerEmail(u.email);
+  return { id: u.id, email: u.email, firstName: u.first_name || "", lastName: u.last_name || "", isAdmin: u.is_admin === true || isAdminEmail(u.email) || owner, isOwner: owner };
 }
 
 // Public base URL for links in emails. Prefer APP_URL; otherwise derive from the request.
@@ -100,9 +120,16 @@ async function requireUser(req, res, next) {
   }
 }
 
+// Middleware (after requireUser): the owner-only gate. Appointing admins and
+// deleting accounts sit here — the two actions that change who has access.
+function requireOwner(req, res, next) {
+  if (isOwnerEmail(req.email)) return next();
+  return res.status(403).json({ error: { message: "Owner only — this changes who has access, or cannot be undone." } });
+}
+
 // Middleware (after requireUser): admin via the ADMIN_EMAILS list OR the is_admin DB flag.
 async function requireAdmin(req, res, next) {
-  if (isAdminEmail(req.email)) return next();
+  if (isOwnerEmail(req.email) || isAdminEmail(req.email)) return next();
   try {
     const { rows } = await q("select is_admin from users where id = $1", [req.userId]);
     if (rows[0] && rows[0].is_admin) return next();
@@ -110,4 +137,4 @@ async function requireAdmin(req, res, next) {
   return res.status(403).json({ error: { message: "Admins only." } });
 }
 
-module.exports = { JWT_SECRET, ALLOWED_DOMAIN, DUMMY_HASH, emailAllowed, isAdminEmail, tokenFor, publicUser, baseUrl, requireUser, requireAdmin };
+module.exports = { JWT_SECRET, ALLOWED_DOMAIN, DUMMY_HASH, emailAllowed, isAdminEmail, isOwnerEmail, tokenFor, publicUser, baseUrl, requireUser, requireAdmin, requireOwner };

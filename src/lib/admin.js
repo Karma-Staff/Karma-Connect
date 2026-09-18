@@ -12,9 +12,12 @@ async function adminFetch(path, { method = "GET", body } = {}) {
   return data;
 }
 
+/* Returns { users, youAreOwner }. The caller's tier comes back with the list
+   rather than being inferred from the signed-in user, because the question
+   the screen asks — may I appoint admins — is the server's to answer. */
 export async function listUsers() {
   const data = await adminFetch("/api/admin/users");
-  return data.users || [];
+  return { users: data.users || [], youAreOwner: data.you?.isOwner === true };
 }
 
 export async function setUserRole(id, isAdmin) {

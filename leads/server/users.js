@@ -9,10 +9,35 @@
 
 const express = require("express");
 const { query, tx } = require("./db");
-const { requireAdmin } = require("./auth");
+const { requireAdmin, rankOf, RANK, isOwnerEmail } = require("./auth");
 
 const router = express.Router();
 router.use("/api/users", requireAdmin);    // path-scoped: routers share "/"
+
+/* Who may hand out what.
+
+   A manager can build their own team — invite members, disable someone who
+   has left. What a manager cannot do is change the shape of the hierarchy:
+   appointing another admin, or touching anyone who already outranks a
+   member. That belongs to the owner, because an admin who can mint admins
+   is an owner in everything but name, and one compromised manager account
+   would then be able to lock the real owner out.
+
+   Expressed as a rule rather than a list of cases: you may only grant a
+   rank below your own, and you may only act on somebody already below you.
+   An owner passes both tests for everything; a manager passes neither for
+   an admin. */
+function mayGrant(actor, role) {
+  return rankOf(role) < rankOf(actor.role);
+}
+
+async function targetOf(id) {
+  return (await query(
+    `SELECT u.id, u.email, u.disabled, m.role
+       FROM app_users u
+       LEFT JOIN organization_memberships m ON m.user_id = u.id
+      WHERE u.id = $1`, [id])).rows[0] || null;
+}
 
 router.get("/api/users", async (req, res, next) => {
   try {
@@ -22,16 +47,26 @@ router.get("/api/users", async (req, res, next) => {
        FROM app_users u
        LEFT JOIN organization_memberships m ON m.user_id = u.id
        ORDER BY u.email`)).rows;
-    res.json({ list: rows });
+    /* Report the rank the person will actually get, not just the row: an
+       email in OWNER_EMAILS is an owner whatever the table says, and a team
+       list that disagreed with the session would send a manager hunting for
+       a bug that isn't there. */
+    const list = rows.map((u) => isOwnerEmail(u.email)
+      ? { ...u, role: "owner", ownerByConfig: true } : u);
+    res.json({ list, you: { role: req.user.role } });
   } catch (e) { next(e); }
 });
 
 router.post("/api/users", express.json({ limit: "4kb" }), async (req, res, next) => {
   try {
     const email = String(req.body?.email || "").trim().toLowerCase();
-    const role = req.body?.role === "admin" ? "admin" : "member";
+    const role = ["owner", "admin", "member"].includes(req.body?.role)
+      ? req.body.role : "member";
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))
       return res.status(400).json({ error: "bad email" });
+    if (!mayGrant(req.user, role))
+      return res.status(403).json({
+        error: `Only the owner can appoint ${role === "owner" ? "an owner" : "an admin"}.` });
     const row = await tx(async (client) => {
       const u = (await client.query(
         `INSERT INTO app_users (email, display_name) VALUES ($1, $2)
@@ -54,28 +89,66 @@ router.patch("/api/users/:id", express.json({ limit: "4kb" }), async (req, res, 
   try {
     const id = +req.params.id;
     const b = req.body || {};
-    // the last admin cannot demote or disable themselves into a lockout
-    if ((b.role === "member" || b.disabled === true)) {
-      const admins = (await query(
+    const target = await targetOf(id);
+    if (!target) return res.status(404).json({ error: "no such user" });
+    const targetRole = target.role || "member";
+
+    /* You may only act on somebody below you. Without this a manager could
+       disable the owner — a demotion by another name, and the one move that
+       would leave nobody able to undo it. Acting on yourself is allowed:
+       the last-owner and last-admin guards below are what stop a lockout,
+       not a rule against touching your own row. */
+    if (id !== req.user.id && rankOf(targetRole) >= rankOf(req.user.role))
+      return res.status(403).json({
+        error: `Only the owner can change ${target.email}'s access.` });
+
+    if ("role" in b) {
+      if (!["owner", "admin", "member"].includes(b.role))
+        return res.status(400).json({ error: "unknown role" });
+      if (!mayGrant(req.user, b.role))
+        return res.status(403).json({
+          error: `Only the owner can appoint ${b.role === "owner" ? "an owner" : "an admin"}.` });
+    }
+
+    /* Nobody may empty the top of the ladder. Counted per rank rather than
+       once for 'admin', because demoting the last owner to admin would pass
+       an admin-only check while leaving the owner-only actions — purging the
+       bin, appointing anyone — permanently unreachable.
+
+       OWNER_EMAILS is the real backstop here (it grants the tier whatever
+       the table says), but this is what keeps the table itself sensible, and
+       not every deployment will have set it. */
+    const losing = (rank) =>
+      rankOf(targetRole) === rank
+      && (b.disabled === true || ("role" in b && rankOf(b.role) < rank));
+    for (const [name, rank] of [["owner", RANK.owner], ["admin", RANK.admin]]) {
+      if (!losing(rank)) continue;
+      const left = (await query(
         `SELECT count(*)::int n FROM organization_memberships m
          JOIN app_users u ON u.id = m.user_id
-         WHERE m.role = 'admin' AND NOT u.disabled`)).rows[0].n;
-      const target = (await query(
-        `SELECT m.role FROM organization_memberships m WHERE m.user_id = $1`,
-        [id])).rows[0];
-      if (admins <= 1 && target?.role === "admin")
-        return res.status(400).json({ error: "cannot remove the last admin" });
+         WHERE m.role = $1 AND NOT u.disabled`, [name])).rows[0].n;
+      if (left <= 1)
+        return res.status(400).json({ error: `cannot remove the last ${name}` });
     }
+
     await tx(async (client) => {
       if ("disabled" in b)
         await client.query("UPDATE app_users SET disabled = $1 WHERE id = $2",
           [!!b.disabled, id]);
-      if (b.role === "admin" || b.role === "member")
+      if ("role" in b)
         await client.query(
           "UPDATE organization_memberships SET role = $1 WHERE user_id = $2",
           [b.role, id]);
     });
-    res.json({ ok: true });
+
+    /* Said plainly rather than left for them to discover: OWNER_EMAILS wins
+       over this table, so demoting a listed owner in the UI changes the row
+       and nothing else. */
+    const stillOwner = isOwnerEmail(target.email)
+      && "role" in b && b.role !== "owner";
+    res.json({ ok: true, ...(stillOwner ? { warning:
+      `${target.email} is listed in OWNER_EMAILS and keeps owner access. `
+      + "Change that setting to hand ownership over." } : {}) });
   } catch (e) { next(e); }
 });
 

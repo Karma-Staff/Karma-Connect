@@ -15,7 +15,7 @@
 
 const express = require("express");
 const { query, tx } = require("./db");
-const { requireUser } = require("./auth");
+const { requireUser, rankOf, RANK } = require("./auth");
 const activity = require("./activity");
 const counts = require("./counts");
 const { STATUSES } = require("./dedupe");
@@ -41,7 +41,7 @@ router.use(["/api/leads", "/api/comments"], requireUser);
    because a member should not learn that a lead they cannot see exists. */
 async function requireOwnLead(req, res, next) {
   try {
-    if (req.user.role === "admin") return next();
+    if (rankOf(req.user.role) >= RANK.admin) return next();
     const id = +req.params.id;
     if (!Number.isInteger(id) || id <= 0) return next();
     const row = (await query(
@@ -117,7 +117,8 @@ function buildFilters(p, user) {
   const add = (sql, ...vals) => {
     where.push(sql.replace(/\?/g, () => `$${params.push(vals.shift())}`));
   };
-  if (user && user.role !== "admin") add("btrim(owner) = ?", String(user.email || "").trim());
+  if (user && rankOf(user.role) < RANK.admin)
+    add("btrim(owner) = ?", String(user.email || "").trim());
   if (["company", "person", "job"].includes(p.kind)) add("kind = ?", p.kind);
   // removed=true is the DNC tab; everything else excludes banned leads
   add(p.removed === "true" ? "removed" : "NOT removed");
@@ -164,7 +165,7 @@ router.get("/api/leads", async (req, res, next) => {
     const p = req.query;
     // the Removed tab is a Manage surface: members never list banned leads
     // (their remove slip-ups are covered by the 5-second undo instead)
-    if (p.removed === "true" && req.user.role !== "admin")
+    if (p.removed === "true" && rankOf(req.user.role) < RANK.admin)
       return res.status(403).json({ error: "admins only" });
     const [col, dir] = SORTS[p.sort] || SORTS.recent;
     const limit = Math.min(Math.max(+p.limit || 50, 1), 200);
@@ -205,7 +206,7 @@ router.get("/api/leads/:key", async (req, res, next) => {
     /* The list already hides other people's leads, but an id in a URL must not
        be a way around that. 404 rather than 403: a member has no business
        learning that a lead they cannot see exists at all. */
-    const mine = (l) => req.user.role === "admin"
+    const mine = (l) => rankOf(req.user.role) >= RANK.admin
       || String(l.owner || "").trim() === String(req.user.email || "").trim();
     if (!mine(row)) return res.status(404).json({ error: "no such lead" });
 
@@ -216,15 +217,16 @@ router.get("/api/leads/:key", async (req, res, next) => {
        own one record at that company — that would hand back through the side
        door exactly what the list withholds at the front. For an admin the
        clause is empty and the queries are unchanged. */
-    const ownClause = req.user.role === "admin" ? "" : " AND btrim(owner) = $3";
-    const ownArg = req.user.role === "admin" ? [] : [String(req.user.email || "").trim()];
+    const seesAll = rankOf(req.user.role) >= RANK.admin;
+    const ownClause = seesAll ? "" : " AND btrim(owner) = $3";
+    const ownArg = seesAll ? [] : [String(req.user.email || "").trim()];
     if (coId) {
       if (row.kind !== "company")
         related.company = (await query(
           `SELECT id, lead_code, name, city, state, logo_url FROM leads
            WHERE id = $1 AND deleted_at IS NULL`
-          + (req.user.role === "admin" ? "" : " AND btrim(owner) = $2"),
-          req.user.role === "admin" ? [coId] : [coId, String(req.user.email || "").trim()],
+          + (seesAll ? "" : " AND btrim(owner) = $2"),
+          seesAll ? [coId] : [coId, String(req.user.email || "").trim()],
         )).rows[0] || null;
       related.people = (await query(
         `SELECT id, lead_code, name, title, email, phone FROM leads
@@ -374,7 +376,38 @@ router.post("/api/leads/:id/remove", express.json({ limit: "8kb" }), async (req,
   } catch (e) { next(e); }
 });
 
-router.post("/api/leads/:id/restore", express.json({ limit: "8kb" }), async (req, res, next) => {
+/* Lifting a DNC ban is an owner's call, with one exception that matters more
+   than the rule: the rep who just removed something by accident.
+
+   Both go through this route — the 5-second undo toast and the manager
+   reviewing the ban list months later — and they are not the same act. The
+   first is a slip being corrected by the person who made it; the second puts
+   a number the company decided not to call back into circulation, which is a
+   compliance decision and should sit with one person.
+
+   So: an owner may restore anything, and anybody may restore what they
+   themselves removed while the undo is still plausible. The window is
+   generous on purpose — the toast lasts five seconds, but a rep who notices
+   a minute later should not need to file a request. */
+const UNDO_WINDOW_MINUTES = 15;
+
+async function requireRestoreRight(req, res, next) {
+  try {
+    if (rankOf(req.user.role) >= RANK.owner) return next();
+    const id = +req.params.id;
+    const own = await query(
+      `SELECT 1 FROM activity_log
+        WHERE action = 'remove' AND lead_id = $1 AND actor = $2
+          AND at >= now() - ($3 || ' minutes')::interval
+        LIMIT 1`,
+      [id, req.user.email, String(UNDO_WINDOW_MINUTES)]);
+    if (own.rowCount) return next();
+    res.status(403).json({ error: "Only the owner can lift a do-not-call ban. "
+      + "You can undo a removal you just made yourself." });
+  } catch (e) { next(e); }
+}
+
+router.post("/api/leads/:id/restore", requireRestoreRight, express.json({ limit: "8kb" }), async (req, res, next) => {
   try {
     const id = +req.params.id;
     // the undo toast hands back the exact id set its remove swept — a plain
@@ -443,7 +476,7 @@ router.post("/api/leads/:id/comments", express.json({ limit: "16kb" }), async (r
 
 /* author edits their own note; an admin can edit or delete anyone's */
 const canTouch = (req, c) =>
-  c.author_user_id === req.user.id || req.user.role === "admin";
+  c.author_user_id === req.user.id || rankOf(req.user.role) >= RANK.admin;
 
 router.patch("/api/comments/:id", express.json({ limit: "16kb" }), async (req, res, next) => {
   try {
