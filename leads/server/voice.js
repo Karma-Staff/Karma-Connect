@@ -148,6 +148,14 @@ router.post("/api/voice/token", requireUser, async (req, res) => {
       reason: e.message,
       accountsDomain: ACCOUNTS,
       clientIdPrefix: CLIENT_ID.slice(0, 12) + "…",   // enough to spot a wrong or placeholder value
+      /* The prefix of the refresh token the server is ACTUALLY using. Twice now
+         the value on the service has not been the one it was believed to be —
+         a grant code pasted in its place, then an edit that did not take — and
+         each time the only way to tell was to read Zoho's refusal and infer it.
+         Twelve characters identify which value is loaded without revealing a
+         credential that is 70 long. */
+      refreshTokenPrefix: REFRESH_TOKEN.slice(0, 14) + "…",
+      refreshTokenLength: REFRESH_TOKEN.length,
     });
   }
 });

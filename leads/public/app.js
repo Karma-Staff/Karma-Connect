@@ -2722,8 +2722,10 @@ function loadVoiceSdk() {
                 console.log("[karma] voice token handed to SDK: yes");
                 return cb(d.access_token);
               }
-              const detail = [d.reason, d.clientIdPrefix && ("id " + d.clientIdPrefix),
-                d.accountsDomain].filter(Boolean).join(" · ");
+              const detail = [d.reason,
+                d.refreshTokenPrefix && ("token in use: " + d.refreshTokenPrefix
+                  + " (" + d.refreshTokenLength + " chars)"),
+                d.clientIdPrefix && ("id " + d.clientIdPrefix)].filter(Boolean).join(" · ");
               console.warn("[karma] voice token failed:", res.status, d);
               toast("Zoho token: " + (detail || d.error || ("HTTP " + res.status)), 20000);
               cb(null);                  // SDK reports an error; we fall back
