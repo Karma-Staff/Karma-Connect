@@ -80,9 +80,12 @@
                never sees them flash; the real control is the API's 403s. -->
           <button id="manage-users-btn" class="dropdown-item admin-only hidden">Manage team</button>
           <button id="trash-btn" class="dropdown-item admin-only hidden">Trash</button>
-          <!-- relative, so it resolves under whichever prefix serves the app
-               (/leads/dashboard merged, /dashboard standalone) -->
-          <a href="dashboard" target="_blank" class="dropdown-item admin-only hidden">Open NocoDB admin</a>
+          <!-- was "Open NocoDB admin", pointing at the no-code database this
+               app used to be built on. That container is gone — the data
+               lives in Postgres now — so the link went to a dead port. Same
+               place in the menu, pointed at the team overview it should have
+               been all along. -->
+          <button id="team-dashboard-btn" class="dropdown-item admin-only hidden">Team dashboard</button>
           <button id="logout-btn" class="dropdown-item">Sign out</button>
         </div>
       </div>
@@ -393,6 +396,6 @@
   </div>
 </div>
 
-<script src="app.js?v=58"></script>
+<script src="app.js?v=59"></script>
 </body>
 </html>

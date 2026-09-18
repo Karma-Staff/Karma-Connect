@@ -3995,6 +3995,10 @@ function wire() {
     $("user-dropdown").classList.add("hidden");
     openTrashModal();
   });
+  on("team-dashboard-btn", "click", () => {
+    $("user-dropdown").classList.add("hidden");
+    setTab("stats");                     // Team activity — the team overview
+  });
   on("clear-recents", "click", async () => {
     // only forgets the trail — the leads themselves are untouched
     S.recents = [];

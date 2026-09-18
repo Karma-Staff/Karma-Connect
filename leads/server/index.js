@@ -58,21 +58,6 @@ function mount(app, opts = {}) {
     app.use(p, statics);
   }
 
-  /* the user-menu's "Open NocoDB admin" link — the admin container lives on
-     its own port, so bounce the browser there against whatever host it used
-     for us. In prod it sits behind Caddy on its own hostname instead: set
-     NOCODB_ADMIN_URL (docker-compose.prod.yml does, to https://admin.<domain>)
-
-     index.html links this RELATIVELY ("dashboard"), so it resolves under
-     whichever prefix the page was served from. Register one redirect per
-     mount point to match — and note that in merged mode that deliberately
-     does NOT include a bare /dashboard, which belongs to Karma Connect. */
-  for (const p of staticPaths) {
-    app.get(p === "/" ? "/dashboard" : p + "/dashboard", (req, res) =>
-      res.redirect(process.env.NOCODB_ADMIN_URL ||
-        `http://${req.hostname}:8082/dashboard`));
-  }
-
   /* ---------------- auth: WorkOS AuthKit
      Point post-sign-in redirects at wherever we just served the app, or a
      WorkOS round trip would land the user on Karma Connect's front page. */
