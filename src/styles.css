@@ -101,6 +101,14 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
 .kc .fgrid{display:grid; grid-template-columns:1fr 1fr; gap:14px 16px}
 .kc .f{display:flex; flex-direction:column; gap:6px}
 .kc .f.full{grid-column:1/-1}
+/* a password field with a reveal button: the input keeps the full width and
+   pads out of the way of the eye, rather than the eye stealing width from a
+   field people are typing a long passphrase into */
+.kc .f.pw{position:relative}
+.kc .f.pw input{padding-right:42px}
+.kc .f.pw .eye{position:absolute; right:8px; bottom:7px; background:none; border:none;
+  color:var(--faint); cursor:pointer; padding:6px; display:flex; border-radius:8px}
+.kc .f.pw .eye:hover{color:var(--text)}
 .kc label{font-size:12px; color:var(--muted); font-weight:600}
 .kc input,.kc textarea,.kc select{background:rgba(0,0,0,.3); border:1px solid var(--border); border-radius:11px;
   padding:11px 13px; color:var(--text); font-size:13.5px; font-family:inherit; outline:none; width:100%; resize:vertical;

@@ -112,6 +112,8 @@ function mount(app, opts = {}) {
   /* recording calls, and the manager's report built from them. After leads.js
      so its requireOwnLead guard has already run for /api/leads/:id paths. */
   app.use(require("./calls").router);
+  /* one rep's own working queue — always the caller's own, never the team's */
+  app.use(require("./tasks").router);
 
   /* the trash bin, plus its 30-day sweep — mounted after leads so the leads
      router's requireUser has already run for /api/leads/:id paths */

@@ -39,8 +39,8 @@ const ENABLED = process.env.ZOHO_VOICE_ENABLED === "1"
 
 if (process.env.ZOHO_VOICE_ENABLED === "1" && !ENABLED) {
   console.warn("[karma] ZOHO_VOICE_ENABLED=1 but ZOHO_CLIENT_ID / ZOHO_CLIENT_SECRET / "
-    + "ZOHO_REFRESH_TOKEN are incomplete — click-to-call stays off and phone numbers "
-    + "remain plain tel: links.");
+    + "ZOHO_REFRESH_TOKEN are incomplete — the in-page softphone stays off and "
+    + "phone numbers hand off to Zoho's web dialler instead.");
 }
 
 /* One cached access token for the whole process. Zoho's expire in about an
@@ -109,8 +109,16 @@ async function accessToken() {
    server.js now covers the Zoho domains properly, so the gate is gone.
    If the SDK still cannot authenticate, app.js drops to web by itself rather
    than leaving a dead widget in front of whoever is trying to call. */
+/* The default is no longer "tel". A tel: link on a desktop makes the browser
+   ask the operating system which application should handle it, and the rep
+   gets an app-chooser dialog instead of a call — every time, on every number.
+   So: the in-page softphone when the credentials are there, otherwise hand
+   the number to Zoho's web dialler. "tel" remains available, but now only
+   when somebody asks for it, which is the case where it is the right answer
+   (a phone, or a desktop with a real softphone registered). */
 const MODE = ["tel", "web", "sdk"].includes(process.env.ZOHO_DIAL_MODE)
-  ? process.env.ZOHO_DIAL_MODE : "tel";
+  ? process.env.ZOHO_DIAL_MODE
+  : (ENABLED ? "sdk" : "web");
 const DIAL_URL = (process.env.ZOHO_DIAL_URL || "https://voice.zoho.com").trim();
 
 /* Leads hold numbers the way people typed them, usually without a country
@@ -122,9 +130,10 @@ const COUNTRY_CODE = process.env.ZOHO_DIAL_COUNTRY_CODE === undefined
   ? "+1" : String(process.env.ZOHO_DIAL_COUNTRY_CODE).trim();
 
 router.get("/api/voice/config", requireUser, (req, res) => {
-  // sdk falls back to tel when the credentials are not there, rather than
-  // rendering a Call button that cannot possibly work
-  const mode = MODE === "sdk" && !ENABLED ? "tel" : MODE;
+  /* sdk asked for without the credentials behind it falls back to the web
+     dialler, not to tel: — the rep still gets their number in one click
+     instead of an operating-system app chooser. */
+  const mode = MODE === "sdk" && !ENABLED ? "web" : MODE;
   res.json({ provider: "zoho", mode, enabled: ENABLED, dialUrl: DIAL_URL,
     countryCode: COUNTRY_CODE });
 });

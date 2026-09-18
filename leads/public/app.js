@@ -44,6 +44,11 @@ const TABS = {
   stats:     { title: "Team activity", stats: true, admin: true },
   // admin-only, also not a list: who is carrying what, and the unclaimed pool
   assign:    { title: "Assignments", assign: true, admin: true },
+  // admin-only: today's calls per person, and who is working right now
+  calls:     { title: "Call report", calls: true, admin: true },
+  // everyone's own queue — not a filter over the base, so it is a pane of its
+  // own like the ones above, and it is where a member lands
+  tasks:     { title: "My tasks", tasks: true },
   // not in the sidebar: entered by clicking a segment tag in the reading pane
   segment:   { title: "Segment", kind: "company", pv: "Company",
                dateField: "Date Added", segment: true },
@@ -245,13 +250,24 @@ function paintTiles() {
   });
 }
 
+/* The tabs that replace the list and reading panes with a full-width surface
+   of their own. One table, so setTab, the KPI tiles and renderSortOptions
+   cannot drift apart as more of them appear. */
+const PANES = {
+  stats:  "stats-pane",
+  assign: "assign-pane",
+  calls:  "calls-pane",
+  tasks:  "tasks-pane",
+};
+const paneOf = (tab) => Object.keys(PANES).find((k) => TABS[tab]?.[k]) || null;
+
 function toggleFocus(key) {
   if (!FOCUS_LABEL[key]) return;
   S.focus = S.focus === key ? "" : key;
   paintTiles();
   // Team activity reads the log, not the leads table — there is no list there
   // to filter, so arming a queue from it means "show me those leads"
-  if (S.focus && (TABS[S.tab].stats || TABS[S.tab].assign)) return setTab("companies");
+  if (S.focus && paneOf(S.tab)) return setTab("companies");
   const list = $("lead-list");
   if (list) list.scrollTop = 0;
   loadList(true);
@@ -446,6 +462,8 @@ async function loadList(resetPage = false) {
   // Team activity reads the log, not the leads table — no list, no pager
   if (cfg.stats) return loadStats();
   if (cfg.assign) return loadAssignments();
+  if (cfg.calls) return loadCallReport();
+  if (cfg.tasks) return loadTasks();
   // the armed tile is named in the header too: a list that is short because a
   // KPI tile is filtering it should never look like a list that is just short
   $("list-title").textContent =
@@ -2856,57 +2874,79 @@ function normalizeNumber(raw) {
   return d.length > 11 ? "+" + d : d;                    // long = already international
 }
 
-/* Handles the click, or returns false to let the tel: link do its job.
-   Never throws at a click handler. */
-function dialInPage(number, name, leadId) {
-  if (VOICE.mode === "sdk") {
-    if (!VOICE.sdk || !VOICE.ready) return false;
-    try {
-      const digits = normalizeNumber(number);
-      /* A previous call that never emitted an end state would otherwise block
-         this one from ever being reported. Close it out first. */
-      reportCall(null, "cancelled");
-      VOICE.call = { leadId: leadId || null, number: digits,
-        connected: false, seconds: 0, reported: false };
-      VOICE.sdk.makeCall({ number: digits, name: name || undefined });
-      toast("Calling " + (name || number) + "…");
-      return true;
-    } catch (e) {
-      console.warn("[karma] could not dial:", e.message);
-      reportCall(null, "failed");     // don't leave the attempt open
-      return false;
-    }
+/* Hand the number to Zoho's own dialler in a tab, or failing that onto the
+   clipboard. Used by the "web" mode and as the SDK's fallback — a softphone
+   that has not finished loading must not drop the click back onto the tel:
+   link, because the browser then asks Windows which application should
+   handle it and the rep gets a chooser dialog instead of a call. */
+function dialHandOff(number, leadId) {
+  const digits = normalizeNumber(number);
+  /* Handing off means we never learn how the call went — the conversation
+     happens somewhere we don't own. Record the attempt as 'placed' so the
+     manager's report still shows who is working the list; it deliberately
+     does NOT count as connected. */
+  if (leadId) {
+    VOICE.call = { leadId, number: digits, connected: false, seconds: 0, reported: false };
+    reportCall(null, "placed");
   }
-
-  if (VOICE.mode === "web") {
-    /* Put the number on the clipboard and open Zoho's dialler. If the
-       configured URL carries a {number} placeholder the dialler fills itself
-       and the clipboard is just a safety net; without one, this is the
-       copy-and-paste flow with the copying already done. */
-    const digits = normalizeNumber(number);
-    /* Handing off to Zoho's own dialler means we never learn how the call
-       went — the conversation happens in a tab we don't own. Record the
-       attempt as 'placed' so the manager's report still shows who is working
-       the list; it deliberately does NOT count as connected. */
-    if (leadId) {
-      VOICE.call = { leadId, number: digits, connected: false, seconds: 0, reported: false };
-      reportCall(null, "placed");
-    }
-    copyText(digits);
-    const hasSlot = VOICE.dialUrl.includes("{number}");
-    const url = hasSlot
-      ? VOICE.dialUrl.replace("{number}", encodeURIComponent(digits))
-      : VOICE.dialUrl;
-    /* One reused tab, not a new one per click: a rep working a list would
-       otherwise end the morning with forty diallers open. */
-    window.open(url, "zohoDialer");
-    toast(hasSlot
-      ? "Opening the dialler for " + digits
-      : digits + " copied — paste it into the dialler (Ctrl+V)");
+  copyText(digits);
+  if (!VOICE.dialUrl) {
+    toast(digits + " copied — paste it into your dialler (Ctrl+V)");
     return true;
   }
+  /* If the configured URL carries a {number} placeholder the dialler fills
+     itself and the clipboard is just a safety net; without one, this is the
+     copy-and-paste flow with the copying already done. */
+  const hasSlot = VOICE.dialUrl.includes("{number}");
+  const url = hasSlot
+    ? VOICE.dialUrl.replace("{number}", encodeURIComponent(digits))
+    : VOICE.dialUrl;
+  /* One reused tab, not a new one per click: a rep working a list would
+     otherwise end the morning with forty diallers open. */
+  window.open(url, "zohoDialer");
+  toast(hasSlot
+    ? "Opening the dialler for " + digits
+    : digits + " copied — paste it into the dialler (Ctrl+V)");
+  return true;
+}
 
-  return false;                            // "tel" — let the link through
+/* Handles the click. Returns true when it dealt with the number, which is the
+   caller's signal to stop the tel: link.
+
+   Only the explicit "tel" mode ever returns false. Every other mode handles
+   the click itself even when its preferred route is unavailable, because
+   falling through to tel: on a desktop opens the OS application chooser —
+   a dialog the rep has to dismiss, with no call at the end of it.
+
+   Never throws at a click handler. */
+function dialInPage(number, name, leadId) {
+  if (VOICE.mode === "tel") return false;            // deliberately the OS's job
+
+  if (VOICE.mode === "sdk") {
+    if (VOICE.sdk && VOICE.ready) {
+      try {
+        const digits = normalizeNumber(number);
+        /* A previous call that never emitted an end state would otherwise
+           block this one from ever being reported. Close it out first. */
+        reportCall(null, "cancelled");
+        VOICE.call = { leadId: leadId || null, number: digits,
+          connected: false, seconds: 0, reported: false };
+        VOICE.sdk.makeCall({ number: digits, name: name || undefined });
+        toast("Calling " + (name || number) + "…");
+        return true;
+      } catch (e) {
+        console.warn("[karma] could not dial:", e.message);
+        reportCall(null, "failed");     // don't leave the attempt open
+        return dialHandOff(number, leadId);
+      }
+    }
+    /* Still loading, or the token never arrived. voiceInit() already said so
+       on screen; here we just get the rep their number. */
+    console.warn("[karma] softphone not ready — handing the number off instead");
+    return dialHandOff(number, leadId);
+  }
+
+  return dialHandOff(number, leadId);                // "web", and anything new
 }
 
 /* Clipboard with a fallback: the async API needs a secure context and a
@@ -3086,6 +3126,242 @@ async function distribute(poolTotal) {
   } finally {
     if ($("asg-go")) $("asg-go").disabled = false;
   }
+}
+
+/* ---------------- Call report (admin) ----------------
+   Today's calls per person, and who is working right now. Deliberately narrow:
+   this answers "what is happening on the floor this morning", and Team
+   activity answers "what happened over the last month".
+
+   Two honesty rules are baked into the rendering, because the data cannot
+   carry them on its own:
+     - a call recorded as 'placed' went out through Zoho's own dialler, so no
+       result came back. It counts as a call and never as a connection, and
+       the pane says so when there are any.
+     - only calls made through this app exist at all. Someone dialling from
+       their handset shows as zero, which is why the heading counts callers
+       rather than claiming the rest made no calls. */
+
+let callPollTimer = null;
+
+function stopCallPolling() {
+  if (!callPollTimer) return;
+  clearInterval(callPollTimer);
+  callPollTimer = null;
+  $("calls-live")?.setAttribute("aria-pressed", "false");
+}
+
+function toggleCallPolling() {
+  if (callPollTimer) return stopCallPolling();
+  callPollTimer = setInterval(() => loadCallReport(true), 30000);
+  $("calls-live")?.setAttribute("aria-pressed", "true");
+  loadCallReport(true);
+}
+
+/* quiet=true is the poll: repaint without the "Loading…" flash, or the pane
+   would blink every 30 seconds under someone who is reading it. */
+async function loadCallReport(quiet = false) {
+  const el = $("calls-body");
+  if (!el) return;
+  if (!quiet) el.innerHTML = `<p class="act-empty">Reading today's calls…</p>`;
+  const minutes = +$("calls-minutes")?.value || 15;
+  try {
+    renderCallReport(await api(`/api/calls/report?minutes=${minutes}`));
+  } catch (e) {
+    if (quiet) return;                   // a failed poll keeps the last good view
+    el.innerHTML = `<p class="act-empty">Could not load the call report (${esc(e.message)})</p>`;
+  }
+}
+
+function fmtDuration(seconds) {
+  const s = Math.max(0, Math.floor(seconds || 0));
+  if (!s) return "–";
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  if (h) return `${h}h ${String(m).padStart(2, "0")}m`;
+  if (m) return `${m}m ${String(s % 60).padStart(2, "0")}s`;
+  return `${s}s`;
+}
+
+/* What someone is doing, in words a manager reads rather than a log verb. */
+const ACT_WORDS = {
+  call: "on a call", open: "reading", status: "updating a status",
+  note: "writing a note", owner: "reassigning", favorite: "starring",
+  unfavorite: "unstarring", remove: "adding a DNC", import: "importing",
+  jobsearch: "running a job search", enrich: "enriching",
+};
+
+function renderCallReport(d) {
+  const el = $("calls-body");
+  const t = d.totals;
+  const people = (d.people || []).slice().sort((a, b) =>
+    (b.calls - a.calls) || (b.assigned - a.assigned) ||
+    a.label.localeCompare(b.label));
+  const peak = Math.max(1, ...people.map((p) => p.calls));
+  const live = people.filter((p) => p.active);
+
+  el.innerHTML = `
+    <div class="kpi-strip">
+      ${kpiTile("Calls today", t.calls.toLocaleString(),
+        t.callers === 1 ? "by 1 person" : `by ${t.callers} people`)}
+      ${kpiTile("Connected", t.connected.toLocaleString(),
+        t.calls ? `${Math.round((t.connected / t.calls) * 100)}% of calls` : "none yet")}
+      ${kpiTile("Talk time", fmtDuration(t.seconds), "total, today")}
+      ${kpiTile("Working now", String(t.activeNow),
+        `active in the last ${d.liveMinutes} min`)}
+    </div>
+
+    ${t.placed ? `<div class="asg-demo">${t.placed.toLocaleString()} of today's
+      calls were handed to Zoho's own dialler, which never tells us how they
+      went — they count as calls and never as connections. Switching
+      ZOHO_DIAL_MODE to the in-page softphone is what makes the connected
+      figure complete.</div>` : ""}
+
+    <div class="act-card">
+      <h4>Working now${live.length ? "" : " — nobody in the last "
+        + d.liveMinutes + " minutes"}</h4>
+      ${live.length ? `<div class="live-grid">
+        ${live.map((p) => `
+          <div class="live-card${p.active.action === "call" ? " on-call" : ""}">
+            <span class="avatar" style="background:${avColor(p.email)}">${esc(initials(p.label))}</span>
+            <div class="live-who">
+              <b>${esc(p.label)}</b>
+              <span class="live-doing">${esc(ACT_WORDS[p.active.action] || p.active.action)}${
+                p.active.leadName ? " · " + esc(p.active.leadName) : ""}</span>
+              <span class="live-when">${esc(relTime(p.active.at))}</span>
+            </div>
+          </div>`).join("")}
+      </div>` : `<p class="act-empty">Nothing in the last ${d.liveMinutes} minutes.
+        Only work done inside this app shows here — a call dialled from a
+        handset is invisible to us.</p>`}
+    </div>
+
+    <div class="act-card">
+      <h4>Today, per person — ${t.members} on the team</h4>
+      <table class="asg-table">
+        <thead><tr>
+          <th>Person</th><th class="n">Calls</th><th class="n">Connected</th>
+          <th class="n">Talk time</th><th class="n">Assigned</th><th>Share of calls</th>
+        </tr></thead>
+        <tbody>
+          ${people.map((p) => `
+            <tr${p.ghost ? ' class="asg-ghost"' : ""}>
+              <td>
+                <span class="avatar avatar-sm" style="background:${avColor(p.email)}">${esc(initials(p.label))}</span>
+                <span class="asg-name">${esc(p.label)}</span>
+                ${p.role === "admin" ? `<span class="asg-tag">admin</span>` : ""}
+                ${p.ghost ? `<span class="asg-tag" title="Calls under a name that is nobody's account">no account</span>` : ""}
+                ${p.active ? `<span class="live-dot" title="Active just now"></span>` : ""}
+              </td>
+              <td class="n"><b>${p.calls.toLocaleString()}</b></td>
+              <td class="n">${p.connected.toLocaleString()}${
+                p.placed ? ` <span class="asg-tag" title="Handed to Zoho's dialler — the result never came back">+${p.placed} unknown</span>` : ""}</td>
+              <td class="n">${fmtDuration(p.seconds)}</td>
+              <td class="n">${p.assigned.toLocaleString()}</td>
+              <td class="asg-bar-cell">
+                <span class="asg-bar" style="width:${Math.round((p.calls / peak) * 100)}%"></span>
+              </td>
+            </tr>`).join("")}
+        </tbody>
+      </table>
+      <p class="asg-foot">Calls are recorded by the browser that made them, so
+        this counts calls placed <b>through the dashboard</b>. A rep who dials
+        from their handset or the Zoho app directly appears here as zero.</p>
+    </div>`;
+}
+
+function kpiTile(label, value, sub) {
+  return `<div class="kpi-tile"><div class="kpi-label">${esc(label)}</div>
+    <div class="kpi-value">${esc(value)}</div>
+    <div class="kpi-sub">${esc(sub)}</div></div>`;
+}
+
+/* ---------------- My tasks ----------------
+   Everyone's own queue, the manager's included. The order is the point: a
+   lead this person has never opened outranks one they worked this morning,
+   so the top of the list is always the most neglected thing they own. */
+
+async function loadTasks() {
+  const el = $("tasks-body");
+  if (!el) return;
+  el.innerHTML = `<p class="act-empty">Building your queue…</p>`;
+  try {
+    renderTasks(await api("/api/tasks"));
+  } catch (e) {
+    el.innerHTML = `<p class="act-empty">Could not load your tasks (${esc(e.message)})</p>`;
+  }
+}
+
+function taskRows(rows, emptyText) {
+  if (!rows.length) return `<p class="act-empty">${emptyText}</p>`;
+  return `<div class="task-list">${rows.map((r, i) => {
+    const row = fromApi(r);
+    const name = displayName(row, row._t);
+    return `<div class="task-row" data-ti="${i}">
+      <span class="avatar avatar-sm" style="background:${avColor(name)}">${esc(initials(name))}</span>
+      <div class="task-main">
+        <b>${esc(name)}</b>
+        <span class="task-sub">${esc([row.City, row.State].filter(Boolean).join(", ")
+          || row.Industry || row["Lead Code"] || "")}</span>
+      </div>
+      ${statusChip(row.Status)}
+      <span class="task-when">${r.touched_at
+        ? esc(relTime(r.touched_at)) : `<i class="task-fresh">never opened</i>`}</span>
+      ${row.Phone ? `<a class="dial task-dial" href="tel:${esc(row.Phone)}"
+          data-dial="${esc(row.Phone)}" data-dial-id="${esc(row.Id)}"
+          data-dial-name="${esc(name)}" title="Call with Zoho Voice">☎</a>` : ""}
+    </div>`;
+  }).join("")}</div>`;
+}
+
+function renderTasks(d) {
+  const el = $("tasks-body");
+  const c = d.counts || {};
+  /* The badge is the open count, not the whole book: a nav badge is a
+     to-do, and 900 qualified leads is not one. */
+  const badge = $("count-tasks");
+  if (badge) badge.textContent = c.open ? c.open.toLocaleString() : "";
+  const done = d.done || {};
+  const queue = d.queue || [];
+  const starred = d.starred || [];
+
+  el.innerHTML = `
+    <div class="kpi-strip">
+      ${kpiTile("Assigned to me", (c.assigned || 0).toLocaleString(),
+        `${(c.open || 0).toLocaleString()} still to work`)}
+      ${kpiTile("Calls today", (done.calls || 0).toLocaleString(),
+        `${(done.connected || 0).toLocaleString()} connected`)}
+      ${kpiTile("Leads worked today", (done.leads_worked || 0).toLocaleString(),
+        `${(done.statuses || 0).toLocaleString()} status changes`)}
+      ${kpiTile("Qualified", (c.Qualified || 0).toLocaleString(), "all time, mine")}
+    </div>
+
+    <div class="act-card">
+      <h4>Next up — oldest first${queue.length >= d.limit
+        ? `, showing ${d.limit} of ${(c.open || 0).toLocaleString()}` : ""}</h4>
+      ${taskRows(queue, c.assigned
+        ? "Nothing open — everything assigned to you is either qualified or closed."
+        : "Nothing is assigned to you yet. Your manager assigns leads from the Assignments board.")}
+    </div>
+
+    <div class="act-card">
+      <h4>★ Starred</h4>
+      ${taskRows(starred, "Nothing starred. Use the ★ on a lead to keep it here.")}
+    </div>`;
+
+  /* One handler per section, reading back the row the index came from — the
+     dial link inside a row is left alone, since the delegated a.dial handler
+     already owns it and clicking the phone should not also open the lead. */
+  const open = (rows) => (e) => {
+    if (e.target.closest("a.dial")) return;
+    const r = rows[+e.currentTarget.dataset.ti];
+    if (!r) return;
+    const row = fromApi(r);
+    setTab(row._t);                      // leaves this pane, shows the list
+    select(row);
+  };
+  const cards = el.querySelectorAll(".act-card");
+  cards[0]?.querySelectorAll(".task-row").forEach((r) => r.addEventListener("click", open(queue)));
+  cards[1]?.querySelectorAll(".task-row").forEach((r) => r.addEventListener("click", open(starred)));
 }
 
 async function loadStats() {
@@ -3300,11 +3576,13 @@ function setTab(tab) {
   $("board-ctl")?.classList.toggle("hidden", tab !== "jobs");
   /* Team activity is not a list of leads: it takes the whole width instead of
      leaving an empty reading pane beside a chart */
-  const isStats = !!TABS[tab].stats;
-  const isAssign = !!TABS[tab].assign;
-  const wide = isStats || isAssign;          // neither is a list of leads
-  $("stats-pane")?.classList.toggle("hidden", !isStats);
-  $("assign-pane")?.classList.toggle("hidden", !isAssign);
+  const pane = paneOf(tab);                  // none of these are lists of leads
+  for (const [key, id] of Object.entries(PANES))
+    $(id)?.classList.toggle("hidden", key !== pane);
+  const wide = !!pane;
+  /* Leaving the call report stops its polling — a hidden pane refreshing in
+     the background is a query every 30 seconds for nobody to read. */
+  if (pane !== "calls") stopCallPolling();
   document.querySelector(".list-pane")?.classList.toggle("hidden", wide);
   $("detail-pane")?.classList.toggle("hidden", wide);
   renderSortOptions();
@@ -3316,7 +3594,7 @@ function setTab(tab) {
 function renderSortOptions() {
   const sel = $("sort-by");
   if (!sel) return;
-  if (TABS[S.tab].stats || TABS[S.tab].assign) return;  // their controls live in their own panes
+  if (paneOf(S.tab)) return;              // their controls live in their own panes
   if (TABS[S.tab].activity) {
     // the trail has exactly one meaningful order; leave S.sort alone so the
     // last real choice is still there when the user goes back to a lead tab
@@ -3710,6 +3988,10 @@ function wire() {
   on("act-days", "change", loadStats);
   on("act-refresh", "click", loadStats);
   on("assign-refresh", "click", loadAssignments);
+  on("tasks-refresh", "click", loadTasks);
+  on("calls-refresh", "click", () => loadCallReport());
+  on("calls-live", "click", toggleCallPolling);
+  on("calls-minutes", "change", () => loadCallReport());
 
   /* Delegated so it covers the reading pane, which is re-rendered constantly.
      A modified click (new tab, copy link) is left alone — the number is still
@@ -3757,7 +4039,11 @@ async function boot() {
   const saved = localStorage.getItem("kl_sort");
   if (saved && SORTS.some((s) => s.key === saved)) S.sort = saved;
   const dl = S.deepLink || {};
-  setTab(TABS[dl.tab] ? dl.tab : "companies");
+  /* A member lands on their own queue: the first question a rep has is "what
+     do I call next", and Companies would open a list scoped to them anyway.
+     An admin lands on Companies, because their first question is about the
+     whole base. A deep link beats both. */
+  setTab(TABS[dl.tab] ? dl.tab : (S.me.role === "admin" ? "companies" : "tasks"));
   // only the three real lead tabs can open a record by id
   if (dl.open && TABS[dl.tab]?.kind && !TABS[dl.tab].segment) {
     select({ Id: +dl.open, _t: dl.tab });

@@ -211,6 +211,59 @@ a:hover { text-decoration: underline; }
   background: var(--accent); opacity: .75; min-width: 2px; }
 .asg-ghost .asg-bar { background: var(--ink-3); opacity: .5; }
 .asg-foot { color: var(--ink-3); font-size: 12.5px; margin-top: 14px; }
+
+/* ---------- KPI strip (call report + my tasks) ----------
+   Four numbers across the top of a pane. Not the .stat tiles above the app:
+   those are armable filters over the whole base, these are read-only figures
+   about today, and making them look clickable would promise something they
+   do not do. */
+.kpi-strip { display: grid; gap: 12px; margin-bottom: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+.kpi-tile { background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px 16px; }
+.kpi-label { color: var(--ink-3); font-size: 11.5px; font-weight: 600;
+  letter-spacing: .04em; text-transform: uppercase; }
+.kpi-value { font-size: 28px; font-weight: 700; line-height: 1.15;
+  margin-top: 6px; font-variant-numeric: tabular-nums; }
+.kpi-sub { color: var(--ink-2); font-size: 12.5px; margin-top: 4px; }
+
+/* ---------- who is working now ---------- */
+.live-grid { display: grid; gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+.live-card { display: flex; gap: 11px; align-items: center;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 10px 12px; }
+/* on a call reads at a glance across a room — that is the whole point of the
+   pane, so it gets the accent and nothing else does */
+.live-card.on-call { border-color: var(--accent); background: var(--accent-soft); }
+.live-who { display: flex; flex-direction: column; min-width: 0; }
+.live-who b { font-size: 13.5px; }
+.live-doing { color: var(--ink-2); font-size: 12px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.live-when { color: var(--ink-3); font-size: 11.5px; }
+.live-dot { display: inline-block; width: 7px; height: 7px; margin-left: 8px;
+  border-radius: 50%; background: var(--good); vertical-align: middle; }
+
+/* ---------- my tasks ---------- */
+.task-list { display: flex; flex-direction: column; }
+.task-row { display: flex; gap: 11px; align-items: center; cursor: pointer;
+  padding: 9px 10px; border-bottom: 1px solid var(--border); }
+.task-row:last-child { border-bottom: 0; }
+.task-row:hover { background: var(--surface-2); }
+.task-main { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.task-main b { font-size: 13.5px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.task-sub { color: var(--ink-3); font-size: 12px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.task-when { color: var(--ink-3); font-size: 12px; white-space: nowrap;
+  min-width: 82px; text-align: right; }
+/* never opened is the top of the queue, so it should not read as an absence */
+.task-fresh { color: var(--accent-ink); font-style: normal; }
+.task-dial { flex: 0 0 auto; text-decoration: none; font-size: 15px;
+  border: 1px solid var(--border); border-radius: 50%;
+  width: 30px; height: 30px; display: inline-flex;
+  align-items: center; justify-content: center; }
+.task-dial:hover { border-color: var(--accent); background: var(--accent-soft); }
 /* a phone number that can be dialled in-page still looks like the link it is */
 .dg-value a.dial { display: inline-flex; align-items: center; gap: 6px; }
 .dg-value a.dial::before { content: ""; width: 6px; height: 6px; border-radius: 50%;

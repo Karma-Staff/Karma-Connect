@@ -2,6 +2,42 @@
 import { useState } from "react";
 import { promoteToAdmin, deleteAccount, changePassword } from "../lib/auth.js";
 
+/* The reveal eye. A password field people cannot read back is where typos
+   live, and every one of these forms rejects a typo only after a round trip
+   — or, in the delete-account case, after the confirm dialog. Same two icons
+   as the sign-in screen, so the control means the same thing in both places. */
+const EyeSvg = ({ off }) => (
+  <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor"
+       strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+    {off ? (<>
+      <path d="M3 3l18 18" /><path d="M10.6 10.6a3 3 0 0 0 4.2 4.2" />
+      <path d="M9.9 5.2A10.4 10.4 0 0 1 12 5c6.5 0 10 7 10 7a17.8 17.8 0 0 1-3.3 4.1M6.6 6.6A17.6 17.6 0 0 0 2 12s3.5 7 10 7a10.3 10.3 0 0 0 3.4-.6" />
+    </>) : (<>
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
+      <circle cx="12" cy="12" r="3" />
+    </>)}
+  </svg>
+);
+
+/* One field, its own show/hide state. Per-field rather than one switch for
+   the panel: revealing the current password to check a typo should not also
+   put the new one on screen behind whoever is walking past. */
+function PwField({ label, value, onChange, placeholder, autoComplete, className }) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className={"f pw" + (className ? " " + className : "")}>
+      <label>{label}</label>
+      <input type={show ? "text" : "password"} autoComplete={autoComplete}
+             value={value} placeholder={placeholder}
+             onChange={(e) => onChange(e.target.value)} />
+      <button type="button" className="eye" onClick={() => setShow((v) => !v)}
+              aria-label={show ? "Hide " + label.toLowerCase() : "Show " + label.toLowerCase()}>
+        <EyeSvg off={show} />
+      </button>
+    </div>
+  );
+}
+
 export function SettingsView({ user, isAdmin, askConfirm, showToast }) {
   const [code, setCode] = useState("");
   const [pBusy, setPBusy] = useState(false);
@@ -91,9 +127,12 @@ export function SettingsView({ user, isAdmin, askConfirm, showToast }) {
       <div className="panel">
         <div className="sect-title">Change password</div>
         <div className="fgrid">
-          <div className="f"><label>Current password</label><input type="password" autoComplete="current-password" value={curPw} onChange={(e) => setCurPw(e.target.value)} placeholder="Current password" /></div>
-          <div className="f"><label>New password</label><input type="password" autoComplete="new-password" value={newPw} onChange={(e) => setNewPw(e.target.value)} placeholder="At least 8 characters" /></div>
-          <div className="f"><label>Confirm new password</label><input type="password" autoComplete="new-password" value={newPw2} onChange={(e) => setNewPw2(e.target.value)} placeholder="Re-enter new password" /></div>
+          <PwField label="Current password" autoComplete="current-password"
+                   value={curPw} onChange={setCurPw} placeholder="Current password" />
+          <PwField label="New password" autoComplete="new-password"
+                   value={newPw} onChange={setNewPw} placeholder="At least 8 characters" />
+          <PwField label="Confirm new password" autoComplete="new-password"
+                   value={newPw2} onChange={setNewPw2} placeholder="Re-enter new password" />
         </div>
         <div className="toprow" style={{ marginTop: 16 }}>
           <button className="btn primary" onClick={doChangePassword} disabled={cBusy}>{cBusy ? "Working…" : "Change password"}</button>
@@ -109,9 +148,9 @@ export function SettingsView({ user, isAdmin, askConfirm, showToast }) {
           <p style={{ color: "var(--muted)", fontSize: 13.5, lineHeight: 1.6, marginBottom: 14 }}>
             Created a normal account but you should be an admin? Enter the admin code to upgrade — admins approve leads and unlock the Relationship, Meeting and Follow-up engines.
           </p>
-          <div className="f full" style={{ maxWidth: 380 }}>
-            <label>Admin code</label>
-            <input type="password" autoComplete="off" value={code} placeholder="Enter the admin code" onChange={(e) => setCode(e.target.value)} />
+          <div style={{ maxWidth: 380 }}>
+            <PwField className="full" label="Admin code" autoComplete="off"
+                     value={code} onChange={setCode} placeholder="Enter the admin code" />
           </div>
           <div className="toprow" style={{ marginTop: 16 }}>
             <button className="btn primary" onClick={promote} disabled={pBusy}>{pBusy ? "Working…" : "Make me an admin"}</button>
@@ -130,9 +169,10 @@ export function SettingsView({ user, isAdmin, askConfirm, showToast }) {
             <p style={{ color: "var(--muted)", fontSize: 13, lineHeight: 1.6, margin: "0 0 12px" }}>
               Permanently deletes your account and everything saved to it. This can't be undone.
             </p>
-            <div className="f full" style={{ maxWidth: 320 }}>
-              <label>Confirm your password</label>
-              <input type="password" autoComplete="current-password" value={pw} placeholder="Your password" onChange={(e) => setPw(e.target.value)} />
+            <div style={{ maxWidth: 320 }}>
+              <PwField className="full" label="Confirm your password"
+                       autoComplete="current-password" value={pw} onChange={setPw}
+                       placeholder="Your password" />
             </div>
           </div>
           <button className="btn danger" onClick={confirmDelete} disabled={dBusy}>{dBusy ? "Deleting…" : "Delete my account"}</button>
