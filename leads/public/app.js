@@ -2771,6 +2771,34 @@ function watchVoiceBlocks() {
   });
 }
 
+/* The in-page softphone could not authenticate. Fall back to handing numbers
+   to Zoho's own dialler, which needs no agent seat and works today.
+
+   Deliberately quiet. While this was being set up, a 20-second diagnostic
+   toast was the fastest way to see Zoho's own words for a failure; in front
+   of a rep it is a wall of text about OAuth they can do nothing about, on
+   every page load. The reason still goes to the console for whoever is
+   debugging, and the numbers still dial. */
+let softphoneWarned = false;
+function softphoneUnavailable(reason) {
+  VOICE.ready = false;
+  VOICE.mode = "web";                   // dialHandOff() from here on
+  if (softphoneWarned) return;
+  softphoneWarned = true;
+  console.warn("[karma] in-page softphone unavailable (" + reason
+    + ") — numbers will open in Zoho's dialler instead. Usually the Zoho user "
+    + "behind the API credentials has no Voice agent seat.");
+}
+
+/* Backstop. We no longer hand Zoho a null token (see the token callback), so
+   the SyntaxError that caused should not fire — but their bundle rejects
+   from other paths too, and those are failures we have already handled by
+   degrading. Scoped to their file so nothing of ours is ever masked. */
+window.addEventListener("unhandledrejection", (e) => {
+  const from = String(e.reason?.stack || "");
+  if (from.includes("zohostatic.com")) e.preventDefault();
+});
+
 async function voiceInit() {
   watchVoiceBlocks();
   try {
@@ -2816,13 +2844,18 @@ function loadVoiceSdk() {
                   + " (" + d.refreshTokenLength + " chars)"),
                 d.clientIdPrefix && ("id " + d.clientIdPrefix)].filter(Boolean).join(" · ");
               console.warn("[karma] voice token failed:", res.status, d);
-              toast("Zoho token: " + (detail || d.error || ("HTTP " + res.status)), 20000);
-              cb(null);                  // SDK reports an error; we fall back
+              softphoneUnavailable(detail || d.error || ("HTTP " + res.status));
+              /* Deliberately NOT cb(null). Zoho's bundle takes the null
+                 straight to XMLHttpRequest.open() and throws a SyntaxError
+                 out of a promise nobody owns — a red error in every rep's
+                 console for a failure we have already handled. Leaving the
+                 callback uncalled simply leaves the softphone uninitialised,
+                 which is exactly what it is; softphoneUnavailable() has
+                 already moved dialling to the hand-off path. */
             })
             .catch((e) => {
               console.warn("[karma] voice token request failed:", e.message);
-              toast("Zoho token request failed: " + e.message, 15000);
-              cb(null);
+              softphoneUnavailable(e.message);
             });
         };
         zv.on?.("ready", () => { VOICE.ready = true; });
@@ -2985,9 +3018,21 @@ function dialInPage(number, name, leadId) {
    permission the browser may refuse, and failing to copy must not stop the
    dialler opening. */
 function copyText(text) {
+  /* writeText REJECTS, it does not throw — a try/catch around it catches
+     nothing and the rejection escapes as an uncaught error while the
+     fallback below never runs. That is the case this function exists for:
+     the permission is refused, or the page is not a secure context. So
+     catch the promise and fall through from inside it. */
   try {
-    if (navigator.clipboard?.writeText) { navigator.clipboard.writeText(text); return; }
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).catch(() => legacyCopy(text));
+      return;
+    }
   } catch (e) { /* fall through */ }
+  legacyCopy(text);
+}
+
+function legacyCopy(text) {
   try {
     const ta = document.createElement("textarea");
     ta.value = text;
