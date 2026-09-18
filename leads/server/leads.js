@@ -27,6 +27,33 @@ const router = express.Router();
    ever reached */
 router.use(["/api/leads", "/api/comments"], requireUser);
 
+/* Members may only act on leads assigned to them.
+
+   Reading is restricted in buildFilters and in the detail route, but WRITING
+   was not: patch, remove, restore and comment are all addressed by id, and an
+   id is guessable. Hiding a lead from the list while still accepting an edit
+   to it is not a permission boundary.
+
+   One guard on the shared path prefix rather than four copies inside the
+   handlers — the next id-addressed route someone adds is covered without them
+   having to remember. Admins pass straight through. A non-numeric :id is the
+   detail route's lead_code form, which guards itself; 404 rather than 403,
+   because a member should not learn that a lead they cannot see exists. */
+async function requireOwnLead(req, res, next) {
+  try {
+    if (req.user.role === "admin") return next();
+    const id = +req.params.id;
+    if (!Number.isInteger(id) || id <= 0) return next();
+    const row = (await query(
+      "SELECT owner FROM leads WHERE id = $1 AND deleted_at IS NULL", [id])).rows[0];
+    if (!row) return res.status(404).json({ error: "no such lead" });
+    if (String(row.owner || "").trim() !== String(req.user.email || "").trim())
+      return res.status(404).json({ error: "no such lead" });
+    next();
+  } catch (e) { next(e); }
+}
+router.use("/api/leads/:id", requireOwnLead);
+
 /* the state filter accepts the two-letter code but the data holds both
    spellings ("FL" and "Florida") — a known data issue the query absorbs */
 const STATE_NAME = {
@@ -73,11 +100,24 @@ const BOARDS = { linkedin: "%linkedin%", indeed: "%indeed%", google: "%google%" 
 const enc = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
 const dec = (s) => { try { return JSON.parse(Buffer.from(s, "base64url").toString()); } catch { return null; } };
 
-function buildFilters(p) {
+/* Members see only the leads assigned to them; admins see everything.
+
+   The restriction is applied HERE rather than in each route, because this is
+   the one place every list, count and search passes through — a check added
+   per-route is a check somebody forgets to add to the next route. `user` is
+   the resolved caller; omitting it (an internal caller with no request) means
+   no restriction, which is why every route passes req.user explicitly.
+
+   Ownership is matched on email because leads.owner is free text holding email
+   addresses — the same equality the owner filter and /api/owners already use.
+   A member with no leads assigned therefore sees an empty list, which is the
+   correct answer rather than an error. */
+function buildFilters(p, user) {
   const where = [], params = [];
   const add = (sql, ...vals) => {
     where.push(sql.replace(/\?/g, () => `$${params.push(vals.shift())}`));
   };
+  if (user && user.role !== "admin") add("btrim(owner) = ?", String(user.email || "").trim());
   if (["company", "person", "job"].includes(p.kind)) add("kind = ?", p.kind);
   // removed=true is the DNC tab; everything else excludes banned leads
   add(p.removed === "true" ? "removed" : "NOT removed");
@@ -128,7 +168,7 @@ router.get("/api/leads", async (req, res, next) => {
       return res.status(403).json({ error: "admins only" });
     const [col, dir] = SORTS[p.sort] || SORTS.recent;
     const limit = Math.min(Math.max(+p.limit || 50, 1), 200);
-    const { where, params } = buildFilters(p);
+    const { where, params } = buildFilters(p, req.user);
     let cursorSql = "";
     if (p.cursor) {
       const c = dec(p.cursor);
@@ -146,7 +186,7 @@ router.get("/api/leads", async (req, res, next) => {
     // total only on the first page — it's identical on every later one
     let total = null;
     if (!p.cursor) {
-      const f = buildFilters(p);
+      const f = buildFilters(p, req.user);
       total = +(await query(
         `SELECT count(*)::int n FROM leads WHERE ${f.where}`, f.params)).rows[0].n;
     }
@@ -162,23 +202,40 @@ router.get("/api/leads/:key", async (req, res, next) => {
   try {
     const row = await findLead(req.params.key);
     if (!row) return res.status(404).json({ error: "no such lead" });
+    /* The list already hides other people's leads, but an id in a URL must not
+       be a way around that. 404 rather than 403: a member has no business
+       learning that a lead they cannot see exists at all. */
+    const mine = (l) => req.user.role === "admin"
+      || String(l.owner || "").trim() === String(req.user.email || "").trim();
+    if (!mine(row)) return res.status(404).json({ error: "no such lead" });
+
     const related = { company: null, people: [], jobs: [], similar: null };
     const coId = row.kind === "company" ? row.id : row.company_lead_id;
+    /* Related records go through the same test as the lead itself. A member
+       must not receive a company's other people and postings just because they
+       own one record at that company — that would hand back through the side
+       door exactly what the list withholds at the front. For an admin the
+       clause is empty and the queries are unchanged. */
+    const ownClause = req.user.role === "admin" ? "" : " AND btrim(owner) = $3";
+    const ownArg = req.user.role === "admin" ? [] : [String(req.user.email || "").trim()];
     if (coId) {
       if (row.kind !== "company")
         related.company = (await query(
           `SELECT id, lead_code, name, city, state, logo_url FROM leads
-           WHERE id = $1 AND deleted_at IS NULL`, [coId])).rows[0] || null;
+           WHERE id = $1 AND deleted_at IS NULL`
+          + (req.user.role === "admin" ? "" : " AND btrim(owner) = $2"),
+          req.user.role === "admin" ? [coId] : [coId, String(req.user.email || "").trim()],
+        )).rows[0] || null;
       related.people = (await query(
         `SELECT id, lead_code, name, title, email, phone FROM leads
          WHERE kind = 'person' AND company_lead_id = $1 AND NOT removed
-           AND deleted_at IS NULL AND id <> $2 ORDER BY id LIMIT 6`,
-        [coId, row.id])).rows;
+           AND deleted_at IS NULL AND id <> $2${ownClause} ORDER BY id LIMIT 6`,
+        [coId, row.id, ...ownArg])).rows;
       related.jobs = (await query(
         `SELECT id, lead_code, name, city, state, job_url FROM leads
          WHERE kind = 'job' AND company_lead_id = $1 AND NOT removed
-           AND deleted_at IS NULL AND id <> $2
-         ORDER BY date_added DESC NULLS LAST LIMIT 4`, [coId, row.id])).rows;
+           AND deleted_at IS NULL AND id <> $2${ownClause}
+         ORDER BY date_added DESC NULLS LAST LIMIT 4`, [coId, row.id, ...ownArg])).rows;
     }
     if (row.kind === "company" && row.category && row.state) {
       const seg = (await query(

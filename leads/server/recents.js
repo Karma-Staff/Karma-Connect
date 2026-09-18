@@ -19,11 +19,18 @@ const MAX = 50;
 
 router.get("/api/recents", async (req, res, next) => {
   try {
+    /* Recents are already this user's own trail, but a lead can be reassigned
+       away after they touched it. Without the owner test a member would keep
+       seeing a colleague's lead here after it left them — the one place the
+       restriction could be outlived by history. */
+    const isAdmin = req.user.role === "admin";
+    const scope = isAdmin ? "" : " AND btrim(l.owner) = $2";
+    const args = isAdmin ? [req.user.id] : [req.user.id, String(req.user.email || "").trim()];
     const rows = (await query(
       `SELECT l.*, r.touched_at, r.kind AS touch_kind
        FROM recents r JOIN leads l ON l.id = r.lead_id
-       WHERE r.user_id = $1 AND NOT l.removed AND l.deleted_at IS NULL
-       ORDER BY r.touched_at DESC LIMIT ${MAX}`, [req.user.id])).rows;
+       WHERE r.user_id = $1 AND NOT l.removed AND l.deleted_at IS NULL${scope}
+       ORDER BY r.touched_at DESC LIMIT ${MAX}`, args)).rows;
     res.json({ list: rows, max: MAX });
   } catch (e) { next(e); }
 });
