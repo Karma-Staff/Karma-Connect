@@ -906,6 +906,7 @@ function renderDetail(r) {
         : "")}
       ${dgItem("Phone", r.Phone
         ? `<a class="dial" href="tel:${esc(r.Phone)}" data-dial="${esc(r.Phone)}"
+              data-dial-id="${esc(r.Id)}"
               data-dial-name="${esc(r.Company || r.Name || "")}"
               title="Call with Zoho Voice">${esc(r.Phone)}</a>`
         : "")}
@@ -2645,7 +2646,45 @@ async function runPhoneRefresh() {
    The SDK is fetched only when the server says the feature is on, so a team
    without Zoho pays nothing for it. */
 
-const VOICE = { mode: "tel", dialUrl: "", countryCode: "+1", sdk: null, ready: false, loading: null };
+const VOICE = { mode: "tel", dialUrl: "", countryCode: "+1", sdk: null, ready: false,
+  loading: null,
+  /* The call in progress. leadId is captured at the click, because by the time
+     the SDK says the call ended the reading pane may be showing something
+     else — attributing a call to whatever lead happens to be open would put
+     it against the wrong company. */
+  call: { leadId: null, number: null, connected: false, seconds: 0, reported: true } };
+
+const CALL_OUTCOMES = ["connected", "no-answer", "busy", "failed", "cancelled", "placed"];
+
+/* Tell the server how a call went. Fire-and-forget: a failure to record must
+   never surface to someone who has just finished talking to a prospect, and
+   the call itself already happened either way. Guarded against the SDK
+   emitting several end-ish states for one call. */
+function reportCall(raw, state) {
+  const c = VOICE.call;
+  if (c.reported || !c.leadId) return;
+  c.reported = true;
+  /* An exact outcome name is a caller telling us what happened; anything else
+     is a raw SDK state string to be read. Kept in step with OUTCOMES in
+     leads/server/calls.js, which rejects what it does not recognise. */
+  const outcome = CALL_OUTCOMES.includes(state) ? state
+    : c.connected ? "connected"
+      : /busy/.test(state) ? "busy"
+        : /cancel|reject|decline/.test(state) ? "cancelled"
+          : /fail|error/.test(state) ? "failed"
+            : "no-answer";
+  fetch("/api/leads/" + c.leadId + "/call", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      outcome,
+      seconds: c.connected ? c.seconds : 0,
+      provider: "zoho",
+      call_id: raw?.callId || raw?.call_id || null,
+      number: c.number,
+    }),
+  }).catch((e) => console.warn("[karma] could not record the call:", e.message));
+}
 
 /* The softphone authenticates locally and fails on the deploy, and the SDK
    reports every cause as "Unauthorized access" — a blocked request and a
@@ -2737,6 +2776,30 @@ function loadVoiceSdk() {
             });
         };
         zv.on?.("ready", () => { VOICE.ready = true; });
+        /* Call outcomes. The browser holding the softphone is the only thing
+           that knows a call ended and whether anyone picked up, so this is
+           where the manager's report gets its data — and why a rep dialling
+           any other way contributes none.
+
+           The SDK names its states differently across versions, so match
+           loosely on the words rather than an exact enum, and treat anything
+           unrecognised as ended-without-connecting rather than dropping it. */
+        zv.on?.("callState", (st) => {
+          try {
+            const state = String(st?.callStatus || st?.state || st || "").toLowerCase();
+            if (/answer|connect|active|established|talking/.test(state)) {
+              VOICE.call.connected = true;
+            }
+            if (/end|complete|terminat|hangup|disconnect|closed|failed|cancel/.test(state)) {
+              reportCall(st, state);
+            }
+          } catch (e) { console.warn("[karma] callState:", e.message); }
+        });
+        zv.on?.("timer", (t) => {
+          // seconds the SDK counts while a call is up; the last value wins
+          const s = Number(t?.seconds ?? t?.duration ?? t);
+          if (Number.isFinite(s) && s >= 0) VOICE.call.seconds = Math.floor(s);
+        });
         zv.on?.("regState", (st) => { VOICE.ready = String(st?.state || st) !== "unregistered"; });
         zv.on?.("error", (err) => {
           /* The SDK hands back an object, not a string, and String() on it
@@ -2795,15 +2858,22 @@ function normalizeNumber(raw) {
 
 /* Handles the click, or returns false to let the tel: link do its job.
    Never throws at a click handler. */
-function dialInPage(number, name) {
+function dialInPage(number, name, leadId) {
   if (VOICE.mode === "sdk") {
     if (!VOICE.sdk || !VOICE.ready) return false;
     try {
-      VOICE.sdk.makeCall({ number: normalizeNumber(number), name: name || undefined });
+      const digits = normalizeNumber(number);
+      /* A previous call that never emitted an end state would otherwise block
+         this one from ever being reported. Close it out first. */
+      reportCall(null, "cancelled");
+      VOICE.call = { leadId: leadId || null, number: digits,
+        connected: false, seconds: 0, reported: false };
+      VOICE.sdk.makeCall({ number: digits, name: name || undefined });
       toast("Calling " + (name || number) + "…");
       return true;
     } catch (e) {
       console.warn("[karma] could not dial:", e.message);
+      reportCall(null, "failed");     // don't leave the attempt open
       return false;
     }
   }
@@ -2814,6 +2884,14 @@ function dialInPage(number, name) {
        and the clipboard is just a safety net; without one, this is the
        copy-and-paste flow with the copying already done. */
     const digits = normalizeNumber(number);
+    /* Handing off to Zoho's own dialler means we never learn how the call
+       went — the conversation happens in a tab we don't own. Record the
+       attempt as 'placed' so the manager's report still shows who is working
+       the list; it deliberately does NOT count as connected. */
+    if (leadId) {
+      VOICE.call = { leadId, number: digits, connected: false, seconds: 0, reported: false };
+      reportCall(null, "placed");
+    }
     copyText(digits);
     const hasSlot = VOICE.dialUrl.includes("{number}");
     const url = hasSlot
@@ -3639,7 +3717,8 @@ function wire() {
   document.addEventListener("click", (e) => {
     const a = e.target.closest?.("a.dial");
     if (!a || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-    if (dialInPage(a.dataset.dial, a.dataset.dialName)) e.preventDefault();
+    if (dialInPage(a.dataset.dial, a.dataset.dialName, +a.dataset.dialId || null))
+      e.preventDefault();
     // otherwise: not prevented, so the browser follows tel: as it always did
   });
   voiceInit();

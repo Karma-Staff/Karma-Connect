@@ -109,6 +109,9 @@ function mount(app, opts = {}) {
   app.use(require("./assignments").router);
   /* click-to-call config + the OAuth token the in-page softphone asks for */
   app.use(require("./voice").router);
+  /* recording calls, and the manager's report built from them. After leads.js
+     so its requireOwnLead guard has already run for /api/leads/:id paths. */
+  app.use(require("./calls").router);
 
   /* the trash bin, plus its 30-day sweep — mounted after leads so the leads
      router's requireUser has already run for /api/leads/:id paths */
