@@ -78,5 +78,5 @@ Backend (root):
 4. ✅ Shared proxy core (`_proxy.cjs`) — Express server + dev proxy can't drift.
 5. ✅ Live usage accounting + server response cache.
 6. ✅ Self-hosted auth (email+password, JWT) + single Render web service + Render Postgres.
-7. ✅ Password reset flow (Resend one-time token → set-new-password page; auto-migrated columns).
+7. ✅ Password reset flow (emailed one-time token → set-new-password page; auto-migrated columns). Mail goes through the internal gateway, not a provider key held here.
 8. Remaining: per-prospect cost **estimate** in the UI; Sentry monitoring; extract `useProspectPipeline` hook.

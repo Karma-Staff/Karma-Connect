@@ -23,7 +23,8 @@ create table if not exists users (
 -- Case-insensitive email lookups (we also store email lower-cased, but be safe).
 create unique index if not exists users_email_lower_idx on users (lower(email));
 
--- Email verification (Resend). Added via ALTER so existing tables upgrade in place.
+-- Email verification (sent via the internal mail gateway). Added via ALTER so
+-- existing tables upgrade in place.
 -- When email sending isn't configured, the server creates users already-verified.
 alter table users add column if not exists email_verified boolean not null default false;
 alter table users add column if not exists verify_token   text;
@@ -34,7 +35,8 @@ create index if not exists users_verify_token_idx on users (verify_token);
 -- be made admin via the ADMIN_EMAILS config list, independent of this column).
 alter table users add column if not exists is_admin boolean not null default false;
 
--- Password reset (Resend). Same one-time-token pattern as email verification.
+-- Password reset (sent via the internal mail gateway). Same one-time-token
+-- pattern as email verification.
 alter table users add column if not exists reset_token   text;
 alter table users add column if not exists reset_sent_at timestamptz;
 create index if not exists users_reset_token_idx on users (reset_token);

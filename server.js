@@ -218,7 +218,7 @@ app.post("/api/auth/signup", signupLimiter, async (req, res) => {
       } catch (e) {
         /* Sending failed. Deleting the account and refusing was the old
            behaviour, and it means a misconfigured mail provider stops ANYONE
-           signing up — which is what happened here: wiring Resend switched
+           signing up — which is what happened here: wiring email up switched
            verification on, and a provider fault then became a total block.
 
            Registration is already restricted to one email domain, and before
@@ -299,7 +299,7 @@ app.post("/api/auth/resend", resendLimiter, async (req, res) => {
 });
 
 // Request a password reset. Always replies the same way (don't reveal whether the email
-// exists). Sends a one-time reset link via Resend when the account is found.
+// exists). Sends a one-time reset link via the mail gateway when the account is found.
 app.post("/api/auth/forgot", forgotLimiter, async (req, res) => {
   const done = () => res.json({ ok: true, message: "If an account exists for that email, a password reset link is on its way." });
   try {
