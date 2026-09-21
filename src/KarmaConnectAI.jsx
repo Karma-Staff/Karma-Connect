@@ -24,6 +24,7 @@ import { AdminMembersView } from "./views/AdminMembersView.jsx";
 import { TeamActivityView } from "./views/TeamActivityView.jsx";
 import { DashboardView } from "./views/DashboardView.jsx";
 import { BoardView } from "./views/BoardView.jsx";
+import { ResearchView } from "./views/ResearchView.jsx";
 import { RemindersView } from "./views/RemindersView.jsx";
 import { CoachView } from "./views/CoachView.jsx";
 import { SendQueueView } from "./views/SendQueueView.jsx";
@@ -792,6 +793,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
   const NAV = [
     { id: "dashboard", label: "Dashboard", ic: Ic.dash },
     { id: "hub", label: "Prospect Hub", ic: Ic.hub },
+    { id: "research", label: "Prospect Research", ic: Ic.research },
     { id: "intel", label: "Intelligence", ic: Ic.intel, gate: true },
     { id: "connection", label: "Connection Requests", ic: Ic.conn, gate: true, count: results.connection.length },
     { id: "relationship", label: "Relationship Builder", ic: Ic.rel, gate: true, count: results.relationship.length },
@@ -1459,6 +1461,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
           {view === "coach" && <CoachView />}
           {view === "queue" && <SendQueueView showToast={showToast} />}
 
+          {view === "research" && <ResearchView prospect={prospect} showToast={showToast} />}
           {view === "usage" && <UsageView />}
 
           {view === "settings" && (

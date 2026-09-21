@@ -46,6 +46,7 @@ const bcrypt = require("bcryptjs");
 const crypto = require("node:crypto");
 const { rateLimit } = require("./server/ratelimit.cjs");
 const session = require("./server/session.cjs");
+const brief = require("./leads/server/brief.js");
 const { JWT_SECRET, DUMMY_HASH, emailAllowed, publicUser, baseUrl, requireUser, requireAdmin, requireOwner, isOwnerEmail } = require("./server/auth.cjs");
 const EMAIL_RE = /\S+@\S+\.\S+/;
 
@@ -1285,6 +1286,68 @@ app.post("/api/claude", ...(DEV ? [] : [requireUser]), async (req, res) => {
   res.status(out.status);
   for (const [k, v] of Object.entries(out.headers || {})) res.setHeader(k, v);
   res.send(out.body);
+});
+
+/* ──────────────── Prospect research (shared with Karma Leads) ────────────
+   The same briefing the Research panel produces in Karma Leads, reachable
+   from Karma Connect's own Prospect Research section.
+
+   It deliberately goes through leads/server/brief.js rather than a second
+   prompt of its own. Two products asking the same question should get the
+   same answer, and a prompt maintained twice is a prompt that drifts —
+   one of them quietly stops saying "an empty field is a correct answer"
+   and starts inventing an alma mater.
+
+   Unlike the Leads route this one takes the prospect in the body, because
+   Connect's prospects are typed in rather than picked from a base, and it
+   passes a real identity so the call lands on Usage & cost like every other
+   AI call here. */
+app.post("/api/research", requireUser, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const lead = {
+      kind: b.kind === "person" ? "person" : "company",
+      name: String(b.name || "").slice(0, 200),
+      company: String(b.company || "").slice(0, 200),
+      contact: String(b.contact || "").slice(0, 200),
+      title: String(b.title || "").slice(0, 200),
+      website: String(b.website || "").slice(0, 400),
+      city: String(b.city || "").slice(0, 120),
+      state: String(b.state || "").slice(0, 120),
+      industry: String(b.industry || "").slice(0, 200),
+    };
+    if (!brief.str(lead.company) && !brief.str(lead.name) && !brief.str(lead.website))
+      return res.status(400).json({ error: { message: "Give me at least a name, a company or a website to look up." } });
+
+    const out = await handleClaude({
+      method: "POST",
+      bodyString: JSON.stringify({
+        model: process.env.RESEARCH_MODEL || "claude-haiku-4-5",
+        max_tokens: 2000,
+        system: [{ type: "text", text: brief.SYSTEM, cache_control: { type: "ephemeral" } }],
+        messages: [{ role: "user", content: brief.buildPrompt(lead).prompt }],
+        tools: [{ type: "web_search_20250305", name: "web_search", max_uses: brief.MAX_SEARCHES }],
+      }),
+      identity: DEV ? null : { userId: req.userId, email: req.email },
+    }, { requireAuth: false, recordUsage: writeUsageRow });
+
+    if (out.status !== 200) {
+      let message = "The research service refused the request.";
+      try { message = JSON.parse(out.body)?.error?.message || message; } catch (e) { /* keep default */ }
+      return res.status(out.status === 429 ? 429 : 502).json({ error: { message } });
+    }
+
+    const data = JSON.parse(out.body);
+    const text = (data.content || []).filter((c) => c.type === "text").map((c) => c.text).join("\n");
+    const result = brief.normalise(brief.parseBrief(text));
+    if (brief.isEmpty(result))
+      return res.status(422).json({ error: { message:
+        "Nothing verifiable turned up. Rather than guess, the briefing came back empty — try adding their website." } });
+    res.json({ brief: result });
+  } catch (e) {
+    console.error("research:", e.message);
+    res.status(500).json({ error: { message: "Could not run the research." } });
+  }
 });
 
 // Health check for Render.

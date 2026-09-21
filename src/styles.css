@@ -119,6 +119,46 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
 .kc input:focus,.kc textarea:focus,.kc select:focus{border-color:var(--steel); background:rgba(0,0,0,.42); box-shadow:0 0 0 3px rgba(74,134,200,.18)}
 .kc textarea{min-height:74px; line-height:1.55}
 
+/* ---------- Prospect research ----------
+   The briefing read before a call. Every block renders only if it has
+   content: the server lets the model answer "could not verify" with an
+   empty field, and an empty field must look like absence rather than a
+   heading with nothing under it. */
+.kc .rsworking{display:inline-flex; align-items:center; gap:9px; color:var(--muted); font-size:13px}
+.kc .rsspin{width:13px; height:13px; border-radius:50%; border:2px solid var(--border);
+  border-top-color:var(--steel); animation:rsspin .8s linear infinite}
+@keyframes rsspin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){ .kc .rsspin{animation:none} }
+
+.kc .rsheadline{font-size:15px; line-height:1.55; font-weight:700; color:var(--text); margin:0 0 9px}
+.kc .rsconf{display:inline-block; font-size:10.5px; letter-spacing:.05em; text-transform:uppercase;
+  border:1px solid var(--border); border-radius:999px; padding:2px 10px; color:var(--muted); margin-bottom:16px}
+/* low is the one worth noticing — it means most of this is thin */
+.kc .rsconf-low{color:#ff9a9a; border-color:#ff9a9a55}
+.kc .rsconf-high{color:#52d39e; border-color:#52d39e55}
+
+.kc .rsblock{margin-bottom:15px}
+.kc .rslabel{color:var(--faint); font-size:11px; font-weight:700; letter-spacing:.06em;
+  text-transform:uppercase; margin-bottom:5px}
+.kc .rstext{margin:0; font-size:13.5px; line-height:1.65; color:var(--muted)}
+.kc .rsul{margin:0; padding-left:18px}
+.kc .rsul li{font-size:13.5px; line-height:1.65; color:var(--muted); margin-bottom:3px}
+
+/* the opener is what the rep came here for — the one block with colour */
+.kc .rsblock.good{border-left:2px solid #52d39e; padding-left:12px}
+.kc .rsblock.good .rslabel{color:#52d39e}
+.kc .rsblock.good .rsul li{color:var(--text)}
+.kc .rsblock.avoid{border-left:2px solid #ff9a9a; padding-left:12px}
+.kc .rsblock.avoid .rslabel{color:#ff9a9a}
+
+.kc .rssources{display:flex; flex-wrap:wrap; gap:7px}
+.kc .rssources a{font-size:11.5px; color:var(--muted); text-decoration:none;
+  border:1px solid var(--border); border-radius:999px; padding:3px 10px}
+.kc .rssources a:hover{color:var(--text); border-color:var(--steel)}
+
+.kc .rswarn{color:var(--faint); font-size:12px; line-height:1.55; font-style:italic;
+  margin:16px 0 0; padding-top:12px; border-top:1px solid var(--border)}
+
 .kc .btn{display:inline-flex; align-items:center; justify-content:center; gap:9px; cursor:pointer;
   font-family:inherit; font-weight:700; font-size:14px; border-radius:12px; padding:13px 22px;
   border:1px solid transparent; transition:transform .12s, box-shadow .18s, background .18s; letter-spacing:-.01em}
