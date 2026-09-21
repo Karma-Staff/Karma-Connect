@@ -102,6 +102,8 @@ function mount(app, opts = {}) {
   /* the prospect briefing. After leads.js so requireOwnLead has already run:
      a member cannot spend the research budget on somebody else's lead. */
   app.use(require("./research").router);
+  /* live severe-weather alerts, scored for restoration and joined to leads */
+  app.use(require("./alerts").router);
   /* "Follow back" reminders, and the sweeper that emails them when due */
   const followups = require("./followups");
   app.use(followups.router);

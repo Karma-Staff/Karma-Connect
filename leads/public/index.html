@@ -13,7 +13,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@400;500;600;700&display=swap">
 <!-- bump ?v= whenever app.js/app.css change so no one gets a half-old app -->
-<link rel="stylesheet" href="app.css?v=49">
+<link rel="stylesheet" href="app.css?v=50">
 </head>
 <body>
 
@@ -173,6 +173,10 @@
         <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6M8.5 11h5M11 8.5v5"/></svg>
         Research <span class="nav-count" id="count-research"></span></button>
 
+      <button class="nav-item" data-tab="storm">
+        <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 16.5a4 4 0 0 1 .3-7.98 5.5 5.5 0 0 1 10.65 1.2A3.6 3.6 0 0 1 17.5 16.5H7Z"/><path d="m13 13-3 4.2h3.4L11 21.5"/></svg>
+        Storm watch <span class="nav-count" id="count-storm"></span></button>
+
       <div class="nav-section admin-only hidden">Manage</div>
       <!-- the manager's view of who is carrying what, and where the unclaimed
            work is. Assigning from here goes through the same /api/bulk/assign
@@ -320,6 +324,20 @@
       <div id="assign-body" class="stats-body"></div>
     </section>
 
+    <!-- Storm watch: where property just got damaged, and the leads there. -->
+    <section class="stats-pane hidden" id="storm-pane">
+      <div class="stats-head">
+        <div class="list-title-wrap">
+          <div class="seg-eyebrow">First alert</div>
+          <h2>Storm watch</h2>
+        </div>
+        <div class="list-filters">
+          <button id="storm-refresh" class="btn-ghost" title="Re-read the feed">Refresh</button>
+        </div>
+      </div>
+      <div id="storm-body" class="stats-body"></div>
+    </section>
+
     <!-- Prospect research: the briefings already bought, and the way in to
          buying one. Full width like the other non-list panes. -->
     <section class="stats-pane hidden" id="research-pane">
@@ -418,6 +436,6 @@
   </div>
 </div>
 
-<script src="app.js?v=66"></script>
+<script src="app.js?v=67"></script>
 </body>
 </html>

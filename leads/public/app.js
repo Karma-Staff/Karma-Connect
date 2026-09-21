@@ -51,6 +51,8 @@ const TABS = {
   tasks:     { title: "My tasks", tasks: true },
   // the briefings, gathered — the working copy lives inside each lead
   research:  { title: "Prospect research", research: true },
+  // live severe weather, scored for restoration and joined to the base
+  storm:     { title: "Storm watch", storm: true },
   // not in the sidebar: entered by clicking a segment tag in the reading pane
   segment:   { title: "Segment", kind: "company", pv: "Company",
                dateField: "Date Added", segment: true },
@@ -261,6 +263,7 @@ const PANES = {
   calls:  "calls-pane",
   tasks:  "tasks-pane",
   research: "research-pane",
+  storm: "storm-pane",
 };
 const paneOf = (tab) => Object.keys(PANES).find((k) => TABS[tab]?.[k]) || null;
 
@@ -468,6 +471,7 @@ async function loadList(resetPage = false) {
   if (cfg.calls) return loadCallReport();
   if (cfg.tasks) return loadTasks();
   if (cfg.research) return loadResearchCenter();
+  if (cfg.storm) return loadStorm();
   // the armed tile is named in the header too: a list that is short because a
   // KPI tile is filtering it should never look like a list that is just short
   $("list-title").textContent =
@@ -3415,6 +3419,160 @@ function openFollowupModal(r) {
   });
 }
 
+/* ---------------- Storm watch ----------------
+   Where property just got damaged, and who we already have on file there.
+
+   A tile grid rather than a drawn coastline. Three reasons, and they are
+   not laziness: the alerts arrive as state and county codes, not shapes, so
+   a state is the finest honest unit; every state gets equal room, which a
+   real map does not — Rhode Island and Delaware carry real lead counts and
+   vanish on a projection; and it needs no tile server, no map library and
+   no change to the content-security policy. Each square is a state, laid
+   out roughly where it sits.
+
+   Canada is on the grid but never lit: the alert feed is the US National
+   Weather Service. Environment Canada publishes CAP as a tree of XML files
+   rather than an API, and the base holds eight Canadian leads, so it earns
+   the work the day that changes. */
+
+const CA_GRID = `
+.  YT NT NU .  .  .  .  .  .  .  .
+.  BC AB SK MB ON QC NL .  .  .  .
+.  .  .  .  .  .  .  NB NS PE .  .
+`;
+const US_GRID = `
+AK .  .  .  .  .  .  .  .  .  .  ME
+.  .  .  .  .  .  .  .  .  VT NH .
+.  WA ID MT ND MN WI MI .  NY MA RI
+.  OR NV WY SD IA IL IN OH PA NJ CT
+.  CA UT CO NE MO KY WV VA MD DE .
+.  .  AZ NM KS AR TN NC SC DC .  .
+.  .  .  .  OK LA MS AL GA .  .  .
+HI .  .  .  TX .  .  .  .  FL .  .
+`;
+
+function parseGrid(text, rowOffset) {
+  const cells = [];
+  text.trim().split("\n").forEach((line, r) => {
+    line.trim().split(/\s+/).forEach((code, c) => {
+      if (code && code !== ".") cells.push({ code, row: r + rowOffset, col: c });
+    });
+  });
+  return cells;
+}
+
+let STORM = { data: null, timer: null };
+
+async function loadStorm() {
+  const el = $("storm-body");
+  if (!el) return;
+  if (!STORM.data) el.innerHTML = `<p class="act-empty">Reading the National Weather Service…</p>`;
+  try {
+    STORM.data = await api("/api/alerts");
+    renderStorm(STORM.data);
+  } catch (e) {
+    el.innerHTML = `<p class="act-empty">Could not load alerts (${esc(e.message)})</p>`;
+  }
+}
+
+function renderStorm(d) {
+  const el = $("storm-body");
+  const byState = new Map((d.states || []).map((s) => [s.state, s]));
+  const caCells = parseGrid(CA_GRID, 0);
+  const usCells = parseGrid(US_GRID, 4);          // a blank row between the two
+  const cells = [...caCells, ...usCells];
+  const hit = (d.states || []).filter((s) => s.tier > 0);
+  const reach = hit.reduce((a, s) => a + s.leads, 0);
+
+  const badge = $("count-storm");
+  if (badge) badge.textContent = hit.length ? String(hit.length) : "";
+
+  el.innerHTML = `
+    <div class="kpi-strip">
+      ${kpiTile("Live alerts", String(d.relevant),
+        `${d.total} from the NWS, ${d.total - d.relevant} not restoration work`)}
+      ${kpiTile("States affected", String(hit.length), "right now")}
+      ${kpiTile("Leads in range", reach.toLocaleString(),
+        `${hit.reduce((a, s) => a + s.unassigned, 0).toLocaleString()} unassigned`)}
+      ${kpiTile("Worst", hit.length ? TIER_WORD[Math.max(...hit.map((s) => s.tier))] : "Quiet",
+        d.stale ? "feed stale — showing the last good read" : "updated " + esc(relTime(d.fetchedAt)))}
+    </div>
+
+    <div class="act-card">
+      <h4>North America — click a state to work its leads</h4>
+      <div class="sm-grid">
+        ${cells.map((c) => {
+          const s = byState.get(c.code);
+          const t = s ? s.tier : 0;
+          const canada = c.row < 4;
+          const title = s
+            ? `${s.name}: ${s.alerts} alert(s) — ${s.events.join(", ")}. ${s.leads} leads, ${s.unassigned} unassigned.`
+            : canada ? `${c.code} — no Canadian alert feed` : `${c.code} — nothing active`;
+          return `<button type="button" class="sm-cell t${t}${canada ? " ca" : ""}"
+            style="grid-row:${c.row + 1};grid-column:${c.col + 1}"
+            data-state="${esc(c.code)}" title="${esc(title)}"
+            ${s ? "" : "disabled"}>
+            <span class="sm-code">${esc(c.code)}</span>
+            ${s && s.leads ? `<span class="sm-n">${s.leads > 999 ? (s.leads / 1000).toFixed(1) + "k" : s.leads}</span>` : ""}
+          </button>`;
+        }).join("")}
+      </div>
+      <div class="sm-key">
+        <span><i class="sm-sw t3"></i>Destroying property now</span>
+        <span><i class="sm-sw t2"></i>Damage likely</span>
+        <span><i class="sm-sw t1"></i>Worth watching</span>
+        <span><i class="sm-sw t0"></i>Nothing active</span>
+        <span class="sm-note">The number is leads on file there. Canada is unlit — US feed only.</span>
+      </div>
+    </div>
+
+    <div class="act-card">
+      <h4>Alerts — worst first</h4>
+      ${(d.alerts || []).length ? `<div class="task-list">
+        ${d.alerts.slice(0, 25).map((a) => `
+          <div class="task-row sm-alert" data-states="${esc(a.states.join(","))}">
+            <span class="sm-tier t${a.tier}">${TIER_WORD[a.tier]}</span>
+            <div class="task-main">
+              <b>${esc(a.event)}</b>
+              <span class="task-sub">${esc(a.area)}</span>
+            </div>
+            <span class="sm-states">${esc(a.states.join(" "))}</span>
+            <span class="task-when">${a.expires ? "until " + esc(shortWhen(a.expires)) : ""}</span>
+          </div>`).join("")}
+      </div>` : `<p class="act-empty">Nothing severe anywhere in the US right now.
+        That is good news and an unusual screenshot.</p>`}
+      <p class="asg-foot">Source: US National Weather Service, refreshed every five
+        minutes. Marine and beach advisories are filtered out — they are not
+        restoration work.</p>
+    </div>`;
+
+  el.querySelectorAll(".sm-cell:not([disabled])").forEach((b) =>
+    b.addEventListener("click", () => openStateLeads(b.dataset.state)));
+  el.querySelectorAll(".sm-alert").forEach((row) =>
+    row.addEventListener("click", () => {
+      const first = (row.dataset.states || "").split(",")[0];
+      if (first) openStateLeads(first);
+    }));
+}
+
+const TIER_WORD = { 0: "—", 1: "Watch", 2: "Likely", 3: "Severe" };
+
+function shortWhen(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });
+}
+
+/* The whole point of the screen: a state that just got hit becomes a call
+   list. Companies, filtered to that state, ready to work. */
+function openStateLeads(code) {
+  S.state = code;
+  const sel = $("filter-state");
+  if (sel) sel.value = code;
+  setTab("companies");
+  toast("Companies in " + (STATE_NAME[code] || code));
+}
+
 /* ---------------- Research, the section ----------------
    The same briefings the reading pane shows, gathered in one place.
 
@@ -4536,6 +4694,7 @@ function wire() {
   on("assign-refresh", "click", loadAssignments);
   on("tasks-refresh", "click", loadTasks);
   on("research-refresh", "click", loadResearchCenter);
+  on("storm-refresh", "click", () => { STORM.data = null; loadStorm(); });
   on("calls-refresh", "click", () => loadCallReport());
   on("calls-live", "click", toggleCallPolling);
   on("calls-minutes", "change", () => loadCallReport());
