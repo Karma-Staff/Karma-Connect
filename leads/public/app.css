@@ -1579,6 +1579,13 @@ label.check input[type="checkbox"] { width: auto; margin: 0; accent-color: var(-
 @media (max-width: 1080px) {
   .main { grid-template-columns: 170px 1fr; grid-template-rows: 1fr 1fr; }
   .sidebar { grid-row: span 2; }
+  /* The list and the reading pane stack here, so the grid grows a second
+     row — and a full-width pane that does not opt into both gets half the
+     window with its own scrollbar. It has no reading pane to stack under;
+     it IS the content. Storm watch made this obvious because a map is
+     tall, but it was true of My tasks, Research, Call report, Team
+     activity and Assignments too. */
+  .stats-pane { grid-column: 2; grid-row: 1 / -1; }
   /* four tiles wrap to 2×2: the wrapped row needs its own separators, and the
      tiles ending each row lose their right edge */
   .stats { grid-template-columns: repeat(2, 1fr); }
