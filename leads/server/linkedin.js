@@ -17,6 +17,14 @@
      APIFY_LINKEDIN_COMPANY_ACTOR   used for a company row
      APIFY_LINKEDIN_PROFILE_ACTOR   used for a person row (optional)
 
+   Once the actor is set, check it against one company before trusting a
+   briefing built on it — it prints the raw item beside what we extracted,
+   which is the whole of what the model will be told:
+
+     node leads/server/linkedin.js "SERVPRO of Tulsa"
+     node leads/server/linkedin.js --person "Dana Reed"
+     node leads/server/linkedin.js --raw "Acme"      full item, unabridged
+
    Which is also why everything below reads the result defensively: field
    names are guesses across several popular actors, and anything unknown is
    dropped rather than shown. If your actor returns something we ignore, the
@@ -150,4 +158,59 @@ async function scrape(lead) {
   }
 }
 
-module.exports = { scrape, factsFrom, flatten, configured, COMPANY_ACTOR, PROFILE_ACTOR };
+/* Run the configured actor against one name and show both what came back
+   and what we made of it. This exists because the field mapping above is a
+   guess until a real actor answers: the two panels side by side say
+   immediately whether PICK needs another spelling adding. */
+async function check(argv) {
+  const raw = argv.includes("--raw");
+  const person = argv.includes("--person");
+  const name = argv.filter((a) => !a.startsWith("--")).join(" ").trim();
+  if (!name) {
+    console.error('usage: node leads/server/linkedin.js [--person] [--raw] "<company or person>"');
+    process.exitCode = 1;
+    return;
+  }
+  const actor = person ? (PROFILE_ACTOR || COMPANY_ACTOR) : COMPANY_ACTOR;
+  if (!actor) {
+    console.error("No actor configured. Set APIFY_LINKEDIN_COMPANY_ACTOR"
+      + (person ? " (or APIFY_LINKEDIN_PROFILE_ACTOR)" : "") + " and try again.");
+    process.exitCode = 1;
+    return;
+  }
+  console.log(`actor : ${actor}`);
+  console.log(`query : ${name}${person ? "  (person)" : "  (company)"}\n`);
+
+  const lead = person ? { kind: "person", name } : { kind: "company", company: name };
+  const out = await scrape(lead);
+
+  if (out.reason) {
+    console.error("the scrape did not return anything:", out.reason);
+    process.exitCode = 1;
+    return;
+  }
+  console.log(`items returned: ${out.count}\n`);
+  console.log("── what the briefing will be told ──");
+  console.log(out.facts || "(nothing — every field we look for was missing)");
+  if (!out.facts)
+    console.log("\nThe actor answered but none of its field names match PICK in this file."
+      + " Re-run with --raw and add the spellings it uses.");
+  if (raw) {
+    console.log("\n── raw first item ──");
+    const items = await apify(
+      `/acts/${encodeURIComponent(actor)}/runs/last/dataset/items?format=json&clean=true&limit=1`);
+    console.log(JSON.stringify(items && items[0], null, 2));
+  } else {
+    console.log("\n(--raw shows the actor's own item, if a field is missing)");
+  }
+}
+
+module.exports = { scrape, factsFrom, flatten, configured, check, COMPANY_ACTOR, PROFILE_ACTOR };
+
+/* Only when run directly — never when the server requires this. */
+if (require.main === module) {
+  check(process.argv.slice(2)).catch((e) => {
+    console.error(e.message);
+    process.exitCode = 1;
+  });
+}

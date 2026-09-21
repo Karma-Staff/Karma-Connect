@@ -19,7 +19,8 @@
     "format": "prettier --write \"src/**/*.{js,jsx}\"",
     "leads:migrate": "node leads/server/migrate.js",
     "leads:migrate:status": "node leads/server/migrate.js --status",
-    "zoho:token": "node scripts/zoho-token.mjs"
+    "zoho:token": "node scripts/zoho-token.mjs",
+    "leads:linkedin": "node --env-file=.env leads/server/linkedin.js"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.1",
