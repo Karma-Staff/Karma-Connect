@@ -3435,31 +3435,9 @@ function openFollowupModal(r) {
    rather than an API, and the base holds eight Canadian leads, so it earns
    the work the day that changes. */
 
-const CA_GRID = `
-.  YT NT NU .  .  .  .  .  .  .  .
-.  BC AB SK MB ON QC NL .  .  .  .
-.  .  .  .  .  .  .  NB NS PE .  .
-`;
-const US_GRID = `
-AK .  .  .  .  .  .  .  .  .  .  ME
-.  .  .  .  .  .  .  .  .  VT NH .
-.  WA ID MT ND MN WI MI .  NY MA RI
-.  OR NV WY SD IA IL IN OH PA NJ CT
-.  CA UT CO NE MO KY WV VA MD DE .
-.  .  AZ NM KS AR TN NC SC DC .  .
-.  .  .  .  OK LA MS AL GA .  .  .
-HI .  .  .  TX .  .  .  .  FL .  .
-`;
 
-function parseGrid(text, rowOffset) {
-  const cells = [];
-  text.trim().split("\n").forEach((line, r) => {
-    line.trim().split(/\s+/).forEach((code, c) => {
-      if (code && code !== ".") cells.push({ code, row: r + rowOffset, col: c });
-    });
-  });
-  return cells;
-}
+
+
 
 let STORM = { data: null, timer: null };
 
@@ -3478,9 +3456,6 @@ async function loadStorm() {
 function renderStorm(d) {
   const el = $("storm-body");
   const byState = new Map((d.states || []).map((s) => [s.state, s]));
-  const caCells = parseGrid(CA_GRID, 0);
-  const usCells = parseGrid(US_GRID, 4);          // a blank row between the two
-  const cells = [...caCells, ...usCells];
   const hit = (d.states || []).filter((s) => s.tier > 0);
   const reach = hit.reduce((a, s) => a + s.leads, 0);
 
@@ -3506,23 +3481,7 @@ function renderStorm(d) {
           ${storm3d() ? "Flatten" : "3D"}</button>
       </h4>
       <div class="sm-scene${storm3d() ? " on" : ""}">
-      <div class="sm-grid">
-        ${cells.map((c) => {
-          const s = byState.get(c.code);
-          const t = s ? s.tier : 0;
-          const canada = c.row < 4;
-          const title = s
-            ? `${s.name}: ${s.alerts} alert(s) — ${s.events.join(", ")}. ${s.leads} leads, ${s.unassigned} unassigned.`
-            : canada ? `${c.code} — no Canadian alert feed` : `${c.code} — nothing active`;
-          return `<button type="button" class="sm-cell t${t}${canada ? " ca" : ""}"
-            style="grid-row:${c.row + 1};grid-column:${c.col + 1}"
-            data-state="${esc(c.code)}" title="${esc(title)}"
-            ${s ? "" : "disabled"}>
-            <span class="sm-code">${esc(c.code)}</span>
-            ${s && s.leads ? `<span class="sm-n">${s.leads > 999 ? (s.leads / 1000).toFixed(1) + "k" : s.leads}</span>` : ""}
-          </button>`;
-        }).join("")}
-      </div>
+        ${naMapSvg(byState)}
       </div>
       <div class="sm-key">
         <span><i class="sm-sw t3"></i>Destroying property now</span>
@@ -3530,8 +3489,9 @@ function renderStorm(d) {
         <span><i class="sm-sw t1"></i>Worth watching</span>
         <span><i class="sm-sw t0"></i>Nothing active</span>
         <span class="sm-note">${storm3d()
-          ? "Height is severity, not lead count — the number on each tile is the leads."
-          : "The number is leads on file there."} Canada is unlit — US feed only.</span>
+          ? "Height is severity, not lead count — the number on each state is the leads."
+          : "The number is leads on file there."}
+          Canada is unlit — US feed only. Equal-area projection; Hawaii is an inset.</span>
       </div>
     </div>
 
@@ -3559,13 +3519,79 @@ function renderStorm(d) {
     try { localStorage.setItem("kl_storm_3d", storm3d() ? "" : "1"); } catch (e) { /* fine */ }
     renderStorm(STORM.data);
   });
-  el.querySelectorAll(".sm-cell:not([disabled])").forEach((b) =>
-    b.addEventListener("click", () => openStateLeads(b.dataset.state)));
+  el.querySelectorAll(".sm-reg:not(.off)").forEach((gEl) => {
+    const go = () => openStateLeads(gEl.dataset.state);
+    gEl.addEventListener("click", go);
+    // reachable without a mouse, since each region is a real control
+    gEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); }
+    });
+  });
   el.querySelectorAll(".sm-alert").forEach((row) =>
     row.addEventListener("click", () => {
       const first = (row.dataset.states || "").split(",")[0];
       if (first) openStateLeads(first);
     }));
+}
+
+/* The map itself. Real geometry — Natural Earth admin-1, Albers equal-area,
+   simplified and projected offline into na-geo.js — so there is no map
+   library, no tile server and nothing new for the CSP to allow.
+
+   Equal-area, not Mercator, on purpose: Mercator would show Nunavut larger
+   than the entire lower 48, and on a page about where the work is that
+   would read as meaning something.
+
+   Drawn twice when tilted. An SVG cannot extrude, so the "3D" view stacks
+   copies of each lit state behind itself to make a wall, then puts the face
+   on top. Cheap, and it needs no WebGL. */
+function naMapSvg(byState) {
+  const g = window.NA_GEO;
+  if (!g) return `<p class="act-empty">Map data did not load (na-geo.js).</p>`;
+  const lift = { 0: 0, 1: 4, 2: 9, 3: 15 };
+  const tilted = storm3d();
+
+  const shapes = Object.keys(g.shapes).map((code) => {
+    const st = byState.get(code);
+    const t = st ? st.tier : 0;
+    const m = g.meta[code] || {};
+    const title = st
+      ? `${st.name}: ${st.alerts} alert(s) — ${st.events.join(", ")}. ${st.leads} leads, ${st.unassigned} unassigned.`
+      : m.country === "CA" ? `${m.name || code} — no Canadian alert feed`
+        : `${m.name || code} — nothing active`;
+    /* the wall: copies of the outline stepped downward behind the face */
+    const wall = (tilted && t)
+      ? Array.from({ length: lift[t] }, (_, i) =>
+          `<path class="sm-wall w${t}" d="${g.shapes[code]}" transform="translate(0 ${lift[t] - i})"/>`).join("")
+      : "";
+    return `<g class="sm-reg t${t}${m.country === "CA" ? " ca" : ""}${st ? "" : " off"}"
+      data-state="${esc(code)}" role="button" tabindex="${st ? 0 : -1}"
+      transform="translate(0 ${tilted ? -lift[t] : 0})">
+      <title>${esc(title)}</title>
+      ${wall}<path class="sm-face" d="${g.shapes[code]}"/>
+    </g>`;
+  }).join("");
+
+  const labels = Object.keys(g.labels).map((code) => {
+    const st = byState.get(code);
+    if (!st || !st.leads) return "";
+    const [x, y] = g.labels[code];
+    const t = st.tier;
+    const n = st.leads > 999 ? (st.leads / 1000).toFixed(1) + "k" : st.leads;
+    return `<text class="sm-lab t${t}" x="${x}" y="${y - (tilted ? lift[t] : 0)}">
+      <tspan class="sm-labc" x="${x}" dy="0">${esc(code)}</tspan>
+      <tspan class="sm-labn" x="${x}" dy="9">${esc(String(n))}</tspan>
+    </text>`;
+  }).join("");
+
+  // the generator's frame: the US with headroom for southern Canada
+  const vb = (g.view || [0, 0, g.width, g.height]).join(" ");
+  return `<svg class="sm-map" viewBox="${vb}"
+    preserveAspectRatio="xMidYMid meet" role="img"
+    aria-label="Severe weather by state and province across the United States and Canada">
+    <g class="sm-land">${shapes}</g>
+    <g class="sm-labels">${labels}</g>
+  </svg>`;
 }
 
 const TIER_WORD = { 0: "—", 1: "Watch", 2: "Likely", 3: "Severe" };
