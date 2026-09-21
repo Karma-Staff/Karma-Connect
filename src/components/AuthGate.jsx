@@ -194,8 +194,13 @@ export function AuthGate({ children }) {
       /* With the local sign-in bypass on, the server answers every request as
          the configured developer, so a login screen here would ask for a
          password nothing checks. Treat it as signed in. */
-      setAuthMode(ok || authAvailable.devAuth ? "remote" : "local");
-      if (ok) { await refreshUser(); if (active) setSession(currentUser()); }
+      const server = ok || authAvailable.devAuth;
+      setAuthMode(server ? "remote" : "local");
+      /* `server`, not `ok`. Under the bypass there is no database, so `ok` is
+         false — but /api/auth/me still answers with the configured developer,
+         and skipping this left the sign-in screen up asking for a password
+         that nothing local can check. */
+      if (server) { await refreshUser(); if (active) setSession(currentUser()); }
     });
     return () => { active = false; unsub(); };
   }, []);
