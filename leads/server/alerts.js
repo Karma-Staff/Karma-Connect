@@ -24,6 +24,7 @@ const express = require("express");
 const { query } = require("./db");
 const { requireUser } = require("./auth");
 const { STATE_NAME } = require("./leads");
+const hazards = require("./hazards");
 
 const router = express.Router();
 
@@ -175,14 +176,32 @@ async function leadCounts(states) {
 
 async function load() {
   if (cache.data && Date.now() - cache.at < TTL_MS) return cache.data;
-  const feed = await fetchAlerts();
-  const alerts = digest(feed);
+  /* The weather feed and the three hazard feeds are independent: a wildfire
+     list being down must not cost the tornado warnings. The NWS is the one
+     that is allowed to fail loudly, since without it there is no map. */
+  const [feed, haz] = await Promise.all([
+    fetchAlerts(),
+    hazards.all().catch((e) => {
+      console.warn("[karma] hazards:", e.message);
+      return { events: [], storms: [], down: ["all"] };
+    }),
+  ]);
+  /* One list, so the map, the digest and the sort do not need to know how
+     many places the news came from. */
+  const alerts = [...digest(feed), ...haz.events.map((e) => ({
+    id: "", severity: e.tier === 3 ? "Severe" : "Moderate", urgency: "",
+    expires: null, headline: "", ...e,
+  }))].sort((a, b) => b.tier - a.tier
+    || String(b.sent || "").localeCompare(String(a.sent || "")));
   const states = byState(alerts);
   const counts = await leadCounts(states.map((s) => s.state));
   const data = {
     fetchedAt: new Date().toISOString(),
     total: (feed.features || []).length,      // everything the NWS had
-    relevant: alerts.length,                  // what survived the filter
+    relevant: alerts.length,                  // what survived, all sources
+    hazards: haz.events.length,               // the non-weather share of it
+    storms: haz.storms,                       // named systems, no state
+    down: haz.down,                           // feeds that did not answer
     alerts: alerts.slice(0, 80),
     states: states
       .map((s) => ({ ...s, ...(counts[s.state] || { leads: 0, unassigned: 0 }),

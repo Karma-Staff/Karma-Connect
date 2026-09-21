@@ -3464,14 +3464,25 @@ function renderStorm(d) {
 
   el.innerHTML = `
     <div class="kpi-strip">
-      ${kpiTile("Live alerts", String(d.relevant),
-        `${d.total} from the NWS, ${d.total - d.relevant} not restoration work`)}
+      ${kpiTile("Live events", String(d.relevant),
+        `${d.hazards || 0} disasters and fires, the rest weather`)}
       ${kpiTile("States affected", String(hit.length), "right now")}
       ${kpiTile("Leads in range", reach.toLocaleString(),
         `${hit.reduce((a, s) => a + s.unassigned, 0).toLocaleString()} unassigned`)}
       ${kpiTile("Worst", hit.length ? TIER_WORD[Math.max(...hit.map((s) => s.tier))] : "Quiet",
         d.stale ? "feed stale — showing the last good read" : "updated " + esc(relTime(d.fetchedAt)))}
     </div>
+
+    ${(d.storms || []).length ? `<div class="act-card sm-tropical">
+      <h4>🌀 Active tropical systems</h4>
+      <div class="sm-storms">${d.storms.map((s) => `
+        <span class="sm-storm${/^HU|^MH/.test(s.kind) ? " hurricane" : ""}">
+          <b>${esc(s.kind)} ${esc(s.name)}</b>${s.intensityKt ? ` · ${s.intensityKt} kt` : ""}
+        </span>`).join("")}</div>
+      <p class="asg-foot">From the National Hurricane Center. Not placed on the map — a
+        system at sea has no landfall yet, and when it threatens one the weather service
+        issues hurricane and storm-surge warnings, which are already above.</p>
+    </div>` : ""}
 
     <div class="act-card">
       <h4>North America — click a state to work its leads
@@ -3503,6 +3514,7 @@ function renderStorm(d) {
             <span class="sm-tier t${a.tier}">${TIER_WORD[a.tier]}</span>
             <div class="task-main">
               <b>${esc(a.event)}</b>
+              <span class="sm-src s-${esc(String(a.source || "NWS").toLowerCase())}">${esc(a.source || "NWS")}</span>
               <span class="task-sub">${esc(a.area)}</span>
             </div>
             <span class="sm-states">${esc(a.states.join(" "))}</span>
@@ -3510,9 +3522,11 @@ function renderStorm(d) {
           </div>`).join("")}
       </div>` : `<p class="act-empty">Nothing severe anywhere in the US right now.
         That is good news and an unusual screenshot.</p>`}
-      <p class="asg-foot">Source: US National Weather Service, refreshed every five
-        minutes. Marine and beach advisories are filtered out — they are not
-        restoration work.</p>
+      <p class="asg-foot">Sources, refreshed every five minutes:
+        <b>NWS</b> severe-weather warnings (marine and beach advisories filtered out),
+        <b>FEMA</b> declared disasters, <b>NIFC</b> wildfires burning now
+        (prescribed burns excluded), <b>USGS</b> earthquakes from magnitude 4.
+        ${(d.down || []).length ? `<span class="sm-down">Not answering right now: ${esc(d.down.join(", "))}.</span>` : ""}</p>
     </div>`;
 
   $("sm-3d")?.addEventListener("click", () => {

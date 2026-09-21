@@ -338,6 +338,20 @@ body.zv-collapsed .zohovoice-container { display: none !important; }
 .sm-tier.t3 { border-color: #e0574a; color: #ffd9d4; background: rgba(224,87,74,.18); }
 .sm-states { font-size: 11px; color: var(--ink-3); letter-spacing: .04em; white-space: nowrap; }
 
+/* which feed a row came from — a declared disaster and a forecast warning
+   are different kinds of claim and should not look identical */
+.sm-src { font-size: 9.5px; font-weight: 700; letter-spacing: .05em;
+  color: var(--ink-3); border: 1px solid var(--border); border-radius: 3px;
+  padding: 0 4px; margin-left: 7px; vertical-align: 1px; }
+.sm-src.s-fema { color: #ffd9d4; border-color: #e0574a88; }
+.sm-src.s-nifc { color: #ffe2b3; border-color: #e8a33d88; }
+.sm-src.s-usgs { color: #cfe0f6; border-color: #4a86c888; }
+.sm-storms { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.sm-storm { font-size: 12.5px; color: var(--ink-2); background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: 20px; padding: 4px 11px; }
+.sm-storm.hurricane { color: #ffd9d4; border-color: #e0574a; background: rgba(224,87,74,.16); }
+.sm-down { color: #ffb4ab; }
+
 /* ---------- storm watch: the tilted view ----------
    An SVG cannot extrude, so a lit state is drawn as a stack of copies
    stepped downward (the wall) with the face on top, and the whole map is
