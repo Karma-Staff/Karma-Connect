@@ -102,6 +102,10 @@ function mount(app, opts = {}) {
   /* the prospect briefing. After leads.js so requireOwnLead has already run:
      a member cannot spend the research budget on somebody else's lead. */
   app.use(require("./research").router);
+  /* "Follow back" reminders, and the sweeper that emails them when due */
+  const followups = require("./followups");
+  app.use(followups.router);
+  followups.startSweeper();
 
   /* the trash bin, plus its 30-day sweep — mounted after leads so the leads
      router's requireUser has already run for /api/leads/:id paths */

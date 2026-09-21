@@ -291,6 +291,25 @@ body.zv-collapsed .zohovoice-container { display: none !important; }
 .rs-warn { color: var(--ink-3); font-size: 11.5px; line-height: 1.55;
   margin: 6px 0 0; font-style: italic; }
 
+/* ---------- follow back ---------- */
+.fu-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.fu-btn { white-space: nowrap; font-size: 12.5px; padding: 6px 11px; }
+.fu-state { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.fu-chip { font-size: 12px; color: var(--accent-ink); background: var(--accent-soft);
+  border: 1px solid var(--border); border-radius: 20px; padding: 3px 10px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px; }
+/* a reminder that has come and gone is the one you need to notice */
+.fu-chip.overdue { color: #ffb4ab; border-color: #ffb4ab55;
+  background: rgba(255,180,171,.10); }
+.fu-clear { background: none; border: 0; color: var(--ink-3); cursor: pointer;
+  font-size: 13px; padding: 2px 4px; line-height: 1; }
+.fu-clear:hover { color: var(--ink); }
+.fu-presets { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.fu-label { display: block; color: var(--ink-2); font-size: 12.5px; margin-bottom: 12px; }
+.fu-label input { display: block; width: 100%; margin-top: 5px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 5px; padding: 8px 10px; color: var(--ink); font-family: inherit; }
+
 /* the Research section's own bits (it reuses .task-row and the rs-* blocks) */
 .rc-how { color: var(--ink-2); font-size: 13px; line-height: 1.65; margin: 0; max-width: 78ch; }
 .rc-how b { color: var(--ink); }

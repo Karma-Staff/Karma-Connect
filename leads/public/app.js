@@ -952,6 +952,14 @@ function renderDetail(r) {
       ${dgItem("Source file", esc(r["Source File"]))}
     </div>
 
+    <!-- Follow back: the reminder you set as you hang up. Its own row so the
+         current state ("Follow back tomorrow 9am") has somewhere to live. -->
+    <div class="detail-section fu-row">
+      <button class="btn-ghost fu-btn" id="fu-btn"
+              title="Email me about this lead at a time I pick">⏰ Follow back</button>
+      <span id="fu-state" class="fu-state"></span>
+    </div>
+
     <!-- Prospect research. Above the notes because it is what a rep reads
          BEFORE the call, and the notes are what they write after. -->
     <div class="detail-section">
@@ -1008,6 +1016,8 @@ function renderDetail(r) {
     await patchLead(r.Id, { owner: e.target.value || null });
     r.Owner = e.target.value;
   });
+  $("fu-btn").addEventListener("click", () => openFollowupModal(r));
+  loadFollowup(r);
   $("research-go").addEventListener("click", () => runResearch(r));
   loadResearch(r);                       // free: shows whatever we already hold
   $("note-send").addEventListener("click", () => sendNote(r));
@@ -3275,6 +3285,136 @@ async function distribute(poolTotal) {
   }
 }
 
+/* ---------------- Follow back ----------------
+   A reminder on a lead: pick a date and time, get an email when it falls
+   due, and find the lead waiting at the top of My tasks.
+
+   The picker is a native datetime-local, and what is sent is an absolute
+   instant (toISOString), never the wall-clock string — "3pm" has to mean
+   3pm where the rep is, not 3pm on a server in Virginia. */
+
+/* Quick offsets, because almost every follow-up is one of these and nobody
+   wants to operate a calendar to say "tomorrow morning". */
+const FOLLOW_PRESETS = [
+  { label: "Tomorrow 9am", days: 1, hour: 9 },
+  { label: "In 3 days", days: 3, hour: 9 },
+  { label: "Next week", days: 7, hour: 9 },
+];
+
+function presetDate(p) {
+  const d = new Date();
+  d.setDate(d.getDate() + p.days);
+  d.setHours(p.hour, 0, 0, 0);
+  return d;
+}
+
+/* datetime-local wants local wall-clock with no zone, so the offset has to
+   come off before slicing — toISOString() alone would show a rep in Tulsa a
+   time five hours out. */
+function toLocalInput(d) {
+  const off = d.getTimezoneOffset() * 60000;
+  return new Date(d.getTime() - off).toISOString().slice(0, 16);
+}
+
+async function loadFollowup(r) {
+  const el = $("fu-state");
+  if (!el) return;
+  try {
+    const { followup } = await api(`/api/leads/${r.Id}/followup`);
+    renderFollowupState(r, followup);
+  } catch (e) { el.textContent = ""; }
+}
+
+function renderFollowupState(r, f) {
+  const el = $("fu-state");
+  const btn = $("fu-btn");
+  if (!el) return;
+  if (!f) {
+    el.innerHTML = "";
+    if (btn) btn.textContent = "⏰ Follow back";
+    return;
+  }
+  const when = new Date(f.due_at);
+  const overdue = when.getTime() < Date.now();
+  if (btn) btn.textContent = "⏰ Change";
+  el.innerHTML = `<span class="fu-chip${overdue ? " overdue" : ""}">
+      ${overdue ? "Was due" : "Follow back"} ${esc(fmtWhen(when))}
+      ${f.note ? `· ${esc(f.note)}` : ""}
+    </span>
+    <button type="button" class="fu-clear" id="fu-clear" title="Cancel this reminder">✕</button>`;
+  $("fu-clear")?.addEventListener("click", async () => {
+    try {
+      await api(`/api/leads/${r.Id}/followup`, { method: "DELETE" });
+      renderFollowupState(r, null);
+      toast("Reminder cancelled");
+    } catch (e) { toast("Could not cancel: " + e.message); }
+  });
+}
+
+function fmtWhen(d) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const day = new Date(d); day.setHours(0, 0, 0, 0);
+  const diff = Math.round((day - today) / 86400000);
+  const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  if (diff === 0) return "today " + time;
+  if (diff === 1) return "tomorrow " + time;
+  if (diff === -1) return "yesterday " + time;
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " + time;
+}
+
+function openFollowupModal(r) {
+  const name = displayName(r, r._t);
+  $("modal-title").textContent = "Follow back";
+  $("modal-body").innerHTML = `<form id="fu-form">
+    <p class="modal-note">An email lands in your inbox at the time you pick, with
+      ${esc(name)}'s number and your note. It also sits at the top of My tasks.</p>
+    <div class="fu-presets">
+      ${FOLLOW_PRESETS.map((p, i) =>
+        `<button type="button" class="btn-ghost fu-preset" data-pi="${i}">${esc(p.label)}</button>`).join("")}
+    </div>
+    <label class="fu-label">When
+      <input type="datetime-local" id="fu-when" value="${toLocalInput(presetDate(FOLLOW_PRESETS[0]))}" required>
+    </label>
+    <label class="fu-label">Note to yourself (optional)
+      <input id="fu-note" maxlength="500" placeholder="Ring back about the winter crew">
+    </label>
+    <div id="fu-err" class="login-error hidden"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" id="modal-cancel">Cancel</button>
+      <button type="submit" class="btn-primary" id="fu-save">Set reminder</button>
+    </div>
+  </form>`;
+  $("modal-backdrop").classList.remove("hidden");
+  $("modal-cancel").addEventListener("click", closeModal);
+  $("modal-body").querySelectorAll(".fu-preset").forEach((b) =>
+    b.addEventListener("click", () => {
+      $("fu-when").value = toLocalInput(presetDate(FOLLOW_PRESETS[+b.dataset.pi]));
+    }));
+
+  $("fu-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const err = $("fu-err"), save = $("fu-save");
+    const raw = $("fu-when").value;
+    if (!raw) return;
+    err.classList.add("hidden");
+    save.disabled = true;
+    try {
+      const { followup } = await api(`/api/leads/${r.Id}/followup`, {
+        method: "POST",
+        // an absolute instant, so the server never has to guess the zone
+        body: JSON.stringify({ due_at: new Date(raw).toISOString(), note: $("fu-note").value }),
+      });
+      closeModal();
+      renderFollowupState(r, followup);
+      toast("Reminder set for " + fmtWhen(new Date(followup.due_at)));
+    } catch (ex) {
+      err.textContent = ex.message;
+      err.classList.remove("hidden");
+      save.disabled = false;
+    }
+  });
+}
+
 /* ---------------- Research, the section ----------------
    The same briefings the reading pane shows, gathered in one place.
 
@@ -3678,6 +3818,7 @@ function renderTasks(d) {
   const done = d.done || {};
   const queue = d.queue || [];
   const starred = d.starred || [];
+  const fu = d.followups || [];
 
   el.innerHTML = `
     <div class="kpi-strip">
@@ -3689,6 +3830,25 @@ function renderTasks(d) {
         `${(done.statuses || 0).toLocaleString()} status changes`)}
       ${kpiTile("Qualified", (c.Qualified || 0).toLocaleString(), "all time, mine")}
     </div>
+
+    ${fu.length ? `<div class="act-card">
+      <h4>⏰ Follow back${fu.some((f) => new Date(f.due_at) <= new Date())
+        ? ` — ${fu.filter((f) => new Date(f.due_at) <= new Date()).length} due now` : ""}</h4>
+      <div class="task-list">${fu.map((f, i) => {
+        const overdue = new Date(f.due_at) <= new Date();
+        const title = f.company || f.name || f.lead_code || "(no name)";
+        return `<div class="task-row fu-task" data-fi="${i}">
+          <span class="avatar avatar-sm" style="background:${avColor(title)}">${esc(initials(title))}</span>
+          <div class="task-main">
+            <b>${esc(title)}</b>
+            <span class="task-sub">${esc(f.note || [f.city, f.state].filter(Boolean).join(", "))}</span>
+          </div>
+          <span class="fu-chip${overdue ? " overdue" : ""}">${esc(fmtWhen(new Date(f.due_at)))}</span>
+          <button type="button" class="btn-ghost fu-done" data-fd="${i}"
+                  title="Done — stop reminding me">✓</button>
+        </div>`;
+      }).join("")}</div>
+    </div>` : ""}
 
     <div class="act-card">
       <h4>Next up — oldest first${queue.length >= d.limit
@@ -3714,9 +3874,36 @@ function renderTasks(d) {
     setTab(row._t);                      // leaves this pane, shows the list
     select(row);
   };
+  el.querySelectorAll(".fu-task").forEach((row) => {
+    row.addEventListener("click", (e) => {
+      if (e.target.closest(".fu-done")) return;   // the tick is not "open it"
+      const f = fu[+row.dataset.fi];
+      if (!f) return;
+      const tab = KIND_TAB[f.kind] || "companies";
+      setTab(tab);
+      select({ Id: f.lead_id, _t: tab });
+    });
+  });
+  el.querySelectorAll(".fu-done").forEach((btn) =>
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const f = fu[+btn.dataset.fd];
+      if (!f) return;
+      btn.disabled = true;
+      try { await api(`/api/followups/${f.id}/done`, { method: "POST" }); loadTasks(); }
+      catch (ex) { toast("Could not mark it done: " + ex.message); btn.disabled = false; }
+    }));
+
   const cards = el.querySelectorAll(".act-card");
-  cards[0]?.querySelectorAll(".task-row").forEach((r) => r.addEventListener("click", open(queue)));
-  cards[1]?.querySelectorAll(".task-row").forEach((r) => r.addEventListener("click", open(starred)));
+  /* The follow-back card is optional, so address these by content rather
+     than by position — an index that shifts when a card appears is how the
+     starred list ends up opening queue rows. */
+  const cardFor = (heading) => [...cards].find((c) =>
+    (c.querySelector("h4")?.textContent || "").includes(heading));
+  cardFor("Next up")?.querySelectorAll(".task-row").forEach((r) =>
+    r.addEventListener("click", open(queue)));
+  cardFor("Starred")?.querySelectorAll(".task-row").forEach((r) =>
+    r.addEventListener("click", open(starred)));
 }
 
 async function loadStats() {

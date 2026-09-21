@@ -82,7 +82,22 @@ router.get("/api/tasks", requireUser, async (req, res, next) => {
     }
     counts.open = OPEN_STATUSES.reduce((a, s) => a + (counts[s] || 0), 0);
 
-    res.json({ queue, starred, counts, done, limit: LIMIT });
+    /* Follow-backs due or overdue. Above everything else on the screen,
+       because a reminder the rep asked for outranks a queue we ordered for
+       them — and because the email that fired this morning has scrolled
+       out of their inbox by now. */
+    const followups = (await query(
+      `SELECT f.id, f.lead_id, f.due_at, f.note, f.sent_at,
+              l.kind, l.lead_code, l.name, l.company, l.city, l.state, l.status, l.phone
+         FROM lead_followups f
+         JOIN leads l ON l.id = f.lead_id
+        WHERE f.owner = $1 AND f.done_at IS NULL AND f.cancelled_at IS NULL
+          AND l.deleted_at IS NULL AND NOT l.removed
+          AND f.due_at <= now() + interval '7 days'
+        ORDER BY f.due_at
+        LIMIT 25`, [email])).rows;
+
+    res.json({ queue, starred, followups, counts, done, limit: LIMIT });
   } catch (e) { next(e); }
 });
 

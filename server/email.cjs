@@ -147,6 +147,27 @@ async function sendApprovalDecisionEmail(memberEmail, { memberName, leadLabel, d
 //
 // Unlike send(), this overrides `from` — the gateway allowlists senders per token, so each
 // recruiter address has to be permitted there or the gateway answers 403.
+/* A "follow back" reminder falling due (leads/server/followups.js).
+   Everything a rep needs to act without opening anything: who, where, their
+   number as a tel: link, and whatever note they left themselves. */
+async function sendFollowupEmail(to, lead, note, link, idempotencyKey) {
+  const who = lead.company || lead.name || lead.lead_code || "this lead";
+  const where = [lead.city, lead.state].filter(Boolean).join(", ");
+  const html = `<div style="font-family:Inter,Segoe UI,Arial,sans-serif;max-width:480px;margin:0 auto;color:#0b2545">
+    <h2 style="color:#0b2545">Time to follow back</h2>
+    <p>You asked to be reminded about this one.</p>
+    <p style="font-size:16px;font-weight:700;margin:18px 0 0">${escapeHtml(who)}</p>
+    ${where ? `<p style="color:#667;margin-top:2px">${escapeHtml(where)}</p>` : ""}
+    ${lead.phone ? `<p style="margin:4px 0 0"><a href="tel:${escapeHtml(lead.phone)}" style="color:#0b2545">${escapeHtml(lead.phone)}</a></p>` : ""}
+    ${note ? `<p style="background:#f4f6fb;border-left:3px solid #E7B74B;padding:10px 14px;margin:18px 0">${escapeHtml(note)}</p>` : ""}
+    ${link
+      ? `<p style="margin:24px 0"><a href="${link}" style="background:#E7B74B;color:#071226;text-decoration:none;font-weight:700;padding:12px 22px;border-radius:10px;display:inline-block">Open the lead</a></p>`
+      : `<p style="font-size:12px;color:#667">Open Karma Leads and search for ${escapeHtml(who)}.</p>`}
+    <p style="font-size:12px;color:#667">Set from Karma Leads. Marking it done on the lead stops any further reminder.</p>
+  </div>`;
+  await send(to, "Follow back: " + who, html, { idempotencyKey });
+}
+
 async function sendOutreachEmail({ fromName, fromEmail, to, subject, text }) {
   if (!emailVerifyOn) throw new Error("Email sending is not configured (GATEWAY_URL / GATEWAY_TOKEN missing).");
   if (!fromEmail || !to || !subject) throw new Error("Outreach email needs fromEmail, to and subject.");
@@ -174,4 +195,4 @@ async function sendOutreachEmail({ fromName, fromEmail, to, subject, text }) {
   throw new Error("Email gateway " + r.status + ": " + t);
 }
 
-module.exports = { emailVerifyOn, VERIFY_TTL_HOURS, RESET_TTL_HOURS, escapeHtml, sendVerificationEmail, sendResetEmail, sendApprovalRequestEmail, sendApprovalDecisionEmail, sendOutreachEmail };
+module.exports = { emailVerifyOn, VERIFY_TTL_HOURS, RESET_TTL_HOURS, escapeHtml, sendVerificationEmail, sendResetEmail, sendApprovalRequestEmail, sendApprovalDecisionEmail, sendOutreachEmail, sendFollowupEmail };
