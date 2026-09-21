@@ -2812,6 +2812,57 @@ window.addEventListener("unhandledrejection", (e) => {
   if (from.includes("zohostatic.com")) e.preventDefault();
 });
 
+/* The Zoho softphone is a 300x520 panel the SDK pins to the bottom-right at
+   z-index 99999999 — directly over the reading pane, where it covers the
+   lead's own controls. It is not ours to reposition (their markup, their
+   classes, and both move between SDK versions), but we can decide whether
+   it is on screen.
+
+   So: collapsed by default, behind a phone button of our own, and opened
+   automatically the moment a call starts. A dialler is needed for the
+   seconds around a call and in the way for the rest of the day. */
+function softphoneToggle(show) {
+  const on = show === undefined
+    ? document.body.classList.contains("zv-collapsed")
+    : show;
+  document.body.classList.toggle("zv-collapsed", !on);
+  const btn = $("zv-toggle");
+  if (btn) {
+    btn.setAttribute("aria-pressed", on ? "true" : "false");
+    btn.title = on ? "Hide the dialler" : "Show the dialler";
+  }
+  try { localStorage.setItem("kl_zv_open", on ? "1" : ""); } catch (e) { /* fine */ }
+}
+
+/* Added once the SDK has actually put its panel on the page — a button that
+   reveals nothing would be worse than no button. */
+function mountSoftphoneToggle() {
+  if ($("zv-toggle")) return;
+  const btn = document.createElement("button");
+  btn.id = "zv-toggle";
+  btn.className = "zv-toggle";
+  btn.type = "button";
+  btn.innerHTML = "☎";
+  btn.addEventListener("click", () => softphoneToggle());
+  document.body.appendChild(btn);
+  let open = false;
+  try { open = !!localStorage.getItem("kl_zv_open"); } catch (e) { /* default closed */ }
+  softphoneToggle(open);
+}
+
+/* The panel arrives whenever the SDK finishes; watch for it rather than
+   guessing a delay. Gives up after 30s so this is not a permanent observer. */
+function watchForSoftphone() {
+  if (document.querySelector(".zohovoice-container")) return mountSoftphoneToggle();
+  const obs = new MutationObserver(() => {
+    if (!document.querySelector(".zohovoice-container")) return;
+    obs.disconnect();
+    mountSoftphoneToggle();
+  });
+  obs.observe(document.body, { childList: true, subtree: true });
+  setTimeout(() => obs.disconnect(), 30000);
+}
+
 async function voiceInit() {
   watchVoiceBlocks();
   try {
@@ -2821,6 +2872,7 @@ async function voiceInit() {
     if (cfg.countryCode !== undefined) VOICE.countryCode = cfg.countryCode;
   } catch (e) { VOICE.mode = "tel"; }     // config unreachable = stay on tel:
   if (VOICE.mode !== "sdk") return;       // tel and web need nothing loaded
+  watchForSoftphone();
   loadVoiceSdk().catch((e) =>
     console.warn("[karma] click-to-call unavailable:", e.message));
 }
@@ -3009,7 +3061,8 @@ function dialInPage(number, name, leadId) {
         reportCall(null, "cancelled");
         VOICE.call = { leadId: leadId || null, number: digits,
           connected: false, seconds: 0, reported: false };
-        VOICE.sdk.makeCall({ number: digits, name: name || undefined });
+        softphoneToggle(true);            // you are about to need it
+      VOICE.sdk.makeCall({ number: digits, name: name || undefined });
         toast("Calling " + (name || number) + "…");
         return true;
       } catch (e) {

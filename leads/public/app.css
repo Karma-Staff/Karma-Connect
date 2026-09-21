@@ -213,6 +213,27 @@ a:hover { text-decoration: underline; }
 .asg-foot { color: var(--ink-3); font-size: 12.5px; margin-top: 14px; }
 
 
+/* ---------- the Zoho softphone, and getting it out of the way ----------
+   Their panel is fixed bottom-right at z-index 99999999, which is on top of
+   the reading pane. Hidden by default behind the button below; shown while a
+   call is happening. display:none rather than moving it — their markup and
+   class names change between SDK versions, and audio does not depend on the
+   panel being painted. */
+body.zv-collapsed .zohovoice-container { display: none !important; }
+
+.zv-toggle {
+  position: fixed; right: 18px; bottom: 18px; z-index: 100000000;
+  width: 46px; height: 46px; border-radius: 50%; cursor: pointer;
+  font-size: 19px; line-height: 1; display: flex;
+  align-items: center; justify-content: center;
+  background: var(--surface-2); color: var(--ink-2);
+  border: 1px solid var(--border); box-shadow: var(--shadow);
+}
+.zv-toggle:hover { color: var(--ink); border-color: var(--accent); }
+/* open: the panel is up, and this is now the way to put it away */
+.zv-toggle[aria-pressed="true"] { background: var(--accent-soft);
+  color: var(--accent-ink); border-color: var(--accent); }
+
 /* ---------- prospect research (reading pane) ---------- */
 .rs-head { display: flex; align-items: center; justify-content: space-between;
   gap: 12px; margin-bottom: 10px; }
