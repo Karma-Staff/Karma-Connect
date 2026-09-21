@@ -3499,7 +3499,13 @@ function renderStorm(d) {
     </div>
 
     <div class="act-card">
-      <h4>North America — click a state to work its leads</h4>
+      <h4>North America — click a state to work its leads
+        <button type="button" class="btn-ghost sm-3d" id="sm-3d"
+          aria-pressed="${storm3d() ? "true" : "false"}"
+          title="Tilt the map. Height shows severity, not lead count — see the note below.">
+          ${storm3d() ? "Flatten" : "3D"}</button>
+      </h4>
+      <div class="sm-scene${storm3d() ? " on" : ""}">
       <div class="sm-grid">
         ${cells.map((c) => {
           const s = byState.get(c.code);
@@ -3517,12 +3523,15 @@ function renderStorm(d) {
           </button>`;
         }).join("")}
       </div>
+      </div>
       <div class="sm-key">
         <span><i class="sm-sw t3"></i>Destroying property now</span>
         <span><i class="sm-sw t2"></i>Damage likely</span>
         <span><i class="sm-sw t1"></i>Worth watching</span>
         <span><i class="sm-sw t0"></i>Nothing active</span>
-        <span class="sm-note">The number is leads on file there. Canada is unlit — US feed only.</span>
+        <span class="sm-note">${storm3d()
+          ? "Height is severity, not lead count — the number on each tile is the leads."
+          : "The number is leads on file there."} Canada is unlit — US feed only.</span>
       </div>
     </div>
 
@@ -3546,6 +3555,10 @@ function renderStorm(d) {
         restoration work.</p>
     </div>`;
 
+  $("sm-3d")?.addEventListener("click", () => {
+    try { localStorage.setItem("kl_storm_3d", storm3d() ? "" : "1"); } catch (e) { /* fine */ }
+    renderStorm(STORM.data);
+  });
   el.querySelectorAll(".sm-cell:not([disabled])").forEach((b) =>
     b.addEventListener("click", () => openStateLeads(b.dataset.state)));
   el.querySelectorAll(".sm-alert").forEach((row) =>
@@ -3556,6 +3569,12 @@ function renderStorm(d) {
 }
 
 const TIER_WORD = { 0: "—", 1: "Watch", 2: "Likely", 3: "Severe" };
+
+/* Flat by default. A tilted map is better at "where is it bad" and worse at
+   reading any single tile, so the choice is the reader's and it sticks. */
+function storm3d() {
+  try { return !!localStorage.getItem("kl_storm_3d"); } catch (e) { return false; }
+}
 
 function shortWhen(iso) {
   const d = new Date(iso);
