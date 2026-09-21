@@ -29,6 +29,7 @@ const { query } = require("./db");
 const { requireUser } = require("./auth");
 const activity = require("./activity");
 const { handleClaude } = require("../../api/_proxy.cjs");
+const linkedin = require("./linkedin");
 const { SYSTEM, buildPrompt, parseBrief, normalise, isEmpty, MAX_SEARCHES, str } = require("./brief");
 
 const router = express.Router();
@@ -87,13 +88,23 @@ router.post("/api/leads/:id/research", requireUser, express.json({ limit: "4kb" 
       if (!str(lead.company) && !str(lead.name) && !str(lead.website))
         return res.status(400).json({ error: "Not enough to research — this lead has no name or website." });
 
-      const { prompt } = buildPrompt(lead);
+      /* Scrape first, then summarise. The model never sees the open web in
+         this path — it is handed LinkedIn's own words about the company and
+         asked to turn them into a briefing, which is a far shorter leash
+         than "go and find out about these people".
+
+         A scrape that finds nothing is not an error. Rather than hand back
+         an empty panel we fall through to the search path, which is what
+         the feature did before and still beats nothing. */
+      const scraped = await linkedin.scrape(lead);
+      const { prompt } = buildPrompt(lead, scraped.facts);
       const body = JSON.stringify({
         model: MODEL,
         max_tokens: MAX_TOKENS,
         system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }],
         messages: [{ role: "user", content: prompt }],
-        tools: [{ type: "web_search_20250305", name: "web_search", max_uses: MAX_SEARCHES }],
+        // no search budget when we already have the material
+        ...(scraped.facts ? {} : { tools: [{ type: "web_search_20250305", name: "web_search", max_uses: MAX_SEARCHES }] }),
       });
 
       /* Straight to the shared proxy rather than an HTTP hop to ourselves:
@@ -125,6 +136,7 @@ router.post("/api/leads/:id/research", requireUser, express.json({ limit: "4kb" 
       await query(
         `UPDATE lead_research SET superseded_at = now()
           WHERE lead_id = $1 AND superseded_at IS NULL`, [id]);
+      brief.source = scraped.facts ? "linkedin" : "web";
       const saved = (await query(
         `INSERT INTO lead_research (lead_id, brief, model, actor)
          VALUES ($1, $2, $3, $4) RETURNING created_at`,
@@ -132,9 +144,12 @@ router.post("/api/leads/:id/research", requireUser, express.json({ limit: "4kb" 
 
       activity.log({ actor: req.user.email, user_id: req.user.id, action: "enrich",
         lead_id: lead.id, lead_code: lead.lead_code, lead_name: lead.name,
-        to_value: "researched", meta: { research: true, confidence: brief.confidence } });
+        to_value: "researched",
+        meta: { research: true, confidence: brief.confidence, source: brief.source } });
 
-      res.json({ brief, meta: { model: MODEL, actor: req.user.email, at: saved.created_at },
+      res.json({ brief,
+        meta: { model: MODEL, actor: req.user.email, at: saved.created_at,
+          source: brief.source, scrapeActor: scraped.actor || null },
         cap: DAILY_CAP, used: used + 1 });
     } catch (e) { next(e); }
   });

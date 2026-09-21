@@ -25,7 +25,7 @@ const L = (k, v) => (v && String(v).trim() ? k + ": " + String(v).trim() + "\n" 
 /* The briefing shape. Named fields rather than free prose because the
    reading pane renders each section differently and can drop the empty
    ones — prose would have to be shown whole or not at all. */
-function buildPrompt(lead) {
+function buildPrompt(lead, facts) {
   const person = lead.kind === "person";
   const who = person ? lead.name : lead.contact;
 
@@ -40,10 +40,24 @@ function buildPrompt(lead) {
   s += L("Industry", lead.industry || lead.category);
   if (lead.kind === "job") s += L("They are currently hiring for", lead.name);
 
+  /* Two modes, one prompt. With scraped facts the model is a summariser
+     working from supplied material and must not reach for anything else —
+     that is the whole point of scraping rather than searching. Without
+     them it searches, as before. */
   s += `
 The caller sells staffing to restoration, construction and trades businesses.
+`;
+  s += facts ? `
+SCRAPED FROM LINKEDIN — this is your only source. Work from it and nothing else.
+Do not search. Do not add facts from memory. Anything not supported by the material below must come back empty.
 
+--- begin scraped material ---
+${facts}
+--- end scraped material ---
+` : `
 Use up to ${MAX_SEARCHES} web searches. Prefer the company's own site, then recent news, then reputable directories.
+`;
+  s += `
 
 Return ONLY this JSON:
 {

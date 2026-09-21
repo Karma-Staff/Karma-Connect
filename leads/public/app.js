@@ -3399,11 +3399,14 @@ function renderResearch(r, d) {
     </div>` : ""}
 
     <p class="rs-foot">
-      ${d.meta ? `Researched ${esc(relTime(d.meta.at))} by ${esc(d.meta.actor)}` : ""}
+      ${d.meta ? `${b.source === "linkedin" ? "From LinkedIn" : "From a web search"}
+        · researched ${esc(relTime(d.meta.at))} by ${esc(d.meta.actor)}` : ""}
       <span class="rs-used">${d.used} of ${d.cap} used today</span>
     </p>
-    <p class="rs-warn">Written from a web search. Check anything you plan to
-      say out loud — a wrong detail is worse than none.</p>`;
+    <p class="rs-warn">${b.source === "linkedin"
+      ? "Summarised from LinkedIn's own page for them."
+      : "Written from a web search."} Check anything you plan to say out loud —
+      a wrong detail is worse than none.</p>`;
 }
 
 /* ---------------- Call report (admin) ----------------
