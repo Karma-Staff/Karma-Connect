@@ -291,6 +291,17 @@ body.zv-collapsed .zohovoice-container { display: none !important; }
 .rs-warn { color: var(--ink-3); font-size: 11.5px; line-height: 1.55;
   margin: 6px 0 0; font-style: italic; }
 
+/* the Research section's own bits (it reuses .task-row and the rs-* blocks) */
+.rc-how { color: var(--ink-2); font-size: 13px; line-height: 1.65; margin: 0; max-width: 78ch; }
+.rc-how b { color: var(--ink); }
+.rc-meter { margin: 10px 0 0; }
+.rc-row { cursor: pointer; }
+/* a briefing that found a real opener is the one worth opening first */
+.rc-hook { font-size: 10.5px; letter-spacing: .03em; text-transform: uppercase;
+  color: var(--good); border: 1px solid color-mix(in srgb, var(--good) 40%, transparent);
+  border-radius: 20px; padding: 2px 8px; white-space: nowrap; }
+.rc-row .rs-conf { margin-bottom: 0; }
+
 /* ---------- KPI strip (call report + my tasks) ----------
    Four numbers across the top of a pane. Not the .stat tiles above the app:
    those are armable filters over the whole base, these are read-only figures

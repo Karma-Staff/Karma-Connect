@@ -13,7 +13,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@400;500;600;700&display=swap">
 <!-- bump ?v= whenever app.js/app.css change so no one gets a half-old app -->
-<link rel="stylesheet" href="app.css?v=46">
+<link rel="stylesheet" href="app.css?v=48">
 </head>
 <body>
 
@@ -166,6 +166,13 @@
         <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 4.3 2.42 4.9 5.41.79-3.92 3.81.93 5.39L12 16.65 7.16 19.19l.93-5.39-3.92-3.81 5.41-.79L12 4.3Z"/></svg>
         Favorites <span class="nav-count" id="count-favorites"></span></button>
 
+      <!-- Prospect research. It also lives inside each lead, which is where
+           you use it — but a panel below the fold of a reading pane is not
+           findable, and people looked for it here. -->
+      <button class="nav-item" data-tab="research">
+        <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6M8.5 11h5M11 8.5v5"/></svg>
+        Research <span class="nav-count" id="count-research"></span></button>
+
       <div class="nav-section admin-only hidden">Manage</div>
       <!-- the manager's view of who is carrying what, and where the unclaimed
            work is. Assigning from here goes through the same /api/bulk/assign
@@ -313,6 +320,21 @@
       <div id="assign-body" class="stats-body"></div>
     </section>
 
+    <!-- Prospect research: the briefings already bought, and the way in to
+         buying one. Full width like the other non-list panes. -->
+    <section class="stats-pane hidden" id="research-pane">
+      <div class="stats-head">
+        <div class="list-title-wrap">
+          <div class="seg-eyebrow">Before the call</div>
+          <h2>Prospect research</h2>
+        </div>
+        <div class="list-filters">
+          <button id="research-refresh" class="btn-ghost" title="Reload">Refresh</button>
+        </div>
+      </div>
+      <div id="research-center" class="stats-body"></div>
+    </section>
+
     <!-- My tasks: a queue, not a list of leads, so it takes the full width
          like the other non-list panes. Filled by renderTasks(). -->
     <section class="stats-pane hidden" id="tasks-pane">
@@ -396,6 +418,6 @@
   </div>
 </div>
 
-<script src="app.js?v=63"></script>
+<script src="app.js?v=65"></script>
 </body>
 </html>

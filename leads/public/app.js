@@ -49,6 +49,8 @@ const TABS = {
   // everyone's own queue — not a filter over the base, so it is a pane of its
   // own like the ones above, and it is where a member lands
   tasks:     { title: "My tasks", tasks: true },
+  // the briefings, gathered — the working copy lives inside each lead
+  research:  { title: "Prospect research", research: true },
   // not in the sidebar: entered by clicking a segment tag in the reading pane
   segment:   { title: "Segment", kind: "company", pv: "Company",
                dateField: "Date Added", segment: true },
@@ -258,6 +260,7 @@ const PANES = {
   assign: "assign-pane",
   calls:  "calls-pane",
   tasks:  "tasks-pane",
+  research: "research-pane",
 };
 const paneOf = (tab) => Object.keys(PANES).find((k) => TABS[tab]?.[k]) || null;
 
@@ -464,6 +467,7 @@ async function loadList(resetPage = false) {
   if (cfg.assign) return loadAssignments();
   if (cfg.calls) return loadCallReport();
   if (cfg.tasks) return loadTasks();
+  if (cfg.research) return loadResearchCenter();
   // the armed tile is named in the header too: a list that is short because a
   // KPI tile is filtering it should never look like a list that is just short
   $("list-title").textContent =
@@ -3271,6 +3275,76 @@ async function distribute(poolTotal) {
   }
 }
 
+/* ---------------- Research, the section ----------------
+   The same briefings the reading pane shows, gathered in one place.
+
+   The panel inside a lead is where research is USED — beside the phone
+   number, above the notes you write after the call. But a panel below the
+   fold of a reading pane is not a place anyone finds, and this was looked
+   for in the sidebar three times before it was put there. Both exist: this
+   is the way in and the record, that is the working surface. */
+
+async function loadResearchCenter() {
+  const el = $("research-center");
+  if (!el) return;
+  el.innerHTML = `<p class="act-empty">Loading briefings…</p>`;
+  try {
+    renderResearchCenter(await api("/api/research/recent"));
+  } catch (e) {
+    el.innerHTML = `<p class="act-empty">Could not load briefings (${esc(e.message)})</p>`;
+  }
+}
+
+function renderResearchCenter(d) {
+  const el = $("research-center");
+  const rows = d.list || [];
+  const badge = $("count-research");
+  if (badge) badge.textContent = rows.length ? String(rows.length) : "";
+
+  el.innerHTML = `
+    <div class="act-card">
+      <h4>How this works</h4>
+      <p class="rc-how">Open any lead and press <b>Research this prospect</b> in its
+        reading pane. It scrapes LinkedIn for what they do, anything recent worth
+        congratulating them on, and what not to raise — about half a minute. The
+        briefing is kept, so it costs nothing to read again.</p>
+      <p class="rc-meter"><span class="rs-used">${d.used} of ${d.cap} used today</span></p>
+    </div>
+
+    <div class="act-card">
+      <h4>Researched${rows.length ? ` — ${rows.length} lead${rows.length === 1 ? "" : "s"}` : ""}</h4>
+      ${rows.length ? `<div class="task-list">${rows.map((r, i) => {
+        const b = r.brief || {};
+        const title = r.company || r.name || r.lead_code || "(no name)";
+        const where = [r.city, r.state].filter(Boolean).join(", ");
+        return `<div class="task-row rc-row" data-ri="${i}">
+          <span class="avatar avatar-sm" style="background:${avColor(title)}">${esc(initials(title))}</span>
+          <div class="task-main">
+            <b>${esc(title)}</b>
+            <span class="task-sub">${esc(b.headline || where || "")}</span>
+          </div>
+          ${b.congratulations && b.congratulations.length
+            ? `<span class="rc-hook" title="${esc(b.congratulations[0])}">★ opener</span>` : ""}
+          ${b.confidence ? `<span class="rs-conf rs-conf-${esc(b.confidence)}">${esc(b.confidence)}</span>` : ""}
+          <span class="task-when">${esc(relTime(r.created_at))}</span>
+        </div>`;
+      }).join("")}</div>`
+      : `<p class="act-empty">Nothing researched yet. Open a lead and press
+           <b>Research this prospect</b> — it will appear here.</p>`}
+    </div>`;
+
+  /* Clicking a row goes to the lead itself, which is where the full briefing
+     and everything you would do next already live. */
+  el.querySelectorAll(".rc-row").forEach((row) =>
+    row.addEventListener("click", () => {
+      const r = rows[+row.dataset.ri];
+      if (!r) return;
+      const tab = KIND_TAB[r.kind] || "companies";
+      setTab(tab);
+      select({ Id: r.lead_id, _t: tab });
+    }));
+}
+
 /* ---------------- Prospect research ----------------
    The briefing a rep reads before they dial: what this outfit does, what
    they have just done that is worth congratulating, what to open with, and
@@ -4274,6 +4348,7 @@ function wire() {
   on("act-refresh", "click", loadStats);
   on("assign-refresh", "click", loadAssignments);
   on("tasks-refresh", "click", loadTasks);
+  on("research-refresh", "click", loadResearchCenter);
   on("calls-refresh", "click", () => loadCallReport());
   on("calls-live", "click", toggleCallPolling);
   on("calls-minutes", "change", () => loadCallReport());

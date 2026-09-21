@@ -26,7 +26,7 @@
 
 const express = require("express");
 const { query } = require("./db");
-const { requireUser } = require("./auth");
+const { requireUser, rankOf, RANK } = require("./auth");
 const activity = require("./activity");
 const { handleClaude } = require("../../api/_proxy.cjs");
 const linkedin = require("./linkedin");
@@ -56,6 +56,26 @@ router.get("/api/leads/:id/research", requireUser, async (req, res, next) => {
     res.json({ brief: row ? row.brief : null, meta: row
       ? { model: row.model, actor: row.actor, at: row.created_at } : null,
       cap: DAILY_CAP, used: await usedToday(req.user.email) });
+  } catch (e) { next(e); }
+});
+
+/* GET /api/research/recent — everything researched lately, for the sidebar's
+   Research section. Owner-scoped exactly like every other list: a member
+   sees briefings for leads assigned to them and nobody else's. */
+router.get("/api/research/recent", requireUser, async (req, res, next) => {
+  try {
+    const seesAll = rankOf(req.user.role) >= RANK.admin;
+    const args = seesAll ? [] : [String(req.user.email || "").trim()];
+    const scope = seesAll ? "" : " AND btrim(l.owner) = $1";
+    const rows = (await query(
+      `SELECT r.lead_id, r.brief, r.actor, r.created_at,
+              l.kind, l.lead_code, l.name, l.company, l.city, l.state, l.status
+         FROM lead_research r
+         JOIN leads l ON l.id = r.lead_id
+        WHERE r.superseded_at IS NULL AND l.deleted_at IS NULL AND NOT l.removed${scope}
+        ORDER BY r.created_at DESC
+        LIMIT 50`, args)).rows;
+    res.json({ list: rows, cap: DAILY_CAP, used: await usedToday(req.user.email) });
   } catch (e) { next(e); }
 });
 
