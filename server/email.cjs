@@ -168,6 +168,36 @@ async function sendFollowupEmail(to, lead, note, link, idempotencyKey) {
   await send(to, "Follow back: " + who, html, { idempotencyKey });
 }
 
+/* The 7am storm digest (leads/server/digest.js). Written to be read on a
+   phone before the first coffee: the number that matters, then where, then
+   a way in. Only sent on a morning when something actually happened. */
+async function sendStormDigestEmail(to, d, idempotencyKey) {
+  const hi = d.name ? "Morning " + escapeHtml(d.name) + "," : "Morning,";
+  const row = (s) => `<tr>
+    <td style="padding:7px 10px;border-bottom:1px solid #e6e9f0"><b>${escapeHtml(s.name)}</b><br>
+      <span style="color:#667;font-size:12px">${escapeHtml(s.events.slice(0, 2).join(", "))}</span></td>
+    <td style="padding:7px 10px;border-bottom:1px solid #e6e9f0;text-align:right;white-space:nowrap">
+      <b>${s.leads.toLocaleString()}</b><br>
+      <span style="color:#667;font-size:12px">${s.unassigned.toLocaleString()} unassigned</span></td>
+  </tr>`;
+  const html = `<div style="font-family:Inter,Segoe UI,Arial,sans-serif;max-width:520px;margin:0 auto;color:#0b2545">
+    <h2 style="color:#0b2545;margin-bottom:4px">Storm watch</h2>
+    <p style="color:#667;margin-top:0">${d.totalStates} state${d.totalStates === 1 ? "" : "s"} under a severe-weather alert this morning.</p>
+    <p>${hi}</p>
+    <p>You have <b>${d.leads.toLocaleString()} leads</b> in the affected states,
+       <b>${d.unassigned.toLocaleString()}</b> of them unassigned.</p>
+    <table style="width:100%;border-collapse:collapse;margin:18px 0;font-size:14px">
+      <tr><th style="text-align:left;padding:0 10px 6px;color:#667;font-size:11px;letter-spacing:.06em;text-transform:uppercase">Where</th>
+          <th style="text-align:right;padding:0 10px 6px;color:#667;font-size:11px;letter-spacing:.06em;text-transform:uppercase">Leads</th></tr>
+      ${d.states.map(row).join("")}
+    </table>
+    ${d.link ? `<p style="margin:24px 0"><a href="${d.link}" style="background:#E7B74B;color:#071226;text-decoration:none;font-weight:700;padding:12px 22px;border-radius:10px;display:inline-block">Open Storm watch</a></p>` : ""}
+    <p style="font-size:12px;color:#667">Restoration firms in these areas are about to be short-handed.
+      Source: US National Weather Service. Marine and beach advisories are filtered out.</p>
+  </div>`;
+  await send(to, `Storm watch: ${d.totalStates} state${d.totalStates === 1 ? "" : "s"} hit`, html, { idempotencyKey });
+}
+
 async function sendOutreachEmail({ fromName, fromEmail, to, subject, text }) {
   if (!emailVerifyOn) throw new Error("Email sending is not configured (GATEWAY_URL / GATEWAY_TOKEN missing).");
   if (!fromEmail || !to || !subject) throw new Error("Outreach email needs fromEmail, to and subject.");
@@ -195,4 +225,4 @@ async function sendOutreachEmail({ fromName, fromEmail, to, subject, text }) {
   throw new Error("Email gateway " + r.status + ": " + t);
 }
 
-module.exports = { emailVerifyOn, VERIFY_TTL_HOURS, RESET_TTL_HOURS, escapeHtml, sendVerificationEmail, sendResetEmail, sendApprovalRequestEmail, sendApprovalDecisionEmail, sendOutreachEmail, sendFollowupEmail };
+module.exports = { emailVerifyOn, VERIFY_TTL_HOURS, RESET_TTL_HOURS, escapeHtml, sendVerificationEmail, sendResetEmail, sendApprovalRequestEmail, sendApprovalDecisionEmail, sendOutreachEmail, sendFollowupEmail, sendStormDigestEmail };

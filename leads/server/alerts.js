@@ -205,4 +205,4 @@ router.get("/api/alerts", requireUser, async (req, res, next) => {
   }
 });
 
-module.exports = { router, digest, byState, tierOf, statesOf, RELEVANT };
+module.exports = { router, load, digest, byState, tierOf, statesOf, RELEVANT };

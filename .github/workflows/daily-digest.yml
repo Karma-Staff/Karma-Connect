@@ -1,0 +1,53 @@
+name: Daily storm digest
+
+# Knocks on the app so the 7am digest goes out, and so any follow-back
+# reminders that fell due overnight get flushed.
+#
+# WHY THIS EXISTS AT ALL: the Render service is on the free plan, which stops
+# the process after about fifteen minutes without a request. At 7am nobody
+# has touched the site since the night before, so a setInterval inside the
+# app is not running and fires nothing. Something outside has to knock.
+# GitHub Actions is free and already has the repo.
+#
+# TWO TIMES, ONE EMAIL: cron here is UTC and has no idea about daylight
+# saving, so 11:00 UTC is 7am Eastern in summer and 6am in winter. Both are
+# fired; the server checks the real local hour in DIGEST_TZ and only sends
+# at 7, and job_runs (migration 009) means the other one is a no-op even if
+# both were to qualify.
+#
+# SETUP — two repository secrets (Settings -> Secrets and variables -> Actions):
+#   APP_URL     https://karma-connect-9s2z.onrender.com
+#   CRON_TOKEN  the same value as CRON_TOKEN on the Render service
+on:
+  schedule:
+    - cron: "0 11 * * *"   # 7am Eastern while daylight saving is in effect
+    - cron: "0 12 * * *"   # 7am Eastern the rest of the year
+  workflow_dispatch:        # and a button, for testing it now
+
+jobs:
+  knock:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger the digest
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_TOKEN: ${{ secrets.CRON_TOKEN }}
+        run: |
+          if [ -z "$APP_URL" ] || [ -z "$CRON_TOKEN" ]; then
+            echo "APP_URL and CRON_TOKEN must be set as repository secrets."
+            exit 1
+          fi
+          # A sleeping free instance takes ~50s to wake, so the first call can
+          # time out through no fault of the app. Give it three goes.
+          for i in 1 2 3; do
+            code=$(curl -s -o body.txt -w '%{http_code}' --max-time 120 \
+              -X POST "$APP_URL/api/cron/daily" \
+              -H 'Content-Type: application/json' \
+              -H "x-cron-token: $CRON_TOKEN" -d '{}') && [ "$code" = "200" ] && break
+            echo "attempt $i: HTTP ${code:-timeout} — the instance may be waking; retrying"
+            sleep 30
+          done
+          echo "HTTP $code"
+          cat body.txt
+          # A non-200 is a real failure and should show up red in the Actions tab
+          [ "$code" = "200" ]

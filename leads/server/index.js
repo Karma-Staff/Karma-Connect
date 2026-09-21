@@ -104,6 +104,9 @@ function mount(app, opts = {}) {
   app.use(require("./research").router);
   /* live severe-weather alerts, scored for restoration and joined to leads */
   app.use(require("./alerts").router);
+  /* the 7am digest, and the external knock that fires it — see digest.js on
+     why this cannot be a timer on the free plan */
+  app.use(require("./digest").router);
   /* "Follow back" reminders, and the sweeper that emails them when due */
   const followups = require("./followups");
   app.use(followups.router);
