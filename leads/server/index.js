@@ -99,6 +99,9 @@ function mount(app, opts = {}) {
   app.use(require("./calls").router);
   /* one rep's own working queue — always the caller's own, never the team's */
   app.use(require("./tasks").router);
+  /* the prospect briefing. After leads.js so requireOwnLead has already run:
+     a member cannot spend the research budget on somebody else's lead. */
+  app.use(require("./research").router);
 
   /* the trash bin, plus its 30-day sweep — mounted after leads so the leads
      router's requireUser has already run for /api/leads/:id paths */

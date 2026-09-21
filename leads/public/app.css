@@ -212,6 +212,64 @@ a:hover { text-decoration: underline; }
 .asg-ghost .asg-bar { background: var(--ink-3); opacity: .5; }
 .asg-foot { color: var(--ink-3); font-size: 12.5px; margin-top: 14px; }
 
+
+/* ---------- prospect research (reading pane) ---------- */
+.rs-head { display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-bottom: 10px; }
+.rs-head h4 { margin: 0; }
+.rs-btn { white-space: nowrap; font-size: 12.5px; padding: 6px 11px; }
+.rs-btn:disabled { opacity: .55; cursor: default; }
+
+.rs-empty { color: var(--ink-3); font-size: 13px; line-height: 1.6; margin: 0; }
+.rs-working { display: flex; align-items: center; gap: 10px;
+  color: var(--ink-2); font-size: 13px; margin: 0; }
+/* a web search takes 15-30s; a stage label plus motion reads as work, where
+   a static line reads as a hang */
+.rs-spin { width: 13px; height: 13px; flex: 0 0 13px; border-radius: 50%;
+  border: 2px solid var(--border); border-top-color: var(--accent);
+  animation: rsSpin .8s linear infinite; }
+@keyframes rsSpin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .rs-spin { animation: none; } }
+
+.rs-headline { font-size: 14px; line-height: 1.55; margin: 0 0 10px;
+  color: var(--ink); font-weight: 600; }
+.rs-conf { display: inline-block; font-size: 10.5px; letter-spacing: .04em;
+  text-transform: uppercase; border: 1px solid var(--border);
+  border-radius: 20px; padding: 2px 9px; color: var(--ink-3); margin-bottom: 12px; }
+/* low confidence is the one worth noticing — it means most of this is thin */
+.rs-conf-low { color: #ffb4ab; border-color: #ffb4ab55; }
+.rs-conf-high { color: var(--good); border-color: color-mix(in srgb, var(--good) 40%, transparent); }
+
+.rs-block { margin-bottom: 13px; }
+.rs-label { color: var(--ink-3); font-size: 11px; font-weight: 600;
+  letter-spacing: .05em; text-transform: uppercase; margin-bottom: 5px; }
+.rs-text { margin: 0; font-size: 13px; line-height: 1.6; color: var(--ink-2); }
+.rs-ul { margin: 0; padding-left: 17px; }
+.rs-ul li { font-size: 13px; line-height: 1.6; color: var(--ink-2); margin-bottom: 3px; }
+
+/* the opener is what the rep is hunting for on this panel — give it the one
+   bit of colour so the eye lands there first */
+.rs-good { border-left: 2px solid var(--good); padding-left: 11px; }
+.rs-good .rs-label { color: var(--good); }
+.rs-good .rs-ul li { color: var(--ink); }
+.rs-avoid { border-left: 2px solid #ffb4ab; padding-left: 11px; }
+.rs-avoid .rs-label { color: #ffb4ab; }
+
+.rs-sources { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.rs-sources li { margin: 0; }
+.rs-sources a { font-size: 11.5px; color: var(--accent-ink); text-decoration: none;
+  border: 1px solid var(--border); border-radius: 20px; padding: 2px 9px; }
+.rs-sources a:hover { border-color: var(--accent); }
+
+.rs-foot { display: flex; justify-content: space-between; gap: 10px;
+  flex-wrap: wrap; color: var(--ink-3); font-size: 11.5px;
+  margin: 14px 0 0; padding-top: 10px; border-top: 1px solid var(--border); }
+.rs-used { white-space: nowrap; }
+/* said every time, not once: the cost of repeating it is a grey line, the
+   cost of forgetting it is a rep congratulating someone on the wrong award */
+.rs-warn { color: var(--ink-3); font-size: 11.5px; line-height: 1.55;
+  margin: 6px 0 0; font-style: italic; }
+
 /* ---------- KPI strip (call report + my tasks) ----------
    Four numbers across the top of a pane. Not the .stat tiles above the app:
    those are armable filters over the whole base, these are read-only figures

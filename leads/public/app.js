@@ -948,6 +948,17 @@ function renderDetail(r) {
       ${dgItem("Source file", esc(r["Source File"]))}
     </div>
 
+    <!-- Prospect research. Above the notes because it is what a rep reads
+         BEFORE the call, and the notes are what they write after. -->
+    <div class="detail-section">
+      <div class="rs-head">
+        <h4>Research</h4>
+        <button class="btn-ghost rs-btn" id="research-go"
+                title="Look this prospect up and write a call briefing">Research this prospect</button>
+      </div>
+      <div id="research-body"><p class="rs-empty">Loading…</p></div>
+    </div>
+
     <div class="detail-section">
       <h4>Notes</h4>
       <div id="comments"><p style="color:var(--ink-3);font-size:13px">Loading notes…</p></div>
@@ -993,6 +1004,8 @@ function renderDetail(r) {
     await patchLead(r.Id, { owner: e.target.value || null });
     r.Owner = e.target.value;
   });
+  $("research-go").addEventListener("click", () => runResearch(r));
+  loadResearch(r);                       // free: shows whatever we already hold
   $("note-send").addEventListener("click", () => sendNote(r));
   $("note-input").addEventListener("keydown", (e) => {
     if (e.key === "Enter") sendNote(r);
@@ -3203,6 +3216,141 @@ async function distribute(poolTotal) {
   } finally {
     if ($("asg-go")) $("asg-go").disabled = false;
   }
+}
+
+/* ---------------- Prospect research ----------------
+   The briefing a rep reads before they dial: what this outfit does, what
+   they have just done that is worth congratulating, what to open with, and
+   what not to raise.
+
+   Never fires on its own. Each briefing is a paid web search, there are
+   36,000 leads, and a pane that researched whatever you clicked would spend
+   the budget on browsing. One button, one lead; after that it is stored and
+   re-read for free.
+
+   Everything renders only if it has content. The server lets the model
+   answer "I could not verify that" with an empty field, and an empty field
+   must look like absence, not like a heading with nothing under it. */
+
+const RESEARCH_STAGES = [
+  "Looking them up…", "Reading their site…", "Checking recent news…",
+  "Finding an opener…", "Writing the briefing…",
+];
+
+/* Called from renderDetail. Loads what we already hold — free — and leaves
+   the button to buy a new one. */
+async function loadResearch(r) {
+  const box = $("research-body");
+  if (!box) return;
+  try {
+    const d = await api(`/api/leads/${r.Id}/research`);
+    renderResearch(r, d);
+  } catch (e) {
+    box.innerHTML = `<p class="rs-empty">Could not load the briefing (${esc(e.message)})</p>`;
+  }
+}
+
+function runResearch(r) {
+  const box = $("research-body");
+  const btn = $("research-go");
+  if (!box || !btn) return;
+  btn.disabled = true;
+  btn.textContent = "Researching…";
+
+  /* The stages are honest about what is happening — a web search takes
+     15-30 seconds and a bare spinner for that long reads as a hang. */
+  let i = 0;
+  box.innerHTML = `<p class="rs-working"><span class="rs-spin"></span><span id="rs-stage">${RESEARCH_STAGES[0]}</span></p>`;
+  const tick = setInterval(() => {
+    i = Math.min(i + 1, RESEARCH_STAGES.length - 1);
+    const el = $("rs-stage");
+    if (el) el.textContent = RESEARCH_STAGES[i];
+  }, 4000);
+
+  api(`/api/leads/${r.Id}/research`, { method: "POST" })
+    .then((d) => {
+      renderResearch(r, d);
+      toast("Briefing ready");
+    })
+    .catch((e) => {
+      box.innerHTML = `<p class="rs-empty">${esc(e.message)}</p>`;
+    })
+    .finally(() => {
+      clearInterval(tick);
+      /* The pane may have moved on to another lead while this ran — only
+         touch the button if it is still the one we disabled. */
+      const b = $("research-go");
+      if (b) { b.disabled = false; b.textContent = "Research again"; }
+    });
+}
+
+const rsList = (title, items, cls) => items.length ? `
+  <div class="rs-block${cls ? " " + cls : ""}">
+    <div class="rs-label">${title}</div>
+    <ul class="rs-ul">${items.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>
+  </div>` : "";
+
+const rsLine = (title, value) => value ? `
+  <div class="rs-block">
+    <div class="rs-label">${title}</div>
+    <p class="rs-text">${esc(value)}</p>
+  </div>` : "";
+
+function renderResearch(r, d) {
+  const box = $("research-body");
+  const btn = $("research-go");
+  if (!box) return;
+  const b = d.brief;
+
+  if (btn) {
+    btn.textContent = b ? "Research again" : "Research this prospect";
+    btn.disabled = false;
+  }
+
+  if (!b) {
+    box.innerHTML = `<p class="rs-empty">No briefing yet. Research pulls together
+      what they do, anything recent worth congratulating them on, and what to
+      open with — about half a minute.
+      <span class="rs-used">${d.used} of ${d.cap} used today</span></p>`;
+    return;
+  }
+
+  const p = b.person || {};
+  const personBits = [
+    rsLine("Their role", p.role),
+    rsLine("Background", p.background),
+    rsLine("Education", p.education),
+    rsList("Interests", p.interests || []),
+  ].join("");
+
+  box.innerHTML = `
+    ${b.headline ? `<p class="rs-headline">${esc(b.headline)}</p>` : ""}
+    ${b.confidence ? `<span class="rs-conf rs-conf-${esc(b.confidence)}"
+      title="How much of this the model could verify, rather than infer">${esc(b.confidence)} confidence</span>` : ""}
+
+    ${rsLine("What they do", b.whatTheyDo)}
+    ${rsLine("Size", b.size)}
+    ${rsList("Recent", b.recentSignals)}
+    ${rsList("Worth congratulating them on", b.congratulations, "rs-good")}
+    ${personBits}
+    ${rsList("Talking points", b.talkingPoints)}
+    ${rsList("Don't raise", b.avoid, "rs-avoid")}
+
+    ${b.sources.length ? `<div class="rs-block">
+      <div class="rs-label">Sources</div>
+      <ul class="rs-ul rs-sources">${b.sources.map((u) => {
+        let host = u;
+        try { host = new URL(u).hostname.replace(/^www\./, ""); } catch (e) { /* show it raw */ }
+        return `<li><a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(host)}</a></li>`;
+      }).join("")}</ul>
+    </div>` : ""}
+
+    <p class="rs-foot">
+      ${d.meta ? `Researched ${esc(relTime(d.meta.at))} by ${esc(d.meta.actor)}` : ""}
+      <span class="rs-used">${d.used} of ${d.cap} used today</span>
+    </p>
+    <p class="rs-warn">Written from a web search. Check anything you plan to
+      say out loud — a wrong detail is worse than none.</p>`;
 }
 
 /* ---------------- Call report (admin) ----------------
