@@ -11,6 +11,13 @@ const express = require("express");
 const { query, tx } = require("./db");
 const { requireAdmin, rankOf, RANK, isOwnerEmail } = require("./auth");
 
+/* Adding somebody creates their row; the email is what makes it an invite.
+   Optional — the module is absent in some setups and a missing mailer must
+   not stop a manager building their team. */
+let mailer = null;
+try { mailer = require("../../server/email.cjs"); }
+catch (e) { console.warn("[karma] users: no mail module —", e.message); }
+
 const router = express.Router();
 router.use("/api/users", requireAdmin);    // path-scoped: routers share "/"
 
@@ -81,7 +88,30 @@ router.post("/api/users", express.json({ limit: "4kb" }), async (req, res, next)
         [org.id, u.id, role]);
       return { ...u, role };
     });
-    res.json(row);
+
+    /* Tell them. Without this the invite is a row nobody knows about: the
+       person is never notified, and their access does nothing until they
+       make a sign-in of their own. Failing to send is reported rather than
+       swallowed, so the manager knows to pass the word on by hand instead
+       of assuming it went. */
+    let invited = false, why = "";
+    if (!mailer || !mailer.emailVerifyOn) {
+      why = "email is not configured on this server";
+    } else {
+      const base = (process.env.APP_URL || "").replace(/\/$/, "");
+      try {
+        await mailer.sendTeamInviteEmail(email, {
+          inviterName: req.user.name || req.user.email,
+          role,
+          link: base ? `${base}/?next=${encodeURIComponent("/leads/")}` : "",
+        });
+        invited = true;
+      } catch (e) {
+        why = e.message.slice(0, 160);
+        console.error("[karma] invite to", email, "failed:", e.message);
+      }
+    }
+    res.json({ ...row, invited, inviteError: invited ? "" : why });
   } catch (e) { next(e); }
 });
 

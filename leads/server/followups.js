@@ -68,10 +68,17 @@ router.post("/api/leads/:id/followup", requireUser, express.json({ limit: "4kb" 
       if (!lead) return res.status(404).json({ error: "no such lead" });
 
       const note = String(req.body?.note || "").slice(0, MAX_NOTE);
-      /* The reminder goes to whoever owns the lead, falling back to the
-         person setting it — a manager scheduling a follow-up on an
-         unassigned lead should hear about it themselves, not nobody. */
-      const owner = String(lead.owner || "").trim() || mine(req.user);
+      /* The reminder goes to WHOEVER SET IT, full stop.
+
+         It used to go to the lead's owner, on the reasoning that they are
+         the one who should act. That was wrong twice over: the button says
+         "an email lands in your inbox" and the field says "note to
+         yourself", so the person pressing it is promised their own
+         reminder — and in practice a manager setting one on a rep's lead
+         had the mail vanish to an owner string that is not always even a
+         mailbox. Reminding somebody else is a different feature, and not
+         one anybody has asked for. */
+      const owner = mine(req.user);
 
       // replace rather than stack; see the partial unique index in 008
       await query(

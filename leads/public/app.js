@@ -1421,7 +1421,9 @@ async function openUsersModal() {
       <b>Admins</b> run the floor: assigning, imports, job search, the call
       report and Team activity. <b>Owners</b> hold what cannot be undone —
       appointing admins, emptying the bin, lifting a do-not-call ban.
-      ${isOwner() ? "" : "Only the owner can change admin access."}</p>
+      ${isOwner() ? "" : "Only the owner can change admin access."}
+      Adding someone emails them a sign-up link — they still need to create
+      their own sign-in before their access works.</p>
     <div id="users-list" class="users-list"><div class="modal-sub">Loading…</div></div>
     <form id="user-add-row" class="user-add-row">
       <input type="email" id="user-add-email" placeholder="invite an email outside the company…" required>
@@ -1440,8 +1442,17 @@ async function openUsersModal() {
   $("modal-cancel").addEventListener("click", closeModal);
   $("user-add-row").addEventListener("submit", async (e) => {
     e.preventDefault();
-    await usersCall("/api/users", "POST",
-      { email: $("user-add-email").value, role: $("user-add-role").value });
+    const who = $("user-add-email").value.trim();
+    /* Say whether they were actually told. Adding somebody only creates
+       their row — if the invite email did not go, the manager has to pass
+       the word on themselves, and silence here is how a new starter sits
+       waiting for access nobody knows they cannot reach. */
+    const out = await usersCall("/api/users", "POST",
+      { email: who, role: $("user-add-role").value });
+    if (out && out.invited) toast("Added " + who + " and emailed them the sign-up link");
+    else if (out) toast("Added " + who + ", but the invite email did not send"
+      + (out.inviteError ? " (" + out.inviteError + ")" : "")
+      + " — tell them to sign up at this site with that address.", 12000);
     $("user-add-email").value = "";
   });
   await renderUsersList();
@@ -1452,11 +1463,13 @@ async function usersCall(path, method, body) {
   err.classList.add("hidden");
   try {
     const out = await api(path, { method, body: JSON.stringify(body) });
+    /* handed back so the caller can report what the server actually did */
     /* The route can succeed and still not have done what the click meant —
        demoting someone the environment keeps as owner, for instance. Saying
        so beats leaving them to notice the row bounce back. */
     if (out?.warning) toast(out.warning, 8000);
     await renderUsersList();
+    return out;
   } catch (ex) {
     err.textContent = ex.message;
     err.classList.remove("hidden");

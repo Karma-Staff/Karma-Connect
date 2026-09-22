@@ -198,6 +198,30 @@ async function sendStormDigestEmail(to, d, idempotencyKey) {
   await send(to, `Storm watch: ${d.totalStates} state${d.totalStates === 1 ? "" : "s"} hit`, html, { idempotencyKey });
 }
 
+/* Being added to the team (leads/server/users.js).
+
+   This email is the whole invite. Adding somebody only creates their row —
+   they still have to make an account of their own before it does anything,
+   and without being told, they never do. So it says what happened, what to
+   do, and to use this exact address, since the row is keyed on it and
+   signing up with a different one silently misses. */
+async function sendTeamInviteEmail(to, { inviterName, role, link }) {
+  const rank = role === "admin" ? "an <b>admin</b>" : role === "owner" ? "an <b>owner</b>" : "a <b>member</b>";
+  const html = `<div style="font-family:Inter,Segoe UI,Arial,sans-serif;max-width:480px;margin:0 auto;color:#0b2545">
+    <h2 style="color:#0b2545">You have been added to Karma Leads</h2>
+    <p>${inviterName ? escapeHtml(inviterName) + " has" : "You have been"} added you to the team as ${rank}.</p>
+    <p><b>One step left:</b> create your sign-in. Use this exact address —
+       <b>${escapeHtml(to)}</b> — or your access will not be found.</p>
+    ${link ? `<p style="margin:24px 0"><a href="${link}" style="background:#E7B74B;color:#071226;text-decoration:none;font-weight:700;padding:12px 22px;border-radius:10px;display:inline-block">Create your sign-in</a></p>` : ""}
+    <p>${role === "member"
+      ? "As a member you will see the leads assigned to you, and can call, take notes and set reminders on them."
+      : "You will see the whole base, the team's activity, and can assign work."}</p>
+    <p style="font-size:12px;color:#667">One sign-in covers Karma Connect and Karma Leads.
+      If you already have a Karma Connect account, just sign in — nothing more to do.</p>
+  </div>`;
+  await send(to, "You have been added to Karma Leads", html, { idempotencyKey: "invite-" + to });
+}
+
 async function sendOutreachEmail({ fromName, fromEmail, to, subject, text }) {
   if (!emailVerifyOn) throw new Error("Email sending is not configured (GATEWAY_URL / GATEWAY_TOKEN missing).");
   if (!fromEmail || !to || !subject) throw new Error("Outreach email needs fromEmail, to and subject.");
@@ -225,4 +249,4 @@ async function sendOutreachEmail({ fromName, fromEmail, to, subject, text }) {
   throw new Error("Email gateway " + r.status + ": " + t);
 }
 
-module.exports = { emailVerifyOn, VERIFY_TTL_HOURS, RESET_TTL_HOURS, escapeHtml, sendVerificationEmail, sendResetEmail, sendApprovalRequestEmail, sendApprovalDecisionEmail, sendOutreachEmail, sendFollowupEmail, sendStormDigestEmail };
+module.exports = { emailVerifyOn, VERIFY_TTL_HOURS, RESET_TTL_HOURS, escapeHtml, sendVerificationEmail, sendResetEmail, sendApprovalRequestEmail, sendApprovalDecisionEmail, sendOutreachEmail, sendFollowupEmail, sendStormDigestEmail, sendTeamInviteEmail };
