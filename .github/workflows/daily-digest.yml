@@ -18,6 +18,10 @@ name: Daily storm digest
 # SETUP — two repository secrets (Settings -> Secrets and variables -> Actions):
 #   APP_URL     https://karma-connect-9s2z.onrender.com
 #   CRON_TOKEN  the same value as CRON_TOKEN on the Render service
+# Until both are set this workflow reports a notice and stops. It does NOT
+# fail: "nobody has configured it yet" is not a broken build, and mailing a
+# red failure twice a day for it only teaches people to ignore the alerts
+# that matter.
 on:
   schedule:
     - cron: "0 11 * * *"   # 7am Eastern while daylight saving is in effect
@@ -28,26 +32,49 @@ jobs:
   knock:
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger the digest
+      - name: Is it configured?
+        id: cfg
         env:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_TOKEN: ${{ secrets.CRON_TOKEN }}
         run: |
           if [ -z "$APP_URL" ] || [ -z "$CRON_TOKEN" ]; then
-            echo "APP_URL and CRON_TOKEN must be set as repository secrets."
-            exit 1
+            echo "::notice title=Digest not configured::Set the APP_URL and CRON_TOKEN repository secrets to switch the 7am digest on. Skipping, not failing."
+            echo "ready=no" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=yes" >> "$GITHUB_OUTPUT"
           fi
-          # A sleeping free instance takes ~50s to wake, so the first call can
-          # time out through no fault of the app. Give it three goes.
+
+      - name: Trigger the digest
+        if: steps.cfg.outputs.ready == 'yes'
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_TOKEN: ${{ secrets.CRON_TOKEN }}
+        run: |
+          set -u
+          code=""
           for i in 1 2 3; do
             code=$(curl -s -o body.txt -w '%{http_code}' --max-time 120 \
-              -X POST "$APP_URL/api/cron/daily" \
+              -X POST "${APP_URL%/}/api/cron/daily" \
               -H 'Content-Type: application/json' \
-              -H "x-cron-token: $CRON_TOKEN" -d '{}') && [ "$code" = "200" ] && break
-            echo "attempt $i: HTTP ${code:-timeout} — the instance may be waking; retrying"
-            sleep 30
+              -H "x-cron-token: $CRON_TOKEN" -d '{}' || echo "000")
+
+            [ "$code" = "200" ] && break
+
+            # 401/403 is a wrong token and 404 is a wrong URL. Neither gets
+            # better by asking again — say so once and stop, rather than
+            # spending two more minutes proving it.
+            case "$code" in
+              401|403) echo "::error::CRON_TOKEN does not match the value on the Render service."; break ;;
+              404)     echo "::error::No /api/cron/daily at $APP_URL — check the APP_URL secret."; break ;;
+            esac
+
+            # Anything else is most likely a free instance waking up, which
+            # takes about 50 seconds. Worth another go.
+            [ "$i" -lt 3 ] && { echo "attempt $i: HTTP ${code} — the instance may be waking; retrying"; sleep 30; }
           done
+
           echo "HTTP $code"
-          cat body.txt
-          # A non-200 is a real failure and should show up red in the Actions tab
+          [ -s body.txt ] && cat body.txt
+          echo
           [ "$code" = "200" ]
