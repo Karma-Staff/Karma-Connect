@@ -57,7 +57,7 @@ let cached = { token: null, expires: 0 };
    "Invalid OAuth scope", which tells a salesperson nothing they can act on.
    Knowing the scope here lets the app say what is wrong and what to do. */
 let grantedScope = "";
-const WRITES = /\.(ALL|CREATE|UPDATE|WRITE)/i;
+const WRITES = /\.(ALL|CREATE|UPDATE|WRITE)/i;
 const scopeCanWrite = () => !grantedScope || WRITES.test(grantedScope);
 
 async function accessToken() {
