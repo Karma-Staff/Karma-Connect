@@ -350,6 +350,26 @@ body.zv-collapsed .zohovoice-container { display: none !important; }
 .camp-skip { margin-left: auto; }
 .camp-done .kpi-strip { margin: 14px 0 18px; }
 
+/* auto-dial strip. Deliberately loud when armed: something on this page is
+   about to ring a stranger, and the rep must be able to see that and stop
+   it without hunting. */
+.camp-auto { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 9px 14px; margin-bottom: 12px; max-width: 760px;
+  background: var(--surface); color: var(--ink-3); font-size: 12.5px; }
+.camp-auto.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-ink); }
+.camp-auto-sw { display: inline-flex; align-items: center; gap: 7px;
+  color: var(--ink); font-size: 13px; font-weight: 600; white-space: nowrap; }
+.camp-auto-sw input:disabled + span { color: var(--ink-3); font-weight: 400; }
+.camp-auto-state { flex: 1; min-width: 0; }
+.camp-auto.on .camp-auto-state { color: var(--ink); font-weight: 600;
+  font-variant-numeric: tabular-nums; }
+.camp-auto-pause { font-size: 12px; padding: 4px 12px; }
+.camp-auto-gap { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.camp-auto-gap input { width: 46px; background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px;
+  color: var(--ink); font-family: inherit; font-size: 12px; }
+
 /* ---------- storm watch ----------
    Severity is a STATUS scale (watch / likely / severe), not a categorical
    palette, so these are the reserved status hues. All three clear 3:1 on

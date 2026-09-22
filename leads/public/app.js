@@ -3436,6 +3436,109 @@ function openFollowupModal(r) {
   });
 }
 
+/* ---------------- auto-dial ----------------
+   With this on, recording an outcome starts a countdown and then rings the
+   next lead by itself. The rep says what happened and keeps talking; nobody
+   goes looking for a button.
+
+   Three things it will not do, each for a reason that is not taste:
+
+   It never rings the FIRST lead of a session on its own. A browser hands a
+   microphone to a call the user asked for, not to one a script started, so
+   the first call has to be a real click — and that click is what buys the
+   permission every later call reuses.
+
+   It only runs with the in-page softphone. In hand-off mode a "call" is a
+   new browser tab, and a loop that opens one every few seconds is a
+   runaway, not a dialler.
+
+   It always counts down in the open, with a visible Pause. The gap is the
+   only moment a rep can stop the next stranger being rung — write the note,
+   take a breath, look at who is next. Zero seconds would not be a feature. */
+
+const AUTO_GAP_DEFAULT = 6;          // seconds between hanging up and the next ring
+
+const autoOn = () => { try { return !!localStorage.getItem("kl_camp_auto"); } catch (e) { return false; } };
+const setAutoOn = (v) => { try { localStorage.setItem("kl_camp_auto", v ? "1" : ""); } catch (e) { /* fine */ } };
+const autoGap = () => {
+  const n = +(localStorage.getItem("kl_camp_gap") || AUTO_GAP_DEFAULT);
+  return Number.isFinite(n) ? Math.max(2, Math.min(60, n)) : AUTO_GAP_DEFAULT;
+};
+
+/* Can it actually dial without a person? Says why not, so the switch can
+   explain itself instead of silently doing nothing. */
+function autoReady() {
+  if (VOICE.mode !== "sdk") return { ok: false, why: "needs the in-page softphone — right now numbers open in Zoho's dialler" };
+  if (!VOICE.ready) return { ok: false, why: "the softphone has not connected yet" };
+  return { ok: true, why: "" };
+}
+
+function cancelAutoDial(reason) {
+  if (CAMP.timer) { clearInterval(CAMP.timer); CAMP.timer = null; }
+  CAMP.countdown = 0;
+  const el = $("camp-auto-state");
+  if (el && reason) el.textContent = reason;
+}
+
+/* Start the countdown to the current lead. Called after an outcome, never
+   on the first render of a session. */
+function armAutoDial(r, name) {
+  const ready = autoReady();
+  if (!autoOn() || !ready.ok) return;
+  cancelAutoDial();
+  CAMP.countdown = autoGap();
+  const paint = () => {
+    const el = $("camp-auto-state");
+    if (el) el.textContent = `calling ${name} in ${CAMP.countdown}s`;
+  };
+  paint();
+  CAMP.timer = setInterval(() => {
+    CAMP.countdown -= 1;
+    if (CAMP.countdown > 0) return paint();
+    cancelAutoDial();
+    const el = $("camp-auto-state");
+    /* dialInPage is the same path the button uses, so the call is logged
+       and attributed exactly as a manual one is. */
+    const placed = dialInPage(r.Phone, name, r.Id);
+    if (el) el.textContent = placed ? "calling " + name + "…" : "could not dial — call it by hand";
+    if (!placed) setAutoOn(false);       // stop rather than fail silently each time
+  }, 1000);
+}
+
+/* The switch, and the countdown, in one strip above the lead. */
+function autoDialBar() {
+  const ready = autoReady();
+  const on = autoOn() && ready.ok;
+  return `
+    <div class="camp-auto${on ? " on" : ""}">
+      <label class="camp-auto-sw">
+        <input type="checkbox" id="camp-auto" ${on ? "checked" : ""} ${ready.ok ? "" : "disabled"}>
+        <span>Auto-dial</span>
+      </label>
+      <span id="camp-auto-state" class="camp-auto-state">${
+        ready.ok
+          ? (on ? "on — the next lead is rung automatically" : "off — press the number to call")
+          : esc(ready.why)}</span>
+      ${on ? `<button type="button" class="btn-ghost camp-auto-pause" id="camp-auto-pause">Pause</button>` : ""}
+      <label class="camp-auto-gap">gap
+        <input type="number" id="camp-gap" min="2" max="60" value="${autoGap()}"> s
+      </label>
+    </div>`;
+}
+
+function wireAutoDial(r, name) {
+  $("camp-auto")?.addEventListener("change", (e) => {
+    setAutoOn(e.target.checked);
+    cancelAutoDial();
+    renderCampaign(CAMP.s);            // repaint the strip, do not start a call
+  });
+  $("camp-auto-pause")?.addEventListener("click", () =>
+    cancelAutoDial("paused — press the number when you are ready"));
+  $("camp-gap")?.addEventListener("change", (e) => {
+    try { localStorage.setItem("kl_camp_gap", String(e.target.value)); } catch (err) { /* fine */ }
+  });
+}
+
 /* ---------------- Call session ----------------
    One lead at a time, its number ready, and an outcome that records the
    call, sets the status, books a follow-back and moves on in one press.
@@ -3444,7 +3547,7 @@ function openFollowupModal(r) {
    nothing else. A rep on a dialler is not browsing — they are reading a
    name, a number and one line of context, then talking. */
 
-let CAMP = { s: null, busy: false };
+let CAMP = { s: null, busy: false, timer: null, countdown: 0, advanced: false };
 
 const CAMP_OUTCOMES = [
   { key: "connected", label: "Connected", status: "Contacted", tone: "good" },
@@ -3546,6 +3649,8 @@ function renderCampaign(d) {
       </div>
     </div>
 
+    ${autoDialBar()}
+
     <div class="act-card camp-card">
       <div class="camp-head">
         <div>
@@ -3597,6 +3702,12 @@ function renderCampaign(d) {
     })));
   $("camp-skip").addEventListener("click", () => submitOutcome({ skip: true }));
   $("camp-end").addEventListener("click", endCampaign);
+  wireAutoDial(r, name);
+  /* Only after an outcome, never on the first paint of a session — the
+     opening call has to be a real click so the browser grants the
+     microphone, and every later call reuses that permission. */
+  if (CAMP.advanced) armAutoDial(r, name);
+  CAMP.advanced = false;
 }
 
 async function submitOutcome(extra) {
@@ -3605,6 +3716,8 @@ async function submitOutcome(extra) {
   document.querySelectorAll(".camp-out, .camp-skip").forEach((b) => (b.disabled = true));
   const fu = $("camp-fu");
   try {
+    cancelAutoDial();                      // whatever was counting is stale now
+    CAMP.advanced = true;
     CAMP.s = await api("/api/campaign/outcome", {
       method: "POST",
       body: JSON.stringify({
@@ -3623,6 +3736,7 @@ async function submitOutcome(extra) {
 }
 
 function renderCampDone(d) {
+  cancelAutoDial();
   $("camp-body").innerHTML = `
     <div class="act-card camp-done">
       <h4>Session finished</h4>
@@ -3638,6 +3752,7 @@ function renderCampDone(d) {
 }
 
 async function endCampaign() {
+  cancelAutoDial();
   try {
     const out = await api("/api/campaign/end", { method: "POST" });
     renderCampDone({ ...out, done: true, owner: CAMP.s?.owner });
@@ -4567,6 +4682,8 @@ function setTab(tab) {
   /* Leaving the call report stops its polling — a hidden pane refreshing in
      the background is a query every 30 seconds for nobody to read. */
   if (pane !== "calls") stopCallPolling();
+  // a countdown running behind another screen would ring somebody unseen
+  if (pane !== "camp") cancelAutoDial();
   document.querySelector(".list-pane")?.classList.toggle("hidden", wide);
   $("detail-pane")?.classList.toggle("hidden", wide);
   renderSortOptions();
