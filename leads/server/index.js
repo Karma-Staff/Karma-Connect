@@ -107,6 +107,8 @@ function mount(app, opts = {}) {
   /* the 7am digest, and the external knock that fires it — see digest.js on
      why this cannot be a timer on the free plan */
   app.use(require("./digest").router);
+  /* call sessions — working an assigned list straight through */
+  app.use(require("./campaign").router);
   /* "Follow back" reminders, and the sweeper that emails them when due */
   const followups = require("./followups");
   app.use(followups.router);

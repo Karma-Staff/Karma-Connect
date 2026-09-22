@@ -53,6 +53,8 @@ const TABS = {
   research:  { title: "Prospect research", research: true },
   // live severe weather, scored for restoration and joined to the base
   storm:     { title: "Storm watch", storm: true },
+  // working an assigned list straight through, one lead at a time
+  camp:      { title: "Call session", camp: true },
   // not in the sidebar: entered by clicking a segment tag in the reading pane
   segment:   { title: "Segment", kind: "company", pv: "Company",
                dateField: "Date Added", segment: true },
@@ -264,6 +266,7 @@ const PANES = {
   tasks:  "tasks-pane",
   research: "research-pane",
   storm: "storm-pane",
+  camp: "camp-pane",
 };
 const paneOf = (tab) => Object.keys(PANES).find((k) => TABS[tab]?.[k]) || null;
 
@@ -472,6 +475,7 @@ async function loadList(resetPage = false) {
   if (cfg.tasks) return loadTasks();
   if (cfg.research) return loadResearchCenter();
   if (cfg.storm) return loadStorm();
+  if (cfg.camp) return loadCampaign();
   // the armed tile is named in the header too: a list that is short because a
   // KPI tile is filtering it should never look like a list that is just short
   $("list-title").textContent =
@@ -3430,6 +3434,214 @@ function openFollowupModal(r) {
       save.disabled = false;
     }
   });
+}
+
+/* ---------------- Call session ----------------
+   One lead at a time, its number ready, and an outcome that records the
+   call, sets the status, books a follow-back and moves on in one press.
+
+   The screen deliberately holds everything needed to make the call and
+   nothing else. A rep on a dialler is not browsing — they are reading a
+   name, a number and one line of context, then talking. */
+
+let CAMP = { s: null, busy: false };
+
+const CAMP_OUTCOMES = [
+  { key: "connected", label: "Connected", status: "Contacted", tone: "good" },
+  { key: "no-answer", label: "No answer", status: "Contacted" },
+  { key: "busy", label: "Busy", status: "" },
+  { key: "voicemail", label: "Left voicemail", status: "Contacted" },
+];
+
+async function loadCampaign() {
+  const el = $("camp-body");
+  if (!el) return;
+  el.innerHTML = `<p class="act-empty">Loading…</p>`;
+  try {
+    const d = await api("/api/campaign/current");
+    CAMP.s = d.session === null ? null : d;
+    if (!CAMP.s || !CAMP.s.id) return renderCampStart();
+    renderCampaign(CAMP.s);
+  } catch (e) {
+    el.innerHTML = `<p class="act-empty">Could not load the session (${esc(e.message)})</p>`;
+  }
+}
+
+/* The start screen: whose list, how many are callable. */
+async function renderCampStart(preOwner) {
+  const el = $("camp-body");
+  const admin = isAdmin();
+  let owners = [];
+  if (admin) {
+    try { owners = (await api("/api/owners")).list || []; } catch (e) { /* own list only */ }
+  }
+  const who = preOwner || S.me?.email || "";
+  el.innerHTML = `
+    <div class="act-card camp-start">
+      <h4>Start a calling session</h4>
+      <p class="rc-how">Works through the leads assigned to someone — those with a phone
+        number and an open status — oldest-neglected first. One lead at a time: dial,
+        record what happened, and it moves on. Your place is kept if you stop.</p>
+      <div class="camp-startrow">
+        ${admin && owners.length ? `<label class="fu-label">Whose list
+          <select id="camp-owner">
+            ${owners.map((o) => `<option value="${esc(o.value)}"${o.value === who ? " selected" : ""}>${esc(o.label)}</option>`).join("")}
+          </select></label>`
+        : `<p class="rs-text">Your own assigned leads.</p>`}
+        <div id="camp-count" class="camp-count"></div>
+      </div>
+      <div class="toprow" style="margin-top:14px">
+        <button class="btn-primary" id="camp-go">Start calling</button>
+      </div>
+      <div id="camp-err" class="login-error hidden"></div>
+    </div>`;
+
+  const count = async () => {
+    const o = $("camp-owner") ? $("camp-owner").value : "";
+    try {
+      const p = await api("/api/campaign/preview" + (o ? "?owner=" + encodeURIComponent(o) : ""));
+      $("camp-count").innerHTML = p.callable
+        ? `<b>${p.callable.toLocaleString()}</b> callable${p.callable > p.max ? ` — this session will take the first ${p.max}` : ""}`
+        : `<span class="camp-none">Nothing callable — they need leads with a phone number and an open status.</span>`;
+      $("camp-go").disabled = !p.callable;
+    } catch (e) { $("camp-count").textContent = ""; }
+  };
+  $("camp-owner")?.addEventListener("change", count);
+  count();
+
+  $("camp-go").addEventListener("click", async () => {
+    const btn = $("camp-go");
+    btn.disabled = true; btn.textContent = "Building the list…";
+    try {
+      const o = $("camp-owner") ? $("camp-owner").value : undefined;
+      CAMP.s = await api("/api/campaign/start", {
+        method: "POST", body: JSON.stringify(o ? { owner: o } : {}) });
+      renderCampaign(CAMP.s);
+    } catch (e) {
+      const err = $("camp-err");
+      err.textContent = e.message; err.classList.remove("hidden");
+      btn.disabled = false; btn.textContent = "Start calling";
+    }
+  });
+}
+
+function renderCampaign(d) {
+  const el = $("camp-body");
+  if (d.done || !d.current) return renderCampDone(d);
+
+  const r = fromApi(d.current.lead);
+  const name = displayName(r, r._t);
+  const b = d.current.brief;
+  const hook = b && b.congratulations && b.congratulations[0];
+  const pct = Math.round((d.pos / d.total) * 100);
+
+  el.innerHTML = `
+    <div class="camp-bar">
+      <div class="camp-prog"><span style="width:${pct}%"></span></div>
+      <div class="camp-meta">
+        <b>${d.pos + 1}</b> of ${d.total}
+        · ${d.called} called · ${d.connected} connected${d.skipped ? ` · ${d.skipped} skipped` : ""}
+        ${d.owner !== S.me?.email ? ` · ${esc(d.owner)}'s list` : ""}
+        <button class="btn-ghost camp-stop" id="camp-end">Stop</button>
+      </div>
+    </div>
+
+    <div class="act-card camp-card">
+      <div class="camp-head">
+        <div>
+          <h3 class="camp-name">${esc(name)}</h3>
+          <div class="camp-sub">${esc([r.City, r.State].filter(Boolean).join(", "))}
+            ${r.Industry ? " · " + esc(titleCase(r.Industry)) : ""}
+            ${r.Employees ? " · " + r.Employees.toLocaleString() + " staff" : ""}</div>
+        </div>
+        <a class="dial camp-dial" href="tel:${esc(r.Phone)}" data-dial="${esc(r.Phone)}"
+           data-dial-id="${esc(r.Id)}" data-dial-name="${esc(name)}">☎ ${esc(r.Phone)}</a>
+      </div>
+
+      ${d.current.lastCall ? `<p class="camp-last">Last called ${esc(relTime(d.current.lastCall.at))}
+        by ${esc(d.current.lastCall.actor)} — ${esc(d.current.lastCall.to_value || "")}</p>` : ""}
+
+      ${hook ? `<div class="camp-hook"><span class="rs-label">Opener</span>${esc(hook)}</div>` : ""}
+      ${b && b.headline ? `<p class="camp-brief">${esc(b.headline)}</p>` : ""}
+      ${d.current.notes.length ? `<div class="camp-notes">
+        <span class="rs-label">Recent notes</span>
+        ${d.current.notes.map((n) => `<p>${esc(n.body)} <i>— ${esc(n.author_email)}</i></p>`).join("")}
+      </div>` : ""}
+
+      <textarea id="camp-note" class="camp-note" rows="2"
+        placeholder="What happened? (saved as a note on the lead)"></textarea>
+
+      <label class="camp-follow">
+        <input type="checkbox" id="camp-fu"> Remind me to follow back
+        <input type="datetime-local" id="camp-fu-when" disabled>
+      </label>
+
+      <div class="camp-actions">
+        ${CAMP_OUTCOMES.map((o) => `<button class="btn-secondary camp-out${o.tone ? " " + o.tone : ""}"
+          data-out="${o.key}" data-status="${o.status}">${o.label}</button>`).join("")}
+        <button class="btn-ghost camp-out" data-out="not-interested" data-status="Not interested">Not interested</button>
+        <button class="btn-ghost camp-skip" id="camp-skip" title="Leave it untouched and move on">Skip →</button>
+      </div>
+    </div>`;
+
+  const fu = $("camp-fu"), fuWhen = $("camp-fu-when");
+  fu.addEventListener("change", () => {
+    fuWhen.disabled = !fu.checked;
+    if (fu.checked && !fuWhen.value) fuWhen.value = toLocalInput(presetDate(FOLLOW_PRESETS[0]));
+  });
+
+  el.querySelectorAll(".camp-out").forEach((btn) =>
+    btn.addEventListener("click", () => submitOutcome({
+      outcome: btn.dataset.out === "not-interested" ? "connected" : btn.dataset.out,
+      status: btn.dataset.status,
+    })));
+  $("camp-skip").addEventListener("click", () => submitOutcome({ skip: true }));
+  $("camp-end").addEventListener("click", endCampaign);
+}
+
+async function submitOutcome(extra) {
+  if (CAMP.busy) return;                       // a double press must not skip a lead
+  CAMP.busy = true;
+  document.querySelectorAll(".camp-out, .camp-skip").forEach((b) => (b.disabled = true));
+  const fu = $("camp-fu");
+  try {
+    CAMP.s = await api("/api/campaign/outcome", {
+      method: "POST",
+      body: JSON.stringify({
+        ...extra,
+        note: $("camp-note") ? $("camp-note").value : "",
+        followUpAt: fu && fu.checked && $("camp-fu-when").value
+          ? new Date($("camp-fu-when").value).toISOString() : null,
+      }),
+    });
+    renderCampaign(CAMP.s);
+  } catch (e) {
+    toast("Could not record that: " + e.message, 8000);
+    document.querySelectorAll(".camp-out, .camp-skip").forEach((b) => (b.disabled = false));
+  }
+  CAMP.busy = false;
+}
+
+function renderCampDone(d) {
+  $("camp-body").innerHTML = `
+    <div class="act-card camp-done">
+      <h4>Session finished</h4>
+      <div class="kpi-strip">
+        ${kpiTile("Called", String(d.called), `of ${d.total} on the list`)}
+        ${kpiTile("Connected", String(d.connected),
+          d.called ? `${Math.round((d.connected / d.called) * 100)}% of calls` : "none")}
+        ${kpiTile("Skipped", String(d.skipped), "left untouched")}
+      </div>
+      <button class="btn-primary" id="camp-again">Start another session</button>
+    </div>`;
+  $("camp-again").addEventListener("click", () => renderCampStart(d.owner));
+}
+
+async function endCampaign() {
+  try {
+    const out = await api("/api/campaign/end", { method: "POST" });
+    renderCampDone({ ...out, done: true, owner: CAMP.s?.owner });
+  } catch (e) { toast("Could not stop the session: " + e.message); }
 }
 
 /* ---------------- Storm watch ----------------

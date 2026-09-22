@@ -291,6 +291,65 @@ body.zv-collapsed .zohovoice-container { display: none !important; }
 .rs-warn { color: var(--ink-3); font-size: 11.5px; line-height: 1.55;
   margin: 6px 0 0; font-style: italic; }
 
+/* ---------- call session ----------
+   A dialling screen holds what is needed to make the call and nothing else.
+   A rep here is not browsing: they read a name, a number and one line of
+   context, then talk. So the number is the biggest thing after the name,
+   and the outcomes are one row of large targets that can be hit without
+   looking away from the screen. */
+.camp-start .camp-startrow { display: flex; gap: 18px; align-items: flex-end;
+  flex-wrap: wrap; margin-top: 14px; }
+.camp-start select { background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 5px; padding: 8px 10px; color: var(--ink); font-family: inherit; min-width: 220px; }
+.camp-count { color: var(--ink-2); font-size: 13px; padding-bottom: 8px; }
+.camp-none { color: #ffb4ab; }
+
+.camp-bar { margin-bottom: 14px; }
+.camp-prog { height: 4px; border-radius: 20px; background: var(--surface-2);
+  overflow: hidden; margin-bottom: 8px; }
+.camp-prog span { display: block; height: 100%; background: var(--accent);
+  transition: width .25s ease; }
+.camp-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  color: var(--ink-3); font-size: 12.5px; }
+.camp-meta b { color: var(--ink); font-size: 14px; }
+.camp-stop { margin-left: auto; font-size: 12px; padding: 4px 10px; }
+
+.camp-card { max-width: 760px; }
+.camp-head { display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 18px; flex-wrap: wrap; margin-bottom: 12px; }
+.camp-name { font-size: 22px; margin: 0 0 3px; color: var(--ink); }
+.camp-sub { color: var(--ink-3); font-size: 13px; }
+/* the number is the point of the screen */
+.camp-dial { font-size: 17px; font-weight: 700; white-space: nowrap; text-decoration: none;
+  color: var(--ink); background: var(--accent-soft); border: 1px solid var(--accent);
+  border-radius: 8px; padding: 10px 16px; }
+.camp-dial:hover { background: var(--accent); color: #071226; }
+
+.camp-last { color: #ffe2b3; font-size: 12.5px; margin: 0 0 12px; }
+.camp-hook { border-left: 2px solid var(--good); padding: 2px 0 2px 11px;
+  margin-bottom: 12px; color: var(--ink); font-size: 14px; line-height: 1.55; }
+.camp-hook .rs-label { display: block; color: var(--good); }
+.camp-brief { color: var(--ink-2); font-size: 13.5px; line-height: 1.6; margin: 0 0 12px; }
+.camp-notes { margin-bottom: 12px; }
+.camp-notes p { color: var(--ink-2); font-size: 12.5px; line-height: 1.55; margin: 0 0 4px; }
+.camp-notes i { color: var(--ink-3); }
+
+.camp-note { width: 100%; background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 9px 11px; color: var(--ink); font-family: inherit;
+  font-size: 13.5px; resize: vertical; margin-bottom: 10px; }
+.camp-follow { display: flex; align-items: center; gap: 9px; color: var(--ink-2);
+  font-size: 13px; margin-bottom: 16px; flex-wrap: wrap; }
+.camp-follow input[type=datetime-local] { background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: 5px; padding: 6px 9px;
+  color: var(--ink); font-family: inherit; }
+.camp-follow input:disabled { opacity: .45; }
+
+.camp-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.camp-actions button { font-size: 13.5px; padding: 11px 16px; }
+.camp-out.good { border-color: var(--good); color: var(--good); }
+.camp-skip { margin-left: auto; }
+.camp-done .kpi-strip { margin: 14px 0 18px; }
+
 /* ---------- storm watch ----------
    Severity is a STATUS scale (watch / likely / severe), not a categorical
    palette, so these are the reserved status hues. All three clear 3:1 on

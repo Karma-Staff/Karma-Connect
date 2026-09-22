@@ -13,7 +13,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@400;500;600;700&display=swap">
 <!-- bump ?v= whenever app.js/app.css change so no one gets a half-old app -->
-<link rel="stylesheet" href="app.css?v=55">
+<link rel="stylesheet" href="app.css?v=56">
 </head>
 <body>
 
@@ -173,6 +173,11 @@
         <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6M8.5 11h5M11 8.5v5"/></svg>
         Research <span class="nav-count" id="count-research"></span></button>
 
+      <!-- working an assigned list straight through -->
+      <button class="nav-item" data-tab="camp">
+        <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 4.5h2.2l1.3 3.3-1.7 1.3a10.5 10.5 0 0 0 4.9 4.9l1.3-1.7 3.3 1.3v2.2a1.7 1.7 0 0 1-1.85 1.7C10.8 17.2 6.8 13.2 5.8 6.35A1.7 1.7 0 0 1 7.5 4.5Z"/><path d="M14.5 3.5h6M17.5 .5v6" transform="translate(0 2)"/></svg>
+        Call session</button>
+
       <button class="nav-item" data-tab="storm">
         <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 16.5a4 4 0 0 1 .3-7.98 5.5 5.5 0 0 1 10.65 1.2A3.6 3.6 0 0 1 17.5 16.5H7Z"/><path d="m13 13-3 4.2h3.4L11 21.5"/></svg>
         Storm watch <span class="nav-count" id="count-storm"></span></button>
@@ -324,6 +329,17 @@
       <div id="assign-body" class="stats-body"></div>
     </section>
 
+    <!-- Call session: one lead at a time, straight through a list. -->
+    <section class="stats-pane hidden" id="camp-pane">
+      <div class="stats-head">
+        <div class="list-title-wrap">
+          <div class="seg-eyebrow">Dialling</div>
+          <h2>Call session</h2>
+        </div>
+      </div>
+      <div id="camp-body" class="stats-body"></div>
+    </section>
+
     <!-- Storm watch: where property just got damaged, and the leads there. -->
     <section class="stats-pane hidden" id="storm-pane">
       <div class="stats-head">
@@ -440,6 +456,6 @@
      projected and simplified offline by leads/scripts/build-na-geo.mjs.
      Generated — re-run that script rather than editing it. -->
 <script src="na-geo.js?v=3"></script>
-<script src="app.js?v=72"></script>
+<script src="app.js?v=73"></script>
 </body>
 </html>
