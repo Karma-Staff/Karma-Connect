@@ -48,6 +48,18 @@ if (process.env.ZOHO_VOICE_ENABLED === "1" && !ENABLED) {
    dies mid-handshake. */
 let cached = { token: null, expires: 0 };
 
+/* The scope the refresh token was actually granted, learned from Zoho on the
+   first exchange.
+
+   This matters because a READ-only token dials perfectly well and then fails
+   the moment the softphone tries to write anything back — saving a
+   disposition or a note — and Zoho reports that inside its own widget as
+   "Invalid OAuth scope", which tells a salesperson nothing they can act on.
+   Knowing the scope here lets the app say what is wrong and what to do. */
+let grantedScope = "";
+const WRITES = /\.(ALL|CREATE|UPDATE|WRITE)/i;
+const scopeCanWrite = () => !grantedScope || WRITES.test(grantedScope);
+
 async function accessToken() {
   if (cached.token && Date.now() < cached.expires) return cached.token;
   const body = new URLSearchParams({
@@ -77,6 +89,7 @@ async function accessToken() {
     }[data.error];
     throw new Error(hint ? `${why} (${hint})` : why);
   }
+  if (data.scope) grantedScope = String(data.scope);
   cached = {
     token: data.access_token,
     expires: Date.now() + Math.max(0, (Number(data.expires_in) || 3600) - 60) * 1000,
@@ -129,13 +142,27 @@ const DIAL_URL = (process.env.ZOHO_DIAL_URL || "https://voice.zoho.com").trim();
 const COUNTRY_CODE = process.env.ZOHO_DIAL_COUNTRY_CODE === undefined
   ? "+1" : String(process.env.ZOHO_DIAL_COUNTRY_CODE).trim();
 
-router.get("/api/voice/config", requireUser, (req, res) => {
+router.get("/api/voice/config", requireUser, async (req, res) => {
+  /* Learn the scope now if we do not know it yet. The config call happens
+     once at page load, before the softphone asks for a token, so without
+     this the warning could never be shown on the visit where it matters.
+     The token is cached for an hour, so this costs one exchange per cold
+     start, and a failure here is not the config route's problem to report. */
+  if (ENABLED && !grantedScope) { try { await accessToken(); } catch (e) { /* /api/voice/token reports it */ } }
   /* sdk asked for without the credentials behind it falls back to the web
      dialler, not to tel: — the rep still gets their number in one click
      instead of an operating-system app chooser. */
   const mode = MODE === "sdk" && !ENABLED ? "web" : MODE;
   res.json({ provider: "zoho", mode, enabled: ENABLED, dialUrl: DIAL_URL,
-    countryCode: COUNTRY_CODE });
+    countryCode: COUNTRY_CODE,
+    scope: grantedScope,
+    /* the front end shows this instead of leaving Zoho's own banner to be
+       the only explanation a rep ever gets */
+    scopeWarning: scopeCanWrite() ? "" :
+      `The Zoho token is read-only (${grantedScope}). Calls work, but saving a `
+      + "disposition or note inside the Zoho panel will fail with "
+      + "'Invalid OAuth scope'. Notes typed in Karma Leads are unaffected. "
+      + "To fix it, mint a new token with scope ZohoVoice.sdk.ALL." });
 });
 
 /* The SDK's oAuthCallBack fetches this. Signed-in users only: an open endpoint

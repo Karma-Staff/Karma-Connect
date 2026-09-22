@@ -366,6 +366,10 @@ body.zv-collapsed .zohovoice-container { display: none !important; }
   color: var(--ink); font-size: 13px; font-weight: 600; white-space: nowrap; }
 .camp-auto-sw input:disabled + span { color: var(--ink-3); font-weight: 400; }
 .camp-auto-state { flex: 1; min-width: 0; }
+/* the token is read-only: the rep cannot fix it and should not be alarmed,
+   so this is a quiet aside pointing at the box that does work */
+.camp-scope { font-size: 11.5px; color: #ffe2b3; border: 1px solid #e8a33d55;
+  border-radius: 20px; padding: 2px 9px; white-space: nowrap; }
 .camp-auto.on .camp-auto-state { color: var(--ink); font-weight: 600;
   font-variant-numeric: tabular-nums; }
 .camp-auto-pause { font-size: 12px; padding: 4px 12px; }

@@ -2909,7 +2909,13 @@ async function voiceInit() {
     const cfg = await api("/api/voice/config");
     VOICE.mode = cfg.mode || "tel";
     VOICE.dialUrl = cfg.dialUrl || "";
+    VOICE.scopeWarning = cfg.scopeWarning || "";
     if (cfg.countryCode !== undefined) VOICE.countryCode = cfg.countryCode;
+    /* Zoho puts "Invalid OAuth scope" in its own red banner, which tells a
+       salesperson nothing they can act on and looks like our bug. Say what
+       it is once, where it will be read, and only to someone who can fix
+       it — a rep cannot mint an OAuth token. */
+    if (VOICE.scopeWarning && isAdmin()) console.warn("[karma] " + VOICE.scopeWarning);
   } catch (e) { VOICE.mode = "tel"; }     // config unreachable = stay on tel:
   if (VOICE.mode !== "sdk") return;       // tel and web need nothing loaded
   watchForSoftphone();
@@ -3583,6 +3589,7 @@ function autoDialBar() {
         <input type="checkbox" id="camp-auto" ${on ? "checked" : ""} ${ready.ok ? "" : "disabled"}>
         <span>Auto-dial</span>
       </label>
+      ${VOICE.scopeWarning ? `<span class="camp-scope" title="${esc(VOICE.scopeWarning)}">Zoho panel is read-only — use the note box below</span>` : ""}
       <span id="camp-auto-state" class="camp-auto-state">${
         ready.ok
           ? (on ? "on — hang up and it logs the call and rings the next" : "off — press the number to call")

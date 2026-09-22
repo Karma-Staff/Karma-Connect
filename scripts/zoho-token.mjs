@@ -28,7 +28,10 @@ const USAGE = `Usage:
 Get all three from https://api-console.zoho.com:
   1. Add Client -> Self Client -> Create   (or open the one already there)
   2. Client Secret tab   -> the id and the secret
-  3. Generate Code tab   -> scope "ZohoVoice.sdk.READ", pick a duration, Create
+  3. Generate Code tab   -> scope "ZohoVoice.sdk.ALL", pick a duration, Create
+                            (ALL, not READ: a read-only token dials fine and
+                             then fails with "Invalid OAuth scope" the moment
+                             the softphone saves a disposition or a note)
                          -> the code (it expires in minutes; use it now)`;
 
 /* Catch the placeholders from the instructions being pasted verbatim. Zoho
