@@ -358,6 +358,10 @@ body.zv-collapsed .zohovoice-container { display: none !important; }
   padding: 9px 14px; margin-bottom: 12px; max-width: 760px;
   background: var(--surface); color: var(--ink-3); font-size: 12.5px; }
 .camp-auto.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-ink); }
+/* the wrap-up window: a different colour because this is the rep's last
+   chance to override what is about to be recorded */
+.camp-auto.wrapping { border-color: var(--good); background: rgba(82,211,158,.12); }
+.camp-auto.wrapping .camp-auto-state { color: var(--good); }
 .camp-auto-sw { display: inline-flex; align-items: center; gap: 7px;
   color: var(--ink); font-size: 13px; font-weight: 600; white-space: nowrap; }
 .camp-auto-sw input:disabled + span { color: var(--ink-3); font-weight: 400; }

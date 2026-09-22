@@ -2771,6 +2771,11 @@ function reportCall(raw, state) {
         : /cancel|reject|decline/.test(state) ? "cancelled"
           : /fail|error/.test(state) ? "failed"
             : "no-answer";
+  /* A session is watching for exactly this. The softphone is the only
+     thing that knows the call ended and whether anyone answered, so the
+     hang-up is what should move a hands-free session on — not a button
+     press after the fact. */
+  if (typeof campaignCallEnded === "function") campaignCallEnded(c.leadId, outcome);
   fetch("/api/leads/" + c.leadId + "/call", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -3436,6 +3441,69 @@ function openFollowupModal(r) {
   });
 }
 
+/* ---------------- hanging up moves it on ----------------
+   The softphone is the only thing that knows a call ended and whether
+   anyone answered. So the hang-up is what advances a hands-free session —
+   pressing an outcome afterwards was the manual step this was supposed to
+   remove.
+
+   It does not advance the instant the line drops. There is a short wrap-up
+   window first, because the seconds right after a call are when the rep
+   types what was said and decides it was really "not interested" rather
+   than the "connected" the SDK saw. The outcome buttons stay live the whole
+   time and pressing one submits immediately — this only decides what
+   happens if nobody does anything. */
+
+const WRAP_SECONDS = 8;
+
+/* The SDK's verdict, mapped to what a session records. The SDK knows
+   whether the line connected; it cannot know that the person said no,
+   which is why the rep can still override. */
+function wrapOutcomeOf(sdkOutcome) {
+  if (sdkOutcome === "connected") return { outcome: "connected", status: "Contacted", label: "Connected" };
+  if (sdkOutcome === "busy") return { outcome: "busy", status: "", label: "Busy" };
+  return { outcome: "no-answer", status: "Contacted", label: "No answer" };
+}
+
+/* Called from reportCall when the softphone says the call is over. */
+function campaignCallEnded(leadId, sdkOutcome) {
+  const d = CAMP.s;
+  if (!d || !d.current || CAMP.busy) return;
+  // only for the lead this session is actually on
+  if (String(d.current.lead.id) !== String(leadId)) return;
+
+  const pick = wrapOutcomeOf(sdkOutcome);
+  cancelAutoDial();
+  CAMP.wrap = WRAP_SECONDS;
+
+  const paint = () => {
+    const el = $("camp-auto-state");
+    if (!el) return;
+    el.textContent = `call ended — logging "${pick.label}" in ${CAMP.wrap}s`;
+  };
+  paint();
+  const bar = $("camp-auto");
+  if (bar) bar.classList.add("wrapping");
+
+  CAMP.wrapTimer = setInterval(() => {
+    CAMP.wrap -= 1;
+    if (CAMP.wrap > 0) return paint();
+    cancelWrap();
+    /* Straight into the normal path, so the note, the follow-back tick-box
+       and the status all behave exactly as a pressed button. */
+    submitOutcome({ outcome: pick.outcome, status: pick.status });
+  }, 1000);
+}
+
+function cancelWrap(reason) {
+  if (CAMP.wrapTimer) { clearInterval(CAMP.wrapTimer); CAMP.wrapTimer = null; }
+  CAMP.wrap = 0;
+  const bar = $("camp-auto");
+  if (bar) bar.classList.remove("wrapping");
+  const el = $("camp-auto-state");
+  if (el && reason) el.textContent = reason;
+}
+
 /* ---------------- auto-dial ----------------
    With this on, recording an outcome starts a countdown and then rings the
    next lead by itself. The rep says what happened and keeps talking; nobody
@@ -3517,7 +3585,7 @@ function autoDialBar() {
       </label>
       <span id="camp-auto-state" class="camp-auto-state">${
         ready.ok
-          ? (on ? "on — the next lead is rung automatically" : "off — press the number to call")
+          ? (on ? "on — hang up and it logs the call and rings the next" : "off — press the number to call")
           : esc(ready.why)}</span>
       ${on ? `<button type="button" class="btn-ghost camp-auto-pause" id="camp-auto-pause">Pause</button>` : ""}
       <label class="camp-auto-gap">gap
@@ -3532,8 +3600,10 @@ function wireAutoDial(r, name) {
     cancelAutoDial();
     renderCampaign(CAMP.s);            // repaint the strip, do not start a call
   });
-  $("camp-auto-pause")?.addEventListener("click", () =>
-    cancelAutoDial("paused — press the number when you are ready"));
+  $("camp-auto-pause")?.addEventListener("click", () => {
+    cancelWrap();
+    cancelAutoDial("paused — press the number when you are ready");
+  });
   $("camp-gap")?.addEventListener("change", (e) => {
     try { localStorage.setItem("kl_camp_gap", String(e.target.value)); } catch (err) { /* fine */ }
   });
@@ -3547,7 +3617,8 @@ function wireAutoDial(r, name) {
    nothing else. A rep on a dialler is not browsing — they are reading a
    name, a number and one line of context, then talking. */
 
-let CAMP = { s: null, busy: false, timer: null, countdown: 0, advanced: false };
+let CAMP = { s: null, busy: false, timer: null, countdown: 0, advanced: false,
+  wrapTimer: null, wrap: 0 };
 
 const CAMP_OUTCOMES = [
   { key: "connected", label: "Connected", status: "Contacted", tone: "good" },
@@ -3717,6 +3788,7 @@ async function submitOutcome(extra) {
   const fu = $("camp-fu");
   try {
     cancelAutoDial();                      // whatever was counting is stale now
+    cancelWrap();                          // a pressed button beats the timer
     CAMP.advanced = true;
     CAMP.s = await api("/api/campaign/outcome", {
       method: "POST",
@@ -3736,7 +3808,7 @@ async function submitOutcome(extra) {
 }
 
 function renderCampDone(d) {
-  cancelAutoDial();
+  cancelAutoDial(); cancelWrap();
   $("camp-body").innerHTML = `
     <div class="act-card camp-done">
       <h4>Session finished</h4>
@@ -3752,7 +3824,7 @@ function renderCampDone(d) {
 }
 
 async function endCampaign() {
-  cancelAutoDial();
+  cancelAutoDial(); cancelWrap();
   try {
     const out = await api("/api/campaign/end", { method: "POST" });
     renderCampDone({ ...out, done: true, owner: CAMP.s?.owner });
@@ -4683,7 +4755,7 @@ function setTab(tab) {
      the background is a query every 30 seconds for nobody to read. */
   if (pane !== "calls") stopCallPolling();
   // a countdown running behind another screen would ring somebody unseen
-  if (pane !== "camp") cancelAutoDial();
+  if (pane !== "camp") { cancelAutoDial(); cancelWrap(); }
   document.querySelector(".list-pane")?.classList.toggle("hidden", wide);
   $("detail-pane")?.classList.toggle("hidden", wide);
   renderSortOptions();
