@@ -2835,12 +2835,28 @@ function watchVoiceBlocks() {
 let softphoneWarned = false;
 function softphoneUnavailable(reason) {
   VOICE.ready = false;
-  VOICE.mode = "web";                   // dialHandOff() from here on
+  /* NOT "web". The softphone failing to authenticate and Zoho Voice's web
+     version refusing entry are the same licence: a Zoho Telephony agent
+     gets "Access Denied" on voice.zoho.com, so opening it would swap one
+     dead end for another with an extra tab. Copy the number instead — it
+     is what a rep can actually act on, from a desk phone or Zoho's mobile
+     app, which is what Zoho itself tells them to use. */
+  VOICE.mode = "copy";
   if (softphoneWarned) return;
   softphoneWarned = true;
   console.warn("[karma] in-page softphone unavailable (" + reason
-    + ") — numbers will open in Zoho's dialler instead. Usually the Zoho user "
-    + "behind the API credentials has no Voice agent seat.");
+    + ") — copying numbers instead");
+  /* Said once, plainly, because the alternative is a rep clicking a number
+     and appearing to get nothing back. Zoho's own wording is the giveaway:
+     a Telephony agent has no Voice web access and only an admin can change
+     that, so the message points at what still works rather than at a
+     setting no rep can reach. */
+  if (!VOICE.saidUnavailable) {
+    VOICE.saidUnavailable = true;
+    toast("The in-page phone is not available on this Zoho account — numbers "
+      + "are copied for you to dial on your phone or the Zoho app. "
+      + "Ask your admin about a Zoho Voice licence.", 12000);
+  }
 }
 
 /* Backstop. We no longer hand Zoho a null token (see the token callback), so
@@ -3057,19 +3073,16 @@ function normalizeNumber(raw) {
    handle it and the rep gets a chooser dialog instead of a call. */
 function dialHandOff(number, leadId) {
   const digits = normalizeNumber(number);
-  /* Handing off means we never learn how the call went — the conversation
-     happens somewhere we don't own. Record the attempt as 'placed' so the
-     manager's report still shows who is working the list; it deliberately
-     does NOT count as connected. */
-  if (leadId) {
-    VOICE.call = { leadId, number: digits, connected: false, seconds: 0, reported: false };
-    reportCall(null, "placed");
-  }
-  copyText(digits);
-  if (!VOICE.dialUrl) {
-    toast(digits + " copied — paste it into your dialler (Ctrl+V)");
+  /* Copy-only. Either there is nowhere to send them, or the softphone
+     already told us this account cannot use Zoho's web dialler. */
+  if (VOICE.mode === "copy" || !VOICE.dialUrl) {
+    recordHandOff(digits, leadId);
+    copyText(digits);
+    toast(digits + " copied — dial it on your phone or the Zoho app", 6000);
     return true;
   }
+  recordHandOff(digits, leadId);
+  copyText(digits);
   /* If the configured URL carries a {number} placeholder the dialler fills
      itself and the clipboard is just a safety net; without one, this is the
      copy-and-paste flow with the copying already done. */
@@ -3084,6 +3097,16 @@ function dialHandOff(number, leadId) {
     ? "Opening the dialler for " + digits
     : digits + " copied — paste it into the dialler (Ctrl+V)");
   return true;
+}
+
+/* Handing off means we never learn how the call went — the conversation
+   happens somewhere we don't own. Record the attempt as 'placed' so the
+   manager's report still shows who is working the list; it deliberately
+   does NOT count as connected. */
+function recordHandOff(digits, leadId) {
+  if (!leadId) return;
+  VOICE.call = { leadId, number: digits, connected: false, seconds: 0, reported: false };
+  reportCall(null, "placed");
 }
 
 /* Handles the click. Returns true when it dealt with the number, which is the
@@ -3589,7 +3612,9 @@ function autoDialBar() {
         <input type="checkbox" id="camp-auto" ${on ? "checked" : ""} ${ready.ok ? "" : "disabled"}>
         <span>Auto-dial</span>
       </label>
-      ${VOICE.scopeWarning ? `<span class="camp-scope" title="${esc(VOICE.scopeWarning)}">Zoho panel is read-only — use the note box below</span>` : ""}
+      ${VOICE.mode === "copy"
+        ? `<span class="camp-scope" title="This Zoho account is a Telephony agent, which has no access to the Zoho Voice web phone. Only an admin can upgrade that licence.">No in-page phone on this Zoho account — numbers are copied for you</span>`
+        : VOICE.scopeWarning ? `<span class="camp-scope" title="${esc(VOICE.scopeWarning)}">Zoho panel is read-only — use the note box below</span>` : ""}
       <span id="camp-auto-state" class="camp-auto-state">${
         ready.ok
           ? (on ? "on — hang up and it logs the call and rings the next" : "off — press the number to call")
