@@ -3073,29 +3073,41 @@ function normalizeNumber(raw) {
    handle it and the rep gets a chooser dialog instead of a call. */
 function dialHandOff(number, leadId) {
   const digits = normalizeNumber(number);
-  /* Copy-only. Either there is nowhere to send them, or the softphone
-     already told us this account cannot use Zoho's web dialler. */
+  recordHandOff(digits, leadId);
+  /* Always copy, whatever happens next. It costs nothing and it is the one
+     thing that works in every case — including the ones below where we
+     deliberately open nothing. */
+  copyText(digits);
+
+  /* A dial URL carrying {number} arrives already filled in, which is as
+     close to "pasted into the dialler" as one website can get to another:
+     browsers do not let us type into a page we do not own.
+
+     This wins over everything, including a softphone that was refused,
+     because a URL only exists if somebody configured it — and they chose a
+     dialler this account can actually reach. It also covers tel:{number},
+     which hands the call to whichever app owns tel: links on the machine.
+     See ZOHO_DIAL_URL in .env.example. */
+  if (VOICE.dialUrl && VOICE.dialUrl.includes("{number}")) {
+    const url = VOICE.dialUrl.replace("{number}", encodeURIComponent(digits));
+    /* One reused tab, not a new one per click: a rep working a list would
+       otherwise end the morning with forty diallers open. A tel: URL opens
+       no tab at all — the OS takes it. */
+    window.open(url, /^tel:/i.test(url) ? "_self" : "zohoDialer");
+    toast("Dialling " + digits + " — it is also on your clipboard", 5000);
+    return true;
+  }
+
+  /* No placeholder, so opening it would land them on a page they still have
+     to paste into — and when the softphone was refused, on a page that
+     refuses them outright. Hand over the number instead. */
   if (VOICE.mode === "copy" || !VOICE.dialUrl) {
-    recordHandOff(digits, leadId);
-    copyText(digits);
     toast(digits + " copied — dial it on your phone or the Zoho app", 6000);
     return true;
   }
-  recordHandOff(digits, leadId);
-  copyText(digits);
-  /* If the configured URL carries a {number} placeholder the dialler fills
-     itself and the clipboard is just a safety net; without one, this is the
-     copy-and-paste flow with the copying already done. */
-  const hasSlot = VOICE.dialUrl.includes("{number}");
-  const url = hasSlot
-    ? VOICE.dialUrl.replace("{number}", encodeURIComponent(digits))
-    : VOICE.dialUrl;
-  /* One reused tab, not a new one per click: a rep working a list would
-     otherwise end the morning with forty diallers open. */
-  window.open(url, "zohoDialer");
-  toast(hasSlot
-    ? "Opening the dialler for " + digits
-    : digits + " copied — paste it into the dialler (Ctrl+V)");
+
+  window.open(VOICE.dialUrl, "zohoDialer");
+  toast(digits + " copied — paste it into the dialler (Ctrl+V)");
   return true;
 }
 
