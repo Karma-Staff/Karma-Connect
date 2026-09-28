@@ -21,3 +21,8 @@ jobs:
         run: npm test
       - name: Build
         run: npm run build
+      # The API reference is generated from the route declarations. If someone
+      # adds a route and does not regenerate, this fails — which is the whole
+      # point of generating it. Fix with: node scripts/gen-api-docs.mjs
+      - name: API docs are current
+        run: node scripts/gen-api-docs.mjs --check

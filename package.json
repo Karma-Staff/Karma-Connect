@@ -20,7 +20,9 @@
     "leads:migrate": "node leads/server/migrate.js",
     "leads:migrate:status": "node leads/server/migrate.js --status",
     "zoho:token": "node scripts/zoho-token.mjs",
-    "leads:linkedin": "node --env-file=.env leads/server/linkedin.js"
+    "leads:linkedin": "node --env-file=.env leads/server/linkedin.js",
+    "docs:api": "node scripts/gen-api-docs.mjs",
+    "docs:api:check": "node scripts/gen-api-docs.mjs --check"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.1",

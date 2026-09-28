@@ -13,6 +13,7 @@ writing.
 | `architecture/ARCHITECTURE.md` | done |
 | `architecture/DATABASE.md` | done — all 21 Leads tables, verified against the live database |
 | `operations/RUNBOOK.md` | done — every env var, every incident seen so far |
+| `architecture/API.md` | done — **generated** by `scripts/gen-api-docs.mjs`, 133 routes, checked in CI |
 | `ai/PROJECT-MEMORY.md` | done |
 | `ai/AI-RULES.md` | done |
 | `decisions/ADR-001` … `ADR-004` | done |
@@ -21,8 +22,7 @@ writing.
 
 | Document | Needs | Notes |
 |---|---|---|
-| `architecture/API.md` | nothing | 120 routes. Worth **generating** from the source rather than hand-listing, so it cannot drift |
-| `architecture/SECURITY.md` | nothing | The role matrix is already verified by a real probe across all three tiers |
+| `architecture/SECURITY.md` | nothing | The role matrix is already verified by a real probe across all three tiers. **Next** — and ARCHITECTURE.md already links to it |
 | `architecture/INTEGRATIONS.md` | nothing | Zoho, Apify, Anthropic, mail gateway, NWS, FEMA, NIFC, USGS, NHC, LinkedIn |
 | `product/FEATURES.md` | nothing | Feature IDs and acceptance criteria for what exists |
 
