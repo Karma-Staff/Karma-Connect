@@ -41,9 +41,15 @@ Run: `docker compose up -d` → `node server/migrate.js` → `node server/index.
 
 ## Working here
 
-- Auth: WorkOS AuthKit (`server/auth.js`, httpOnly `kl_session`). member works
-  leads; admin adds job search, imports, users, trash, DNC, Team activity.
-  Enforced server-side — `.admin-only` is presentation only.
+- Auth: a shared HS256 JWT in the httpOnly `kc_session` cookie, issued by Karma
+  Connect and read here by `server/auth.js`. WorkOS (`kl_session`) is still
+  accepted as a fallback so pre-cutover sessions are not thrown out, but it is
+  no longer how anyone signs in.
+  Authorisation is a **ranked ladder** — `owner > admin > member`, compared as
+  "at least", never `=== "admin"`. member works leads; admin adds job search,
+  imports, users, trash, DNC, Team activity; owner holds the irreversible
+  things and is conferred by `OWNER_EMAILS` in the environment, not by the
+  database. Enforced server-side — `.admin-only` is presentation only.
 - Front end: state in one `S` object; `fromApi()` is the whole snake_case →
   title-case translation; paging is keyset; KPIs are one `/api/counts`.
   The `?v=` cache-busters in `index.html` are **stamped at serve time** from

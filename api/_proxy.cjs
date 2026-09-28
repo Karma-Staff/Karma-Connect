@@ -159,7 +159,7 @@ function cacheKeyOf(body) {
     const sys = Array.isArray(body.system) ? body.system.map((s) => s.text || "").join("") : (body.system || "");
     const user = (body.messages || []).map((m) => (typeof m.content === "string" ? m.content : JSON.stringify(m.content))).join("");
     if (Array.isArray(body.tools) && body.tools.length) return null; // never cache live-search calls
-    return "cache:" + crypto.createHash("sha256").update((body.model || "") + " " + sys + " " + user).digest("hex");
+    return "cache:" + crypto.createHash("sha256").update((body.model || "") + "\u0000" + sys + "\u0000" + user).digest("hex");
   } catch (e) { return null; }
 }
 

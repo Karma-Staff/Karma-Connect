@@ -129,16 +129,19 @@ reason that survives that trade.
 
 ## Testing
 
-`vitest`, 104 tests. The pure, high-consequence logic is extracted so it can be
+`vitest`, 116 tests, under a second. The pure, high-consequence logic is extracted so it can be
 tested without a database or a network: `leads/server/brief.js` (prompt +
 parsing), `leads/server/linkedin.js` (actor-shape normalising),
 `src/lib/*.test.js`, `api/_proxy.test.js`, `server/modules.test.js`.
 
 Integration behaviour is verified by booting the API and driving a real browser
 with Playwright — that is how the role matrix, the call session and the storm
-map were checked. Those runs are not in CI; they are done by hand.
+map were checked. **Those runs are not in CI**; they are done by hand.
 
-**`DECISION REQUIRED` — CI.** There is no continuous integration. `vitest` runs
-only when somebody types it. Options: (a) a GitHub Actions workflow on push,
-(b) leave it. Recommended (a); the workflow file is ten lines and the suite runs
-in under two seconds.
+CI does exist — `.github/workflows/ci.yml`, on push to `main` and every PR:
+`npm ci`, `npm run lint`, `npm test`, `npm run build`. Verified green locally on
+2026-09-28 (0 lint errors, 1 warning; 116 tests; clean build).
+
+An earlier draft of this document claimed there was no CI. That was wrong, and
+it was wrong for the reason [AI-RULES](../ai/AI-RULES.md) warns about — asserted
+from memory instead of looking in `.github/`.

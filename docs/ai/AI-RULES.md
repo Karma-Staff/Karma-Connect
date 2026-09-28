@@ -67,7 +67,7 @@ Change these only with a reason that survives reading the comments in them:
 
 ## When you finish
 
-- `npx vitest run` — 104 tests, under two seconds
+- `npx vitest run` — 116 tests, under a second
 - `npx vite build` if you touched `src/`
 - `node --check` on any file a script edited
 - Say what you changed and what you verified. If you could not verify
