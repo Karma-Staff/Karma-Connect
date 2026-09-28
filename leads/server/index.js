@@ -15,6 +15,7 @@
 const express = require("express");
 const path = require("path");
 const auth = require("./auth");
+const cachebust = require("./cachebust");
 
 /* same no-cache policy as the old server: revalidate, don't blind-serve — a
    half-cached app.js/index.html pair breaks the page and the round trip is
@@ -55,6 +56,11 @@ function mount(app, opts = {}) {
         res.redirect(301, p + "/");
       });
     }
+    /* index.html first, so its ?v= markers carry a stamp of the real file
+       contents rather than whatever was last typed by hand. See
+       cachebust.js — a version bump that gets forgotten leaves every
+       browser that cached the old URL running old code. */
+    app.use(p, cachebust.indexWithStamp());
     app.use(p, statics);
   }
 

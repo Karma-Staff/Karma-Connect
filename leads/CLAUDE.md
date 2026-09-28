@@ -46,7 +46,12 @@ Run: `docker compose up -d` → `node server/migrate.js` → `node server/index.
   Enforced server-side — `.admin-only` is presentation only.
 - Front end: state in one `S` object; `fromApi()` is the whole snake_case →
   title-case translation; paging is keyset; KPIs are one `/api/counts`.
-  **Bump the `?v=` cache-busters in `index.html` on every markup/script change.**
+  The `?v=` cache-busters in `index.html` are **stamped at serve time** from
+  the real file contents (`server/cachebust.js`) — you no longer bump them by
+  hand, and forgetting to can no longer leave browsers on a stale `app.js`.
+  It happened: app.js shipped twice while index.html still said v=76, so every
+  browser that had cached that URL kept running the old file. The numbers in
+  source are just markers for a diff.
 - `leads.owner` is free text matched on equality, and the data holds email
   addresses. Assigning goes through `GET /api/owners` (accounts + the owner
   strings already on leads) so one person can't become three owner filters —
