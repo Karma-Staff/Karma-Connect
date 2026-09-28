@@ -15,16 +15,27 @@ writing.
 | `operations/RUNBOOK.md` | done — every env var, every incident seen so far |
 | `architecture/API.md` | done — **generated** by `scripts/gen-api-docs.mjs`, 133 routes, checked in CI |
 | `architecture/SECURITY.md` | done — including a gaps table |
+| `architecture/INTEGRATIONS.md` | done — ten services, each with its failure mode |
+| `product/FEATURES.md` | done — 17 Leads features, 12 Connect views, with acceptance criteria |
 | `ai/PROJECT-MEMORY.md` | done |
 | `ai/AI-RULES.md` | done |
 | `decisions/ADR-001` … `ADR-004` | done |
 
-## Next, in value order
+## Next
+
+**Every document planned in the first pass is now written.** What remains is not
+documentation — it is the actions and decisions listed below, which are the
+things documenting the system surfaced.
+
+If more documentation is wanted, the candidates in rough value order are:
 
 | Document | Needs | Notes |
 |---|---|---|
-| `architecture/INTEGRATIONS.md` | nothing | Zoho, Apify, Anthropic, mail gateway, NWS, FEMA, NIFC, USGS, NHC, LinkedIn |
-| `product/FEATURES.md` | nothing | Feature IDs and acceptance criteria for what exists |
+| `architecture/FRONTEND.md` | nothing | The 5,700-line `app.js`: the `S` state object, `fromApi()`, keyset paging, where to add a screen. Useful to anyone who has to touch Leads |
+| `operations/ONBOARDING.md` | nothing | What a new starter needs on day one, including that they must be added to **two** user tables |
+| `decisions/ADR-005…` | a decision to record | ADRs are written when a decision is made, not in advance |
+
+Deliberately still not written: the list at the end of this file.
 
 ## Corrections made to earlier drafts
 
