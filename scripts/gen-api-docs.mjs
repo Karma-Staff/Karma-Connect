@@ -271,11 +271,12 @@ The generator reads route declarations, not behaviour. It does not know:
 
 ## Routes that are deliberately open
 
-Ten routes have no user guard, and all ten should not have one:
+Fifteen routes are reachable without a session — **ten with no guard at all,
+five behind a rate limiter only** — and none of them should be otherwise:
 
 | Route | Why |
 |---|---|
-| \`POST /api/auth/signup\`, \`signin\`, \`forgot\`, \`reset\`, \`resend\` | you cannot require a session to get a session. All are rate-limited |
+| \`POST /api/auth/signup\`, \`signin\`, \`forgot\`, \`reset\`, \`resend\` | you cannot require a session to get a session. These are the five that are rate-limited |
 | \`GET /api/auth/verify\` | the link in a verification email |
 | \`POST /api/auth/signout\`, \`POST /api/auth/logout\` | clearing a cookie must work even with a bad one |
 | \`GET /api/auth/login\`, \`GET /api/auth/callback\` | the sign-in round trip |

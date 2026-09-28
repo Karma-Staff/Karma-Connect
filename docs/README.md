@@ -33,7 +33,7 @@ Leads at `/leads`. One sign-in cookie covers both.
 | [`architecture/ARCHITECTURE.md`](architecture/ARCHITECTURE.md) | How the pieces fit, and why there are two of everything |
 | [`architecture/DATABASE.md`](architecture/DATABASE.md) | Every table, the invariants, the known data problems |
 | [`architecture/API.md`](architecture/API.md) | 133 routes across both halves. **Generated** — `npm run docs:api` |
-| `architecture/SECURITY.md` | Roles, sessions, what is enforced where — **not written yet** |
+| [`architecture/SECURITY.md`](architecture/SECURITY.md) | Roles, sessions, what is enforced where, and the known gaps |
 | `architecture/INTEGRATIONS.md` | Zoho, Apify, Anthropic, the mail gateway, five public data feeds — **not written yet** |
 | [`operations/RUNBOOK.md`](operations/RUNBOOK.md) | Environment, deploys, the scheduled job, what to check when something is wrong |
 | [`ai/PROJECT-MEMORY.md`](ai/PROJECT-MEMORY.md) | What an agent must know before editing |
