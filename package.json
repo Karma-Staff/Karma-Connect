@@ -22,7 +22,8 @@
     "zoho:token": "node scripts/zoho-token.mjs",
     "leads:linkedin": "node --env-file=.env leads/server/linkedin.js",
     "docs:api": "node scripts/gen-api-docs.mjs",
-    "docs:api:check": "node scripts/gen-api-docs.mjs --check"
+    "docs:api:check": "node scripts/gen-api-docs.mjs --check",
+    "docs:pdf": "node scripts/build-docs-pdf.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.1",

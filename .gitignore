@@ -16,3 +16,6 @@ check-karma.ps1
 # The LinkedIn agent's Chrome profile: contains a LIVE logged-in LinkedIn session.
 # Committing it would hand out account access — never track it.
 agent/.profile/
+
+# intermediate for scripts/build-docs-pdf.mjs
+docs/.reference.html
