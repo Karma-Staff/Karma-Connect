@@ -132,7 +132,21 @@ async function accessToken() {
 const MODE = ["tel", "web", "sdk"].includes(process.env.ZOHO_DIAL_MODE)
   ? process.env.ZOHO_DIAL_MODE
   : (ENABLED ? "sdk" : "web");
-const DIAL_URL = (process.env.ZOHO_DIAL_URL || "https://voice.zoho.com").trim();
+/* Where a click on a number goes when the in-page softphone is not
+   available. Two deliberate choices here.
+
+   Unset now means NOTHING, not voice.zoho.com. That used to be the default
+   and it was wrong for the common case: the softphone usually fails because
+   the account has no Zoho Voice licence, and voice.zoho.com answers exactly
+   those accounts with "Access Denied". Falling back to a page that refuses
+   them is worse than handing over the number.
+
+   `=== undefined` rather than `||`, so setting it to empty means empty. With
+   `||` a blank value silently became the default and there was no way to
+   switch the hand-off off at all — which is how someone turns off a feature
+   that is misbehaving. */
+const DIAL_URL = (process.env.ZOHO_DIAL_URL === undefined
+  ? "" : process.env.ZOHO_DIAL_URL).trim();
 
 /* Leads hold numbers the way people typed them, usually without a country
    code. Zoho dials in international form, so a bare local number gets this
