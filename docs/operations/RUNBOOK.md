@@ -136,9 +136,10 @@ these first — it is one cause, not three.
 | `CRON_TOKEN` | shared secret for `POST /api/cron/daily`. **Unset ⇒ the route returns 503**, refusing rather than defaulting to open |
 | `DIGEST_HOUR` | local hour the digest sends. Default 7 |
 | `DIGEST_TZ` | the timezone that hour is judged in |
+| `REPORT_TZ` | the timezone a *day* is measured in for the call rollup and report. Falls back to `DIGEST_TZ`, then `America/New_York`. **Changing it moves the boundary only for days rolled up from then on**, not for rows already stored |
 
 The same `CRON_TOKEN` value must also be a **GitHub repository secret**, along
-with `APP_URL`. See §The 7am digest.
+with `APP_URL`. See §The morning knock.
 
 ### Zoho telephony
 
@@ -252,14 +253,33 @@ npm run lint && npm test && npm run build
 
 ---
 
-## The 7am digest
+## The morning knock
 
-**How it works.** GitHub Actions knocks on `POST /api/cron/daily` twice a day —
-`11:00` and `12:00` UTC, because cron is UTC and has no idea about daylight
-saving, so one of the two is 7am Eastern. The server checks the real local hour
-in `DIGEST_TZ` and only sends at `DIGEST_HOUR`; `job_runs` makes the other a
-no-op. The same knock also flushes overnight follow-back reminders, which is the
-other half of the free-plan problem and costs nothing extra.
+**One knock, three jobs.** GitHub Actions calls `POST /api/cron/daily` twice a
+day — `11:00` and `12:00` UTC, because cron is UTC and has no idea about
+daylight saving, so one of the two is 7am Eastern. That single request does:
+
+| Job | What it does | Claimed as |
+|---|---|---|
+| **Storm digest** | severe-weather states joined to the lead base, mailed to **everyone** | `storm-digest` |
+| **Call report** | rolls yesterday into `call_daily`, then mails yesterday's per-person calls and connections to **admins and the owner** | `call-digest` |
+| Follow-back sweep | flushes reminders that fell due overnight | — |
+
+Each digest claims its own row in `job_runs`, so a failure in one never
+silently swallows the other, and the storm digest's "nothing active today, no
+email" does not stop the call report going out.
+
+The storm digest checks the real local hour in `DIGEST_TZ` and only sends at
+`DIGEST_HOUR`; the second knock is then a no-op.
+
+**The call report differs in one deliberate way: it sends even on a zero day.**
+A silent floor is exactly what a manager needs to be told about, so that email
+*is* the signal. The storm digest stays quiet on a calm morning, because a
+daily "nothing happened" is a message people learn to delete.
+
+It reports **yesterday**, not today — at 7am today has barely started. The
+rollup runs before the send, so the email and the screen read the same stored
+rows and cannot disagree.
 
 This is external because Render's free plan stops the process after ~15 minutes
 idle. At 7am nobody has touched the site since the night before, so a

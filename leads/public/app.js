@@ -4328,17 +4328,40 @@ function toggleCallPolling() {
 
 /* quiet=true is the poll: repaint without the "Loading…" flash, or the pane
    would blink every 30 seconds under someone who is reading it. */
+/* Which day the report is showing. Empty means today — and today is the only
+   day read live, so leaving it empty is also what keeps auto-refresh useful. */
+let callsDate = "";
+
 async function loadCallReport(quiet = false) {
   const el = $("calls-body");
   if (!el) return;
-  if (!quiet) el.innerHTML = `<p class="act-empty">Reading today's calls…</p>`;
+  if (!quiet) el.innerHTML = `<p class="act-empty">Reading calls…</p>`;
   const minutes = +$("calls-minutes")?.value || 15;
+  const q = `/api/calls/report?minutes=${minutes}&days=30`
+    + (callsDate ? `&date=${encodeURIComponent(callsDate)}` : "");
   try {
-    renderCallReport(await api(`/api/calls/report?minutes=${minutes}`));
+    const d = await api(q);
+    callsDate = d.date;
+    const picker = $("calls-date");
+    if (picker) { picker.value = d.date; picker.max = d.today; }
+    renderCallReport(d);
   } catch (e) {
     if (quiet) return;                   // a failed poll keeps the last good view
     el.innerHTML = `<p class="act-empty">Could not load the call report (${esc(e.message)})</p>`;
   }
+}
+
+/* Step a day at a time. Never past today — there is nothing there, and an
+   empty tomorrow looks like a bug rather than the calendar. */
+function stepCallDate(delta) {
+  const base = callsDate || new Date().toISOString().slice(0, 10);
+  const d = new Date(base + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() + delta);
+  const next = d.toISOString().slice(0, 10);
+  const max = $("calls-date")?.max || next;
+  callsDate = next > max ? max : next;
+  stopCallPolling();                     // polling a fixed past day is pointless
+  loadCallReport();
 }
 
 function fmtDuration(seconds) {
@@ -4367,16 +4390,45 @@ function renderCallReport(d) {
   const peak = Math.max(1, ...people.map((p) => p.calls));
   const live = people.filter((p) => p.active);
 
+  /* The 30-day strip. This is the whole point of storing days: the shape of
+     the last month, rather than one number that resets every midnight. */
+  const hist = d.history || [];
+  const hPeak = Math.max(1, ...hist.map((h) => h.calls));
+  const histHtml = hist.length ? `
+    <div class="act-card">
+      <h4>Last ${hist.length} days — ${hist.reduce((a, h) => a + h.calls, 0).toLocaleString()} calls</h4>
+      <div class="hist-strip">
+        ${hist.map((h) => `
+          <button class="hist-col${h.date === d.date ? " on" : ""}${h.today ? " is-today" : ""}"
+                  data-date="${h.date}"
+                  title="${esc(h.date)} — ${h.calls} call${h.calls === 1 ? "" : "s"}, ${h.connected} connected${h.today ? " (today, still counting)" : ""}">
+            <span class="hist-bar" style="height:${Math.max(2, Math.round((h.calls / hPeak) * 100))}%">
+              <span class="hist-fill" style="height:${h.calls ? Math.round((h.connected / h.calls) * 100) : 0}%"></span>
+            </span>
+          </button>`).join("")}
+      </div>
+      <p class="asg-foot">Each bar is a day; the solid part is the calls that
+        connected. Click one to read that day. The last bar is today and is
+        still counting.</p>
+    </div>` : "";
+
   el.innerHTML = `
     <div class="kpi-strip">
-      ${kpiTile("Calls today", t.calls.toLocaleString(),
+      ${kpiTile(d.isToday ? "Calls today" : "Calls", t.calls.toLocaleString(),
         t.callers === 1 ? "by 1 person" : `by ${t.callers} people`)}
       ${kpiTile("Connected", t.connected.toLocaleString(),
         t.calls ? `${Math.round((t.connected / t.calls) * 100)}% of calls` : "none yet")}
-      ${kpiTile("Talk time", fmtDuration(t.seconds), "total, today")}
+      ${kpiTile("Talk time", fmtDuration(t.seconds),
+        t.seconds ? "total" : "not reported by the hand-off dialler")}
       ${kpiTile("Working now", String(t.activeNow),
         `active in the last ${d.liveMinutes} min`)}
     </div>
+
+    ${d.isToday ? "" : `<div class="asg-demo">Showing <b>${esc(dayLabel(d.date))}</b>,
+      read from the stored daily record. “Working now” is always live and so
+      refers to right now, not to that day.</div>`}
+
+    ${histHtml}
 
     ${t.placed ? `<div class="asg-demo">${t.placed.toLocaleString()} of today's
       calls were handed to Zoho's own dialler, which never tells us how they
@@ -4412,7 +4464,8 @@ function renderCallReport(d) {
         </tr></thead>
         <tbody>
           ${people.map((p) => `
-            <tr${p.ghost ? ' class="asg-ghost"' : ""}>
+            <tr class="person-row${p.ghost ? " asg-ghost" : ""}" data-person="${esc(p.email)}"
+                title="Open ${esc(p.label)}'s record">
               <td>
                 <span class="avatar avatar-sm" style="background:${avColor(p.email)}">${esc(initials(p.label))}</span>
                 <span class="asg-name">${esc(p.label)}</span>
@@ -4435,6 +4488,152 @@ function renderCallReport(d) {
         this counts calls placed <b>through the dashboard</b>. A rep who dials
         from their handset or the Zoho app directly appears here as zero.</p>
     </div>`;
+}
+
+/* "Wed 29 Sep" from "2026-09-29". Noon UTC so the date cannot slip a day
+   either side of a timezone. */
+function dayLabel(iso) {
+  if (!iso) return "";
+  const d = new Date(iso + "T12:00:00Z");
+  return d.toLocaleDateString(undefined,
+    { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+}
+
+/* ---------- one person, in depth ----------
+
+   The team table answers "who is calling". This answers the question a manager
+   asks next — what is this person actually doing — which needs a different
+   shape: a run of days, the outcome mix, and the calls themselves with the
+   companies named. */
+async function openPerson(email) {
+  const el = $("calls-body");
+  if (!el) return;
+  stopCallPolling();
+  el.innerHTML = `<p class="act-empty">Reading ${esc(email)}…</p>`;
+  try {
+    renderPerson(await api(`/api/calls/person/${encodeURIComponent(email)}?days=30`));
+  } catch (e) {
+    el.innerHTML = `<p class="act-empty">Could not open that person (${esc(e.message)})
+      <button class="btn-ghost" id="person-back">Back to the report</button></p>`;
+    $("person-back")?.addEventListener("click", () => loadCallReport());
+  }
+}
+
+const OUTCOME_WORDS = {
+  connected: "Connected", "no-answer": "No answer", busy: "Busy",
+  failed: "Failed", cancelled: "Cancelled", placed: "Handed to Zoho",
+  unknown: "Not recorded",
+};
+
+function renderPerson(p) {
+  const el = $("calls-body");
+  const t = p.totals;
+  const peak = Math.max(1, ...p.daily.map((d) => +d.calls));
+  const rate = t.calls ? Math.round((t.connected / t.calls) * 100) : 0;
+  const oTotal = p.outcomes.reduce((a, o) => a + o.n, 0) || 1;
+
+  el.innerHTML = `
+    <div class="person-head">
+      <button class="btn-ghost" id="person-back">‹ All people</button>
+      <span class="avatar" style="background:${avColor(p.email)}">${esc(initials(p.label))}</span>
+      <div class="person-who">
+        <h3>${esc(p.label)}</h3>
+        <span class="person-sub">${esc(p.email)}
+          ${p.role ? `<span class="asg-tag">${esc(p.role)}</span>` : ""}
+          ${!p.account ? `<span class="asg-tag" title="Calls logged under a name that is nobody's account">no account</span>` : ""}
+          ${p.disabled ? `<span class="asg-tag">disabled</span>` : ""}</span>
+      </div>
+    </div>
+
+    <div class="kpi-strip">
+      ${kpiTile("Calls", t.calls.toLocaleString(), `in the last ${p.days} days`)}
+      ${kpiTile("Connected", t.connected.toLocaleString(),
+        t.calls ? `${rate}% of their calls` : "none yet")}
+      ${kpiTile("Busiest average", String(p.perActiveDay),
+        t.activeDays ? `per day, over ${t.activeDays} day${t.activeDays === 1 ? "" : "s"} they called` : "no days with calls")}
+      ${kpiTile("Open follow-ups", String(p.followups.open),
+        p.followups.overdue ? `${p.followups.overdue} overdue` : "none overdue")}
+    </div>
+
+    <div class="act-card">
+      <h4>Their day, for ${p.days} days</h4>
+      <div class="hist-strip tall">
+        ${p.daily.map((d) => `
+          <button class="hist-col${d.today ? " is-today" : ""}" data-day="${d.date}"
+            title="${esc(dayLabel(d.date))} — ${d.calls} call${+d.calls === 1 ? "" : "s"}, ${d.connected} connected">
+            <span class="hist-bar" style="height:${Math.max(2, Math.round((+d.calls / peak) * 100))}%">
+              <span class="hist-fill" style="height:${+d.calls ? Math.round((+d.connected / +d.calls) * 100) : 0}%"></span>
+            </span>
+          </button>`).join("")}
+      </div>
+      <p class="asg-foot">Solid part connected. Empty days are days with no
+        calls logged through the dashboard — which is not the same as a day off.</p>
+    </div>
+
+    <div class="person-cols">
+      <div class="act-card">
+        <h4>How the calls went</h4>
+        ${p.outcomes.length ? `<table class="asg-table">
+          <tbody>${p.outcomes.map((o) => `
+            <tr><td>${esc(OUTCOME_WORDS[o.outcome] || o.outcome)}</td>
+                <td class="n"><b>${o.n}</b></td>
+                <td class="asg-bar-cell"><span class="asg-bar"
+                  style="width:${Math.round((o.n / oTotal) * 100)}%"></span></td></tr>`).join("")}
+          </tbody></table>`
+          : `<p class="act-empty">No calls in this window.</p>`}
+      </div>
+
+      <div class="act-card">
+        <h4>Their book</h4>
+        <table class="asg-table"><tbody>
+          <tr><td>Leads assigned</td><td class="n"><b>${(+p.book.assigned).toLocaleString()}</b></td></tr>
+          <tr><td>With a phone number</td><td class="n">${(+p.book.callable).toLocaleString()}</td></tr>
+          <tr><td>Worked at least once</td><td class="n">${(+p.book.worked).toLocaleString()}</td></tr>
+          <tr><td>Never touched</td><td class="n">${(+p.book.untouched).toLocaleString()}</td></tr>
+        </tbody></table>
+      </div>
+
+      <div class="act-card">
+        <h4>Everything else they did</h4>
+        ${p.actions.length ? `<table class="asg-table"><tbody>
+          ${p.actions.map((a) => `<tr>
+            <td>${esc(ACT_WORDS[a.action] || a.action)}</td>
+            <td class="n"><b>${a.n}</b></td>
+            <td class="n">${esc(relTime(a.last))}</td></tr>`).join("")}
+        </tbody></table>` : `<p class="act-empty">Nothing logged in this window.</p>`}
+      </div>
+    </div>
+
+    <div class="act-card">
+      <h4>Their last ${p.recent.length} call${p.recent.length === 1 ? "" : "s"}</h4>
+      ${p.recent.length ? `<table class="asg-table">
+        <thead><tr><th>When</th><th>Company</th><th>Outcome</th><th class="n">Length</th></tr></thead>
+        <tbody>${p.recent.map((c) => `
+          <tr>
+            <td>${esc(relTime(c.at))}</td>
+            <td>${c.lead_id && c.lead_kind
+              ? `<a href="#" class="person-lead" data-lead="${c.lead_id}" data-kind="${esc(c.lead_kind)}">${esc(c.lead_name || c.lead_code || "—")}</a>`
+              : esc(c.lead_name || c.lead_code || "—")}</td>
+            <td><span class="asg-tag">${esc(OUTCOME_WORDS[c.outcome] || c.outcome || "—")}</span></td>
+            <td class="n">${c.seconds ? fmtDuration(c.seconds) : "—"}</td>
+          </tr>`).join("")}
+        </tbody></table>`
+        : `<p class="act-empty">No calls recorded for this person yet.</p>`}
+      <p class="asg-foot">Only calls placed through the dashboard. A call made
+        from a handset or the Zoho app never reaches us and cannot appear here.</p>
+    </div>`;
+
+  $("person-back")?.addEventListener("click", () => loadCallReport());
+  /* Same route into a lead the activity feed uses: switch to the tab that
+     holds that kind, then select it. */
+  el.querySelectorAll(".person-lead").forEach((a) =>
+    a.addEventListener("click", (e) => {
+      e.preventDefault();
+      const tab = KIND_TAB[a.dataset.kind];
+      if (!tab) return;
+      setTab(tab);
+      select({ Id: +a.dataset.lead, _t: tab });
+    }));
 }
 
 function kpiTile(label, value, sub) {
@@ -5215,6 +5414,20 @@ function wire() {
   on("calls-refresh", "click", () => loadCallReport());
   on("calls-live", "click", toggleCallPolling);
   on("calls-minutes", "change", () => loadCallReport());
+  on("calls-prev", "click", () => stepCallDate(-1));
+  on("calls-next", "click", () => stepCallDate(1));
+  on("calls-today", "click", () => { callsDate = ""; loadCallReport(); });
+  on("calls-date", "change", (e) => {
+    callsDate = e.target.value; stopCallPolling(); loadCallReport();
+  });
+  /* Delegated, because the report repaints on every load and per-element
+     listeners would have to be rebound each time. */
+  $("calls-body")?.addEventListener("click", (e) => {
+    const bar = e.target.closest(".hist-col[data-date]");
+    if (bar) { callsDate = bar.dataset.date; stopCallPolling(); return loadCallReport(); }
+    const row = e.target.closest(".person-row[data-person]");
+    if (row) return openPerson(row.dataset.person);
+  });
 
   /* Delegated so it covers the reading pane, which is re-rendered constantly.
      A modified click (new tab, copy link) is left alone — the number is still

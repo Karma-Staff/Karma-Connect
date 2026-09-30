@@ -4,7 +4,7 @@
 
 # API
 
-**133 routes**, generated from the source on 2026-09-28.
+**135 routes**, generated from the source on 2026-09-30.
 
 Every path is absolute. That is deliberate: Karma Leads' API paths are the same
 whether it runs standalone or mounted into Connect, which is what let its front
@@ -47,7 +47,7 @@ declared once for the group.
 
 ---
 
-## Karma Leads — 71 routes
+## Karma Leads — 73 routes
 
 ### `/api/activity`
 
@@ -99,7 +99,9 @@ declared once for the group.
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/calls/report` | admin | [leads/server/calls.js:80](../../leads/server/calls.js#L80) | GET /api/calls/report — the manager's screen. |
+| GET | `/api/calls/person/:email` | admin | [leads/server/calls.js:268](../../leads/server/calls.js#L268) | GET /api/calls/person/:email — one person, in depth. |
+| GET | `/api/calls/report` | admin | [leads/server/calls.js:141](../../leads/server/calls.js#L141) | GET /api/calls/report — the manager's screen. |
+| POST | `/api/calls/rollup` | admin | [leads/server/calls.js:390](../../leads/server/calls.js#L390) | POST /api/calls/rollup — rebuild stored days. |
 
 ### `/api/campaign`
 
@@ -174,7 +176,7 @@ declared once for the group.
 | GET | `/api/leads` | signed in *(inherited)* | [leads/server/leads.js:163](../../leads/server/leads.js#L163) |  |
 | PATCH | `/api/leads/:id` | own lead *(inherited)* | [leads/server/leads.js:276](../../leads/server/leads.js#L276) | status / owner / favorite — the three judgement fields the UI edits |
 | DELETE | `/api/leads/:id` | admin, own lead *(inherited)* | [leads/server/trash.js:110](../../leads/server/trash.js#L110) |  |
-| POST | `/api/leads/:id/call` | signed in, own lead *(inherited)* | [leads/server/calls.js:37](../../leads/server/calls.js#L37) | POST /api/leads/:id/call — the softphone reporting how a call went. |
+| POST | `/api/leads/:id/call` | signed in, own lead *(inherited)* | [leads/server/calls.js:98](../../leads/server/calls.js#L98) | POST /api/leads/:id/call — the softphone reporting how a call went. |
 | GET | `/api/leads/:id/comments` | own lead *(inherited)* | [leads/server/leads.js:442](../../leads/server/leads.js#L442) |  |
 | POST | `/api/leads/:id/comments` | own lead *(inherited)* | [leads/server/leads.js:453](../../leads/server/leads.js#L453) |  |
 | GET | `/api/leads/:id/delete-preview` | admin, own lead *(inherited)* | [leads/server/trash.js:94](../../leads/server/trash.js#L94) | what the confirm modal shows before the click: |

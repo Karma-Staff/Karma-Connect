@@ -1763,3 +1763,49 @@ label.check input[type="checkbox"] { width: auto; margin: 0; accent-color: var(-
   color: var(--ink-3); font-size: 13px; border-radius: 4px;
 }
 .tour-skip:hover { color: var(--ink); background: var(--surface-2); }
+
+/* ---- Call history strip -------------------------------------------------
+   One bar per day, so the report shows a month rather than a number that
+   resets at midnight. The solid inner part is the share that connected —
+   height inside the bar, not a second bar, so the two can never be read as
+   separate quantities that happen to sit together. */
+.hist-strip {
+  display: flex; align-items: flex-end; gap: 3px;
+  height: 66px; margin: 4px 0 10px; padding: 0;
+}
+.hist-strip.tall { height: 96px; }
+.hist-col {
+  flex: 1 1 0; min-width: 0; height: 100%; padding: 0;
+  display: flex; align-items: flex-end; justify-content: stretch;
+  background: none; border: 0; cursor: pointer; border-radius: 3px;
+}
+.hist-col:hover { background: var(--surface-2); }
+.hist-col.on { background: var(--accent-soft, rgba(74,134,200,.16)); }
+.hist-bar {
+  display: block; width: 100%; border-radius: 3px 3px 0 0;
+  background: var(--border); position: relative; overflow: hidden;
+  transition: background .12s;
+}
+.hist-col:hover .hist-bar { background: var(--ink-3); }
+/* the connected portion, growing from the baseline */
+.hist-fill {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  background: var(--accent); border-radius: 0 0 3px 3px;
+}
+/* today is still counting, so it is marked rather than left to look short */
+.hist-col.is-today .hist-bar { outline: 1.5px dashed var(--ink-3); outline-offset: 1px; }
+
+/* ---- One person --------------------------------------------------------- */
+.person-row { cursor: pointer; }
+.person-row:hover { background: var(--surface-2); }
+.person-head {
+  display: flex; align-items: center; gap: 12px; margin: 0 0 16px;
+  padding-bottom: 14px; border-bottom: 1px solid var(--border);
+}
+.person-who h3 { margin: 0; font-size: 18px; letter-spacing: -.2px; }
+.person-sub { display: block; color: var(--ink-3); font-size: 13px; margin-top: 2px; }
+.person-sub .asg-tag { margin-left: 6px; }
+.person-cols { display: grid; gap: 12px; grid-template-columns: 1fr; }
+@media (min-width: 900px) {
+  .person-cols { grid-template-columns: repeat(3, 1fr); }
+}

@@ -392,6 +392,15 @@
           <h2>Call report</h2>
         </div>
         <div class="list-filters">
+          <!-- Any past day, read from the stored daily rollup. Before this the
+               report only ever knew about today and went back to zero at
+               midnight. -->
+          <button id="calls-prev" class="btn-ghost" title="The day before">‹</button>
+          <label class="ctl"><span class="ctl-ic">▤</span>
+            <input type="date" id="calls-date" title="Which day to report on">
+          </label>
+          <button id="calls-next" class="btn-ghost" title="The day after">›</button>
+          <button id="calls-today" class="btn-ghost" title="Back to today">Today</button>
           <label class="ctl"><span class="ctl-ic">◷</span>
             <select id="calls-minutes" title="How recently someone must have done something to count as working now">
               <option value="5">Active in 5 min</option>

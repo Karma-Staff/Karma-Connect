@@ -172,16 +172,45 @@ Distribute leads to reps.
 
 ### KL-11 · Call report *(admin)*
 
-Calls per rep, and connect rate.
+Calls per rep and connect rate, for any day — plus a 30-day history and a
+drill-down into one person.
 
 **Acceptance**
 
 - Reads `activity_log` where `action = 'call'`, served by a partial index
   `(at DESC, actor) WHERE action = 'call'`.
+- **Any past day can be opened**, read from `call_daily`. The numbers no longer
+  reset at midnight.
+- **Today is counted live**, every earlier day from the stored rollup, using
+  the same expressions — so the screen and the morning email agree.
+- The 30-day strip shows **every** day including empty ones. A gap must read as
+  "nobody called", never as a missing bar.
+- A day is a **local** date in `REPORT_TZ`, not a UTC one, or an evening's work
+  lands in the wrong day.
 - **Says out loud that it only counts calls made through the app.** A number
   without its caveat gets repeated to a customer.
 
-**Current state**: 124 logged calls. Connect rate needs a Zoho Voice seat.
+**Current state**: 232 calls over 30 days; history back to 18 Sept.
+
+### KL-11a · One person *(admin)*
+
+The question a manager asks after "who is calling", which is "what is *this
+person* doing". Reached by clicking any row in the call report.
+
+**Acceptance**
+
+- Their daily run for 30 days, the outcome mix, everything else they did
+  (calls are one action of eleven — a rep who placed no calls but wrote thirty
+  notes was not idle), their last 50 calls **with the company named**, their
+  book of leads, and their open follow-ups.
+- Days with no calls are included in the average denominator only via
+  `activeDays`, so "per active day" cannot be inflated by a quiet week.
+- Works for callers who are **not accounts** — owner strings from the old
+  system made real calls, and hiding them would make totals disagree with rows.
+- Admin only: this is a colleague's work in detail, which is exactly what a
+  member may not see.
+- A call row links through to the lead, using the same route the activity feed
+  uses, and is plain text when the lead has since been purged.
 
 ### KL-12 · Team activity *(admin)*
 
@@ -260,7 +289,34 @@ Book a reminder against a lead; it arrives by email when due.
 
 > ⚠️ **Not currently working.** `job_runs` is empty: no scheduled digest has ever
 > been sent. Diagnosis in
-> [RUNBOOK](../operations/RUNBOOK.md#the-7am-digest).
+> [RUNBOOK](../operations/RUNBOOK.md#the-morning-knock).
+
+### KL-16a · The morning call report *(to admins)*
+
+Every morning, yesterday's calling emailed to the people who run the floor: how
+many calls, how many connected, per member.
+
+**Acceptance**
+
+- **Rolls yesterday into `call_daily` first, then mails what it just stored.**
+  Not a second query — if the email counted separately it could disagree with
+  the screen an hour later, and then nobody trusts either.
+- Goes to **admins and the owner only**. The storm digest goes to everyone
+  because a storm is news; this is every person's numbers side by side, which
+  is a management view. `OWNER_EMAILS` is unioned in, so the owner tier does
+  not depend on a database row.
+- **People who called nothing appear as a zero, not as an omission.** A list of
+  only the active makes an idle day look like a quiet one, and the gap is the
+  point.
+- Reports **yesterday** — at 7am today has barely started.
+- **Sends even on a zero day**, unlike the storm digest. A silent floor is
+  precisely what a manager must be told.
+- Compares against the **same weekday last week**, not simply the day before,
+  so "down 60%" does not appear every Monday until people ignore it.
+- Claimed once a day via `job_runs`, under its own job name so a storm-digest
+  failure cannot swallow it.
+- Says that it counts only calls placed through the dashboard, and names the
+  timezone.
 
 ### KL-17 · Trash
 

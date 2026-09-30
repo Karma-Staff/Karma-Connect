@@ -129,6 +129,17 @@ router.post("/api/cron/daily", express.json({ limit: "2kb" }), async (req, res) 
     console.error("[karma] digest:", e.message);
     out.digest = { error: e.message };
   }
+  /* The morning call report: roll yesterday up into call_daily and mail the
+     managers what it says. Separately claimed, so a failure in one digest
+     never silently swallows the other. */
+  try {
+    out.calls = await require("./call-digest").runCallDigest({
+      force: b.force === true, only: b.only || "", day: b.day || "" });
+  } catch (e) {
+    console.error("[karma] call digest:", e.message);
+    out.calls = { error: e.message };
+  }
+
   /* Whatever the digest did, the knock has woken the process — so flush any
      follow-back reminders that fell due while it was asleep. This is the
      other half of the free-plan problem and costs one call. */

@@ -50,6 +50,7 @@ once.
 | `008_followups.sql` | 2026-09-21 | `lead_followups` + the two partial indexes that make reminders safe |
 | `009_job_runs.sql` | 2026-09-21 | `job_runs`, so a daily job can be claimed once |
 | `010_call_sessions.sql` | 2026-09-22 | `call_sessions`, the campaign dialler |
+| `011_call_daily.sql` | 2026-09-30 | `call_daily` — one row per person per day, so the call report stops resetting at midnight |
 
 Migrations 005–010 are all from the last fortnight. That is the shape of this
 project right now: a stable core from August, and everything since built on top
@@ -185,6 +186,40 @@ calls.
 puts the count in `meta.bulk`. Three hundred per-lead rows would bury the feed.
 
 ### Working the base
+
+**`call_daily`** — one row per person per day of calling, kept forever
+(migration 011). The rollup that makes the call report a history rather than a
+snapshot.
+
+Before it, the report asked `activity_log` for `at >= date_trunc('day', now())`
+and nothing else, so every number went to zero at midnight and there was no way
+to ask what yesterday looked like. The rows were never lost — `activity_log` is
+append-only — but nothing read them, which to the person looking at the screen
+is the same thing.
+
+Two reasons it is a table and not a better query:
+
+- **A finished day is a fact.** Its numbers cannot change, so recomputing them
+  on every page load is work repeated for an answer already known.
+- **The morning email must agree with the screen.** Both read the same stored
+  row, so a manager cannot be told 82 calls in an email and shown 85 an hour
+  later because two queries drifted.
+
+**Today is deliberately not stored** — it is still changing. `calls.js` counts
+today live from the log and reads this table for every day before it, using the
+same expressions in both so the two cannot disagree.
+
+⚠️ **The day is a local date, not a UTC one.** `at` is `timestamptz` and Render
+runs UTC, so `at::date` puts an 8pm Eastern call into *tomorrow* — which
+silently moves a whole evening of work into the next day's report and makes the
+morning email wrong. `call_day(ts, tz)` is the single definition of a day;
+`REPORT_TZ` (falling back to `DIGEST_TZ`) is the timezone. Migration 011
+backfilled on `America/New_York`.
+
+Rebuilding a day is idempotent (`ON CONFLICT … DO UPDATE`), which is what lets
+the nightly job, a retry and a manual backfill all be the same operation.
+`POST /api/calls/rollup` is the manual lever; it can only restore the truth,
+because every figure is recomputed from the append-only log.
 
 **`call_sessions`** — 10 rows. The campaign dialler. The important column is
 `lead_ids bigint[]`: the session **snapshots** the lead ids at the moment it

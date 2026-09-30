@@ -72,7 +72,7 @@ automatic purge and there probably should be.
 `job_runs` is empty. Most likely the GitHub repository secrets (`APP_URL`,
 `CRON_TOKEN`) are unset, in which case the workflow emits a notice and stops by
 design. Diagnosis is five minutes:
-[RUNBOOK §The 7am digest](operations/RUNBOOK.md#the-7am-digest).
+[RUNBOOK §The morning knock](operations/RUNBOOK.md#the-morning-knock).
 
 ### `DECISION REQUIRED` — `render.yaml` would deploy a broken service
 

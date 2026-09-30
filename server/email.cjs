@@ -198,6 +198,60 @@ async function sendStormDigestEmail(to, d, idempotencyKey) {
   await send(to, `Storm watch: ${d.totalStates} state${d.totalStates === 1 ? "" : "s"} hit`, html, { idempotencyKey });
 }
 
+/* The morning call report (leads/server/call-digest.js).
+
+   Goes to admins and the owner rather than the whole team: this is everyone's
+   numbers side by side, which is a management view and not a team one.
+
+   It shows people who called NOTHING as a zero rather than leaving them out.
+   A list of only the active makes an idle day look like a quiet one, and the
+   gap is the thing a manager needs to see. */
+async function sendCallDigestEmail(to, d, idempotencyKey) {
+  const hi = d.name ? "Morning " + escapeHtml(d.name) + "," : "Morning,";
+  const pct = d.calls ? Math.round((d.connected / d.calls) * 100) : 0;
+
+  const row = (p, i) => `<tr${p.calls === 0 ? ' style="opacity:.62"' : ""}>
+    <td style="padding:8px 10px;border-bottom:1px solid #e6e9f0">
+      <b>${escapeHtml(p.label)}</b>${p.role && p.role !== "member"
+        ? ` <span style="color:#8a93a3;font-size:11px">${escapeHtml(p.role)}</span>` : ""}
+      ${p.calls === 0 ? '<br><span style="color:#b0342c;font-size:12px">no calls</span>' : ""}</td>
+    <td style="padding:8px 10px;border-bottom:1px solid #e6e9f0;text-align:right"><b>${p.calls}</b></td>
+    <td style="padding:8px 10px;border-bottom:1px solid #e6e9f0;text-align:right">${p.connected}${
+      p.placed ? `<br><span style="color:#8a93a3;font-size:11px">+${p.placed} unknown</span>` : ""}</td>
+    <td style="padding:8px 10px;border-bottom:1px solid #e6e9f0;text-align:right;color:#667">${
+      p.calls ? Math.round((p.connected / p.calls) * 100) + "%" : "—"}</td>
+  </tr>`;
+
+  const th = (t, right) => `<th style="text-align:${right ? "right" : "left"};padding:0 10px 6px;
+    color:#667;font-size:11px;letter-spacing:.06em;text-transform:uppercase">${t}</th>`;
+
+  const html = `<div style="font-family:Inter,Segoe UI,Arial,sans-serif;max-width:560px;margin:0 auto;color:#0b2545">
+    <h2 style="color:#0b2545;margin-bottom:4px">Call report — ${escapeHtml(d.dayLabel)}</h2>
+    <p style="color:#667;margin-top:0">${d.calls.toLocaleString()} call${d.calls === 1 ? "" : "s"}
+       by ${d.callers} of ${d.members} · ${d.connected.toLocaleString()} connected (${pct}%)</p>
+    <p>${hi}</p>
+    <table style="width:100%;border-collapse:collapse;margin:18px 0;font-size:14px">
+      <tr>${th("Person")}${th("Calls", 1)}${th("Connected", 1)}${th("Rate", 1)}</tr>
+      ${d.people.map(row).join("")}
+      <tr><td style="padding:9px 10px;border-top:2px solid #0b2545"><b>Total</b></td>
+          <td style="padding:9px 10px;border-top:2px solid #0b2545;text-align:right"><b>${d.calls}</b></td>
+          <td style="padding:9px 10px;border-top:2px solid #0b2545;text-align:right"><b>${d.connected}</b></td>
+          <td style="padding:9px 10px;border-top:2px solid #0b2545;text-align:right"><b>${pct}%</b></td></tr>
+    </table>
+    ${d.vsPrev ? `<p style="font-size:13px;color:#667">${escapeHtml(d.vsPrev)}</p>` : ""}
+    ${d.placed ? `<p style="font-size:12px;color:#8a6100;background:#fdf6e6;padding:9px 11px;border-radius:7px">
+      ${d.placed} of these were handed to Zoho's own dialler, which never reports back how
+      they went. They count as calls and never as connections, so the connected figure is a
+      floor rather than a rate.</p>` : ""}
+    ${d.link ? `<p style="margin:22px 0"><a href="${d.link}" style="background:#0b2545;color:#fff;text-decoration:none;font-weight:700;padding:12px 22px;border-radius:10px;display:inline-block">Open the call report</a></p>` : ""}
+    <p style="font-size:12px;color:#667">Counts calls placed <b>through the dashboard</b>.
+      A rep dialling from a handset or the Zoho app directly appears here as zero.
+      Times are ${escapeHtml(d.tz)}.</p>
+  </div>`;
+  await send(to, `Call report ${d.dayLabel}: ${d.calls} calls, ${d.connected} connected`,
+    html, { idempotencyKey });
+}
+
 /* Being added to the team (leads/server/users.js).
 
    This email is the whole invite. Adding somebody only creates their row —
@@ -249,4 +303,4 @@ async function sendOutreachEmail({ fromName, fromEmail, to, subject, text }) {
   throw new Error("Email gateway " + r.status + ": " + t);
 }
 
-module.exports = { emailVerifyOn, VERIFY_TTL_HOURS, RESET_TTL_HOURS, escapeHtml, sendVerificationEmail, sendResetEmail, sendApprovalRequestEmail, sendApprovalDecisionEmail, sendOutreachEmail, sendFollowupEmail, sendStormDigestEmail, sendTeamInviteEmail };
+module.exports = { emailVerifyOn, VERIFY_TTL_HOURS, RESET_TTL_HOURS, escapeHtml, sendVerificationEmail, sendResetEmail, sendApprovalRequestEmail, sendApprovalDecisionEmail, sendOutreachEmail, sendFollowupEmail, sendStormDigestEmail, sendCallDigestEmail, sendTeamInviteEmail };
