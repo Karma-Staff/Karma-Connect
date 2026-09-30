@@ -52,7 +52,7 @@ h1("2. Working a prospect, step by step (everyone)");
 p("The app follows a funnel down the left sidebar: Prospect Hub -> Intelligence -> Connection Requests -> (after approval) Relationship -> Meeting -> Follow-up.");
 
 h2("Step A - Prospect Hub: enter who you're targeting");
-step(1, "Pick the SENDER you're reaching out as (Nordon, Ogyen, Tenzin Jigme, Tenzin Wangjor, or Scott Sandel). Each has its own voice and calendar link.");
+step(1, "Pick the SENDER you're reaching out as (Ogyen, Tenzin Jigme, Tenzin Wangjor, or Scott Sandel). Each has its own voice and calendar link.");
 step(2, "Fill in the prospect's details: name, title, company, industry, location. The more you add, the better the AI output.");
 step(3, "Optional - Company research: paste the company website / name and let the AI pull in verifiable company facts (uses one quick web search).");
 step(4, "Optional - Deep LinkedIn paste: open the prospect's LinkedIn profile, select all (Ctrl+A), copy (Ctrl+C), and paste into the LinkedIn box. The AI extracts their profile into the fields.");

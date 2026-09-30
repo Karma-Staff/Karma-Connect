@@ -119,7 +119,7 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   const EMPTY_RESULTS = { connection: [], inmail: [], relationship: [], meeting_short: [], meeting_standard: [], meeting_executive: [], followup: [], followupSeq: [] };
   const [view, setView] = useState(["campaigns", "analytics"].includes(saved.view) ? "hub" : (saved.view || "hub"));
   const [prospect, setProspect] = useState({ ...EMPTY_PROSPECT, ...(saved.prospect || {}) });
-  const [sender, setSender] = useState(saved.sender || "nordon");
+  const [sender, setSender] = useState(saved.sender || SENDERS[0].id);
   const [offer, setOffer] = useState(saved.offer || senderOffer(SENDERS[0]));
   const [coUrl, setCoUrl] = useState(saved.coUrl || "");
   // Recently-researched companies (per account), newest first. Clicking one re-fills the
@@ -351,7 +351,7 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   function loadFromHistory(entry) {
     const s = entry.snapshot || {};
     setProspect({ ...EMPTY_PROSPECT, ...(s.prospect || {}) });
-    setSender(s.sender || "nordon");
+    setSender(s.sender || SENDERS[0].id);
     setOffer(s.offer || senderOffer(SENDERS[0]));
     setCoUrl(s.coUrl || "");
     setAnalysis(s.analysis || null);

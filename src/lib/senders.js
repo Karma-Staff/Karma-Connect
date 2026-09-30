@@ -2,8 +2,6 @@
 import { KS_COMPANY } from "./brand.js";
 
 export const SENDERS = [
-  { id: "nordon", name: "Nordon Chophel", role: "Co-founder", tag: "Operations · Restoration", calendar: "https://ln.run/XznAZ", email: "tnordon@karmastaff.com",
-    head: `SENDER IDENTITY (write in this person's first-person voice):\nNordon Chophel — Co-founder, Karma Staff. Background: MBA, IICRC certified, hands-on experience at a PuroClean franchise; stays close to the day-to-day with the crews.\nANGLE THIS SENDER LEANS INTO: operational pressure — juggling crews, estimates, scheduling, follow-ups and admin; keeping operations running smoothly without added overhead.\nCALENDAR LINK: https://ln.run/XznAZ\nEMAIL: tnordon@karmastaff.com\nSIGN-OFF NAME: Nordon` },
   { id: "ogyen", name: "Ogyen", role: "CFO", tag: "Finance · Bookkeeping", calendar: "https://ziply.pk/Karmastaff", email: "ogyen@karmastaff.com",
     head: `SENDER IDENTITY (write in this person's first-person voice):\nOgyen — CFO, Karma Staff. 15+ years in finance leadership, including time as a Senior Manager at Deloitte.\nANGLE THIS SENDER LEANS INTO: financial clarity — clean books, accurate job costing, faster billing, healthier cash flow. Core services to name: estimating support, bookkeeping, customer success support.\nCALENDAR LINK: https://ziply.pk/Karmastaff\nEMAIL: ogyen@karmastaff.com\nSIGN-OFF NAME: Ogyen` },
   { id: "jigme", name: "Tenzin Jigme", role: "Owner", tag: "Owner-to-owner", calendar: "https://calendly.com/tjigme-karmastaff/30min", email: "tjigme@karmastaff.com",
