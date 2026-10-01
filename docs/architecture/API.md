@@ -4,7 +4,7 @@
 
 # API
 
-**136 routes**, generated from the source on 2026-10-01.
+**142 routes**, generated from the source on 2026-10-01.
 
 Every path is absolute. That is deliberate: Karma Leads' API paths are the same
 whether it runs standalone or mounted into Connect, which is what let its front
@@ -47,13 +47,13 @@ declared once for the group.
 
 ---
 
-## Karma Leads — 74 routes
+## Karma Leads — 80 routes
 
 ### `/api/activity`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/activity` | admin | [leads/server/index.js:130](../../leads/server/index.js#L130) |  |
+| GET | `/api/activity` | admin | [leads/server/index.js:134](../../leads/server/index.js#L134) |  |
 
 ### `/api/alerts`
 
@@ -251,6 +251,12 @@ declared once for the group.
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
 | GET | `/api/voice/config` | signed in | [leads/server/voice.js:159](../../leads/server/voice.js#L159) |  |
+| GET | `/api/voice/rc/callback` | — | [leads/server/ringcentral.js:122](../../leads/server/ringcentral.js#L122) |  |
+| GET | `/api/voice/rc/connect` | signed in | [leads/server/ringcentral.js:111](../../leads/server/ringcentral.js#L111) |  |
+| DELETE | `/api/voice/rc/connect` | signed in | [leads/server/ringcentral.js:269](../../leads/server/ringcentral.js#L269) |  |
+| POST | `/api/voice/rc/session` | signed in | [leads/server/ringcentral.js:231](../../leads/server/ringcentral.js#L231) | POST /api/voice/rc/session — everything the browser needs to register a softphone, and nothin… |
+| GET | `/api/voice/rc/status` | signed in | [leads/server/ringcentral.js:213](../../leads/server/ringcentral.js#L213) |  |
+| GET | `/api/voice/rc/team` | admin | [leads/server/ringcentral.js:278](../../leads/server/ringcentral.js#L278) | Who on the team has a working phone. |
 | POST | `/api/voice/token` | signed in | [leads/server/voice.js:184](../../leads/server/voice.js#L184) | The SDK's oAuthCallBack fetches this. |
 
 ---
@@ -261,148 +267,148 @@ declared once for the group.
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/admin/activity` | admin, signed in | [server.js:1113](../../server.js#L1113) | ──────────────────────────── Team activity ───────────────────────── Admin-only: |
-| GET | `/api/admin/users` | admin, signed in | [server.js:1044](../../server.js#L1044) | ───────────────────────────── Admin: |
-| DELETE | `/api/admin/users/:id` | owner, signed in | [server.js:1086](../../server.js#L1086) | Remove a member (cascades their data). |
-| POST | `/api/admin/users/:id/role` | owner, signed in | [server.js:1064](../../server.js#L1064) | Owner only. An admin who can appoint admins is an owner in all but name, and one compromised… |
+| GET | `/api/admin/activity` | admin, signed in | [server.js:1125](../../server.js#L1125) | ──────────────────────────── Team activity ───────────────────────── Admin-only: |
+| GET | `/api/admin/users` | admin, signed in | [server.js:1056](../../server.js#L1056) | ───────────────────────────── Admin: |
+| DELETE | `/api/admin/users/:id` | owner, signed in | [server.js:1098](../../server.js#L1098) | Remove a member (cascades their data). |
+| POST | `/api/admin/users/:id/role` | owner, signed in | [server.js:1076](../../server.js#L1076) | Owner only. An admin who can appoint admins is an owner in all but name, and one compromised… |
 
 ### `/api/admins`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/admins` | signed in | [server.js:1102](../../server.js#L1102) | Any signed-in user can see the list of admins (to choose who should approve a lead). |
+| GET | `/api/admins` | signed in | [server.js:1114](../../server.js#L1114) | Any signed-in user can see the list of admins (to choose who should approve a lead). |
 
 ### `/api/analytics`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/analytics` | signed in | [server.js:681](../../server.js#L681) |  |
+| GET | `/api/analytics` | signed in | [server.js:693](../../server.js#L693) |  |
 
 ### `/api/approvals`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/approvals` | admin, signed in | [server.js:1002](../../server.js#L1002) | Admin: list approval requests (pending first). |
-| POST | `/api/approvals` | signed in | [server.js:951](../../server.js#L951) | ───────────────────────────── Lead approvals ─────────────────────── Member requests approval… |
-| POST | `/api/approvals/:id/decide` | admin, signed in | [server.js:1016](../../server.js#L1016) | Admin: approve or deny a request. |
-| GET | `/api/approvals/mine` | signed in | [server.js:994](../../server.js#L994) | Member: their own lead statuses, to gate the UI. |
+| GET | `/api/approvals` | admin, signed in | [server.js:1014](../../server.js#L1014) | Admin: list approval requests (pending first). |
+| POST | `/api/approvals` | signed in | [server.js:963](../../server.js#L963) | ───────────────────────────── Lead approvals ─────────────────────── Member requests approval… |
+| POST | `/api/approvals/:id/decide` | admin, signed in | [server.js:1028](../../server.js#L1028) | Admin: approve or deny a request. |
+| GET | `/api/approvals/mine` | signed in | [server.js:1006](../../server.js#L1006) | Member: their own lead statuses, to gate the UI. |
 
 ### `/api/auth`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| DELETE | `/api/auth/account` | signed in | [server.js:394](../../server.js#L394) | Delete the signed-in user's own account (password-confirmed). |
-| POST | `/api/auth/forgot` | rate-limited | [server.js:308](../../server.js#L308) | Request a password reset. |
-| GET | `/api/auth/me` | signed in | [server.js:377](../../server.js#L377) |  |
-| POST | `/api/auth/password` | signed in, rate-limited | [server.js:355](../../server.js#L355) | Change password while signed in (current password required). |
-| POST | `/api/auth/promote` | signed in, rate-limited | [server.js:349](../../server.js#L349) | Self-promotion is gone — see the note in /api/auth/signup. |
-| POST | `/api/auth/resend` | rate-limited | [server.js:290](../../server.js#L290) | Re-send the confirmation email for an unverified account. |
-| POST | `/api/auth/reset` | rate-limited | [server.js:326](../../server.js#L326) | Complete a password reset: |
-| POST | `/api/auth/signin` | rate-limited | [server.js:250](../../server.js#L250) |  |
-| POST | `/api/auth/signout` | — | [server.js:372](../../server.js#L372) |  |
-| POST | `/api/auth/signup` | rate-limited | [server.js:179](../../server.js#L179) |  |
-| GET | `/api/auth/verify` | — | [server.js:273](../../server.js#L273) | Click target from the confirmation email. |
+| DELETE | `/api/auth/account` | signed in | [server.js:406](../../server.js#L406) | Delete the signed-in user's own account (password-confirmed). |
+| POST | `/api/auth/forgot` | rate-limited | [server.js:320](../../server.js#L320) | Request a password reset. |
+| GET | `/api/auth/me` | signed in | [server.js:389](../../server.js#L389) |  |
+| POST | `/api/auth/password` | signed in, rate-limited | [server.js:367](../../server.js#L367) | Change password while signed in (current password required). |
+| POST | `/api/auth/promote` | signed in, rate-limited | [server.js:361](../../server.js#L361) | Self-promotion is gone — see the note in /api/auth/signup. |
+| POST | `/api/auth/resend` | rate-limited | [server.js:302](../../server.js#L302) | Re-send the confirmation email for an unverified account. |
+| POST | `/api/auth/reset` | rate-limited | [server.js:338](../../server.js#L338) | Complete a password reset: |
+| POST | `/api/auth/signin` | rate-limited | [server.js:262](../../server.js#L262) |  |
+| POST | `/api/auth/signout` | — | [server.js:384](../../server.js#L384) |  |
+| POST | `/api/auth/signup` | rate-limited | [server.js:191](../../server.js#L191) |  |
+| GET | `/api/auth/verify` | — | [server.js:285](../../server.js#L285) | Click target from the confirmation email. |
 
 ### `/api/campaigns`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/campaigns` | signed in | [server.js:760](../../server.js#L760) | List campaigns with step + enrollment counts. |
-| POST | `/api/campaigns` | signed in | [server.js:775](../../server.js#L775) | Create a campaign with its steps. |
-| GET | `/api/campaigns/:id` | signed in | [server.js:799](../../server.js#L799) | One campaign: steps + enrollments (joined to prospect label/status). |
-| PATCH | `/api/campaigns/:id` | signed in | [server.js:816](../../server.js#L816) | Update name / sender / status (active\|archived). |
-| DELETE | `/api/campaigns/:id` | signed in | [server.js:847](../../server.js#L847) |  |
-| POST | `/api/campaigns/:id/enroll` | signed in | [server.js:855](../../server.js#L855) | Enroll leads. Body: { prospectIds: [...] }. Sets each to step 0, due after step 0's delay. |
-| PUT | `/api/campaigns/:id/steps` | signed in | [server.js:831](../../server.js#L831) | Replace a campaign's steps wholesale. |
+| GET | `/api/campaigns` | signed in | [server.js:772](../../server.js#L772) | List campaigns with step + enrollment counts. |
+| POST | `/api/campaigns` | signed in | [server.js:787](../../server.js#L787) | Create a campaign with its steps. |
+| GET | `/api/campaigns/:id` | signed in | [server.js:811](../../server.js#L811) | One campaign: steps + enrollments (joined to prospect label/status). |
+| PATCH | `/api/campaigns/:id` | signed in | [server.js:828](../../server.js#L828) | Update name / sender / status (active\|archived). |
+| DELETE | `/api/campaigns/:id` | signed in | [server.js:859](../../server.js#L859) |  |
+| POST | `/api/campaigns/:id/enroll` | signed in | [server.js:867](../../server.js#L867) | Enroll leads. Body: { prospectIds: [...] }. Sets each to step 0, due after step 0's delay. |
+| PUT | `/api/campaigns/:id/steps` | signed in | [server.js:843](../../server.js#L843) | Replace a campaign's steps wholesale. |
 
 ### `/api/claude`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| POST | `/api/claude` | signed in | [server.js:1275](../../server.js#L1275) | ─────────────────────────── Anthropic proxy ──────────────────────── In dev the proxy is open… |
+| POST | `/api/claude` | signed in | [server.js:1287](../../server.js#L1287) | ─────────────────────────── Anthropic proxy ──────────────────────── In dev the proxy is open… |
 
 ### `/api/coach`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/coach/changes` | signed in | [server.js:671](../../server.js#L671) | The change log: |
-| GET | `/api/coach/dataset` | signed in | [server.js:616](../../server.js#L616) | Coach dataset: |
-| GET | `/api/coach/playbook` | signed in | [server.js:635](../../server.js#L635) | Read all learned playbooks for the user (keyed by kind). |
-| PUT | `/api/coach/playbook` | signed in | [server.js:646](../../server.js#L646) | Save/replace a learned playbook for one kind. |
+| GET | `/api/coach/changes` | signed in | [server.js:683](../../server.js#L683) | The change log: |
+| GET | `/api/coach/dataset` | signed in | [server.js:628](../../server.js#L628) | Coach dataset: |
+| GET | `/api/coach/playbook` | signed in | [server.js:647](../../server.js#L647) | Read all learned playbooks for the user (keyed by kind). |
+| PUT | `/api/coach/playbook` | signed in | [server.js:658](../../server.js#L658) | Save/replace a learned playbook for one kind. |
 
 ### `/api/connect`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/connect/leads/:id/notes` | signed in | [server.js:557](../../server.js#L557) | ───────────────────────── Lead notes & activity ──────────────────── |
-| POST | `/api/connect/leads/:id/notes` | signed in | [server.js:567](../../server.js#L567) |  |
-| DELETE | `/api/connect/leads/:id/notes/:noteId` | signed in | [server.js:579](../../server.js#L579) |  |
-| GET | `/api/connect/leads/all` | signed in | [server.js:479](../../server.js#L479) | All of the user's leads (minimal fields) for the board + export. |
-| POST | `/api/connect/leads/brief.pdf` | signed in | [server.js:522](../../server.js#L522) | One prospect's brief PDF (details + computed fit + AI profile). |
-| GET | `/api/connect/leads/export.pdf` | signed in | [server.js:509](../../server.js#L509) | Branded PDF export of the user's leads (rendering in server/pdf.cjs). |
+| GET | `/api/connect/leads/:id/notes` | signed in | [server.js:569](../../server.js#L569) | ───────────────────────── Lead notes & activity ──────────────────── |
+| POST | `/api/connect/leads/:id/notes` | signed in | [server.js:579](../../server.js#L579) |  |
+| DELETE | `/api/connect/leads/:id/notes/:noteId` | signed in | [server.js:591](../../server.js#L591) |  |
+| GET | `/api/connect/leads/all` | signed in | [server.js:491](../../server.js#L491) | All of the user's leads (minimal fields) for the board + export. |
+| POST | `/api/connect/leads/brief.pdf` | signed in | [server.js:534](../../server.js#L534) | One prospect's brief PDF (details + computed fit + AI profile). |
+| GET | `/api/connect/leads/export.pdf` | signed in | [server.js:521](../../server.js#L521) | Branded PDF export of the user's leads (rendering in server/pdf.cjs). |
 
 ### `/api/enrollments`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| POST | `/api/enrollments/:id/advance` | signed in | [server.js:885](../../server.js#L885) | Advance one enrollment to its next step (called when the current step is marked sent). |
-| POST | `/api/enrollments/:id/stop` | signed in | [server.js:913](../../server.js#L913) | Stop an enrollment (remove the lead from the cadence). |
+| POST | `/api/enrollments/:id/advance` | signed in | [server.js:897](../../server.js#L897) | Advance one enrollment to its next step (called when the current step is marked sent). |
+| POST | `/api/enrollments/:id/stop` | signed in | [server.js:925](../../server.js#L925) | Stop an enrollment (remove the lead from the cadence). |
 
 ### `/api/health`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/health` | — | [server.js:1293](../../server.js#L1293) | Health check for Render. |
+| GET | `/api/health` | — | [server.js:1305](../../server.js#L1305) | Health check for Render. |
 
 ### `/api/history`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/history` | signed in | [server.js:413](../../server.js#L413) |  |
-| POST | `/api/history` | signed in | [server.js:450](../../server.js#L450) | Upsert one or more entries. |
-| DELETE | `/api/history/:id` | signed in | [server.js:471](../../server.js#L471) |  |
-| POST | `/api/history/:id/reminder` | signed in | [server.js:531](../../server.js#L531) | Set or clear a lead's follow-up reminder (next-action date + optional note). |
-| POST | `/api/history/:id/status` | signed in | [server.js:432](../../server.js#L432) | Update just the pipeline status of one lead. |
+| GET | `/api/history` | signed in | [server.js:425](../../server.js#L425) |  |
+| POST | `/api/history` | signed in | [server.js:462](../../server.js#L462) | Upsert one or more entries. |
+| DELETE | `/api/history/:id` | signed in | [server.js:483](../../server.js#L483) |  |
+| POST | `/api/history/:id/reminder` | signed in | [server.js:543](../../server.js#L543) | Set or clear a lead's follow-up reminder (next-action date + optional note). |
+| POST | `/api/history/:id/status` | signed in | [server.js:444](../../server.js#L444) | Update just the pipeline status of one lead. |
 
 ### `/api/message-sends`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| POST | `/api/message-sends` | signed in | [server.js:594](../../server.js#L594) | Log that a generated message was sent (the A/B event). |
+| POST | `/api/message-sends` | signed in | [server.js:606](../../server.js#L606) | Log that a generated message was sent (the A/B event). |
 
 ### `/api/outreach`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/outreach/agent/download` | signed in | [server.js:1220](../../server.js#L1220) | The agent's source, zipped, so a recruiter can run it without GitHub access or a clone. |
-| POST | `/api/outreach/agent/enable` | signed in | [server.js:1234](../../server.js#L1234) | The kill switch. |
-| POST | `/api/outreach/agent/lease` | signed in | [server.js:1244](../../server.js#L1244) | Hand the worker its next batch. |
-| POST | `/api/outreach/agent/report/:id` | signed in | [server.js:1258](../../server.js#L1258) | Report one leased item back. |
-| GET | `/api/outreach/agent/status` | signed in | [server.js:1211](../../server.js#L1211) | Agent state for the Send Queue strip: |
-| GET | `/api/outreach/queue` | signed in | [server.js:1156](../../server.js#L1156) | List this user's queue (optional ?status= and ?channel= filters). |
-| POST | `/api/outreach/queue` | signed in | [server.js:1147](../../server.js#L1147) | ───────────────────────── Outreach send queue ────────────────────── Queue a generated messag… |
-| POST | `/api/outreach/queue/:id/approve` | signed in | [server.js:1164](../../server.js#L1164) | Approve a pending item (schedules it; email then auto-sends on the next tick). |
-| POST | `/api/outreach/queue/:id/send-now` | signed in | [server.js:1177](../../server.js#L1177) | Send an approved email item immediately (don't wait for the tick). |
-| POST | `/api/outreach/queue/:id/sent` | signed in | [server.js:1187](../../server.js#L1187) | Mark a LinkedIn item sent after the human one-click hand-off. |
-| POST | `/api/outreach/queue/:id/skip` | signed in | [server.js:1196](../../server.js#L1196) | Skip / cancel a queued item. |
+| GET | `/api/outreach/agent/download` | signed in | [server.js:1232](../../server.js#L1232) | The agent's source, zipped, so a recruiter can run it without GitHub access or a clone. |
+| POST | `/api/outreach/agent/enable` | signed in | [server.js:1246](../../server.js#L1246) | The kill switch. |
+| POST | `/api/outreach/agent/lease` | signed in | [server.js:1256](../../server.js#L1256) | Hand the worker its next batch. |
+| POST | `/api/outreach/agent/report/:id` | signed in | [server.js:1270](../../server.js#L1270) | Report one leased item back. |
+| GET | `/api/outreach/agent/status` | signed in | [server.js:1223](../../server.js#L1223) | Agent state for the Send Queue strip: |
+| GET | `/api/outreach/queue` | signed in | [server.js:1168](../../server.js#L1168) | List this user's queue (optional ?status= and ?channel= filters). |
+| POST | `/api/outreach/queue` | signed in | [server.js:1159](../../server.js#L1159) | ───────────────────────── Outreach send queue ────────────────────── Queue a generated messag… |
+| POST | `/api/outreach/queue/:id/approve` | signed in | [server.js:1176](../../server.js#L1176) | Approve a pending item (schedules it; email then auto-sends on the next tick). |
+| POST | `/api/outreach/queue/:id/send-now` | signed in | [server.js:1189](../../server.js#L1189) | Send an approved email item immediately (don't wait for the tick). |
+| POST | `/api/outreach/queue/:id/sent` | signed in | [server.js:1199](../../server.js#L1199) | Mark a LinkedIn item sent after the human one-click hand-off. |
+| POST | `/api/outreach/queue/:id/skip` | signed in | [server.js:1208](../../server.js#L1208) | Skip / cancel a queued item. |
 
 ### `/api/reminders`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/reminders` | signed in | [server.js:546](../../server.js#L546) | All leads with a follow-up date, soonest first — powers the Reminders view + badge. |
+| GET | `/api/reminders` | signed in | [server.js:558](../../server.js#L558) | All leads with a follow-up date, soonest first — powers the Reminders view + badge. |
 
 ### `/api/stats`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/stats` | signed in | [server.js:490](../../server.js#L490) | Pipeline metrics for the dashboard (counts per stage + this week). |
+| GET | `/api/stats` | signed in | [server.js:502](../../server.js#L502) | Pipeline metrics for the dashboard (counts per stage + this week). |
 
 ### `/api/usage`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/usage` | signed in | [server.js:923](../../server.js#L923) | ─────────────────────────────── Usage ────────────────────────────── |
+| GET | `/api/usage` | signed in | [server.js:935](../../server.js#L935) | ─────────────────────────────── Usage ────────────────────────────── |
 
 ---
 

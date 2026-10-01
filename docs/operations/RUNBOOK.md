@@ -141,6 +141,33 @@ these first — it is one cause, not three.
 The same `CRON_TOKEN` value must also be a **GitHub repository secret**, along
 with `APP_URL`. See §The morning knock.
 
+### RingCentral telephony
+
+Per rep, unlike Zoho: each one signs in once with their own RingCentral account
+and their refresh token is stored in `voice_identities` (migration 012). Calls
+then go out as them, with their caller ID and their entry in RingCentral's own
+call log.
+
+| Variable | Notes |
+|---|---|
+| `RINGCENTRAL_CLIENT_ID` / `RINGCENTRAL_CLIENT_SECRET` | from a **Private**, **server-side web app** at developers.ringcentral.com. API access is included with a RingEX subscription — sign in with the RingEX admin account rather than creating a separate $10/month developer account |
+| `RINGCENTRAL_SERVER_URL` | defaults to `https://platform.ringcentral.com`. A `devtest` host is the sandbox and can only reach RingCentral test numbers |
+| `APP_URL` | the redirect URI is derived from it and must match the app registration **character for character** |
+
+The app needs the **VoIP Calling** permission or `sip-provision` returns 403 —
+the route says so in its `hint`, because RingCentral's own message does not.
+
+```bash
+# is it configured, and is this rep connected?
+curl -s "$APP_URL/api/voice/rc/status" -H "Cookie: kc_session=<a real session>"
+# who on the team has a working phone
+curl -s "$APP_URL/api/voice/rc/team"   -H "Cookie: kc_session=<an admin session>"
+```
+
+Refresh tokens **rotate on every use** and the new one is written back. A rep
+seeing "connect your RingCentral account first" (428) has an expired or revoked
+grant and needs to sign in again; it is not a server fault.
+
 ### Zoho telephony
 
 | Variable | Notes |

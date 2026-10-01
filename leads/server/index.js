@@ -100,6 +100,10 @@ function mount(app, opts = {}) {
   app.use(require("./assignments").router);
   /* click-to-call config + the OAuth token the in-page softphone asks for */
   app.use(require("./voice").router);
+  /* RingCentral sits alongside Zoho rather than replacing it: both can be
+     configured at once while the team moves across, and the front end picks
+     whichever actually has a working seat for that rep. */
+  app.use(require("./ringcentral").router);
   /* recording calls, and the manager's report built from them. After leads.js
      so its requireOwnLead guard has already run for /api/leads/:id paths. */
   app.use(require("./calls").router);

@@ -105,6 +105,18 @@ const CSP = [
    Zoho spreads across more domains than the two I first allowed — API calls on
    zohoapis.com, assets on zohocdn.com, hosted pages on zohopublic.com — so the
    family is listed rather than guessed at one host at a time. */
+/* RingCentral's softphone, alongside Zoho's while the team moves across.
+   The bundle is served from jsdelivr (ringcentral-web-phone ships a browser
+   build; the Leads front end has no bundler to import it with), the REST API
+   lives on platform.ringcentral.com, and the SIP signalling and media are
+   WebSocket to sip*.ringcentral.com — regional hostnames, hence the wildcard.
+   Media also needs blob: for the audio element the SDK creates. */
+const RC_HOSTS = [
+  "https://platform.ringcentral.com", "https://platform.devtest.ringcentral.com",
+  "https://*.ringcentral.com", "https://cdn.jsdelivr.net",
+].join(" ");
+const RC_SOCKETS = ["wss://*.ringcentral.com"].join(" ");
+
 const ZOHO_HOSTS = [
   "https://*.zoho.com", "https://*.zohoapis.com", "https://*.zohostatic.com",
   "https://*.zohocdn.com", "https://*.zohopublic.com", "https://*.zohovoice.com",
@@ -118,15 +130,15 @@ const LEADS_CSP = [
   "base-uri 'self'",
   "object-src 'none'",
   "frame-ancestors 'none'",
-  `img-src 'self' data: blob: ${ZOHO_HOSTS}`,
-  `script-src 'self' 'unsafe-inline' ${ZOHO_HOSTS}`,
-  `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com ${ZOHO_HOSTS}`,
-  `font-src 'self' https://fonts.gstatic.com data: ${ZOHO_HOSTS}`,
-  `connect-src 'self' ${ZOHO_HOSTS} ${ZOHO_SOCKETS}`,
-  `media-src 'self' blob: ${ZOHO_HOSTS}`,
-  `frame-src 'self' ${ZOHO_HOSTS}`,
+  `img-src 'self' data: blob: ${ZOHO_HOSTS} ${RC_HOSTS}`,
+  `script-src 'self' 'unsafe-inline' ${ZOHO_HOSTS} ${RC_HOSTS}`,
+  `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com ${ZOHO_HOSTS} ${RC_HOSTS}`,
+  `font-src 'self' https://fonts.gstatic.com data: ${ZOHO_HOSTS} ${RC_HOSTS}`,
+  `connect-src 'self' ${ZOHO_HOSTS} ${ZOHO_SOCKETS} ${RC_HOSTS} ${RC_SOCKETS}`,
+  `media-src 'self' blob: ${ZOHO_HOSTS} ${RC_HOSTS}`,
+  `frame-src 'self' ${ZOHO_HOSTS} ${RC_HOSTS}`,
   // the SDK's call widget is its own window in some flows
-  `child-src 'self' ${ZOHO_HOSTS}`,
+  `child-src 'self' ${ZOHO_HOSTS} ${RC_HOSTS}`,
 ].join("; ");
 
 const onLeads = (req) => req.path === "/leads" || req.path.startsWith("/leads/");
