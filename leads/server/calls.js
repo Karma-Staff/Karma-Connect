@@ -458,6 +458,115 @@ const hhmm = (sec) => {
 };
 const rate = (n, d) => (d ? Math.round((n / d) * 100) + "%" : "");
 
+/* Gather the rows once, in a shape both renderers can use. Objects rather
+   than arrays, because the PDF addresses columns by name and the CSV can map
+   them in order — the other way round means two queries drifting apart. */
+async function gatherExport({ from, to, who, shape }) {
+  if (shape === "calls") {
+    const r = await query(
+      `SELECT to_char(a.at AT TIME ZONE $4, 'YYYY-MM-DD') AS day,
+              to_char(a.at AT TIME ZONE $4, 'HH24:MI') AS time,
+              a.actor, a.lead_code, a.lead_name, l.company, l.city, l.state,
+              a.meta->>'outcome' AS outcome,
+              (a.meta->>'seconds')::int AS seconds,
+              a.meta->>'number' AS number
+         FROM activity_log a
+         LEFT JOIN leads l ON l.id = a.lead_id
+        WHERE a.action = 'call'
+          AND call_day(a.at, $4) BETWEEN $1::date AND $2::date
+          AND ($3::text IS NULL OR lower(a.actor) = $3)
+        ORDER BY a.at DESC LIMIT ${CSV_LIMIT}`, [from, to, who, TZ]);
+    const recs = r.rows.map((x) => ({ ...x, seconds: x.seconds || 0,
+      number: phoneForCsv(x.number) }));
+    return {
+      recs,
+      csvHeader: ["Date", "Time", "Caller", "Lead code", "Company", "Trading name",
+        "City", "State", "Outcome", "Seconds", "Number dialled"],
+      csvKeys: ["day", "time", "actor", "lead_code", "lead_name", "company",
+        "city", "state", "outcome", "seconds", "number"],
+      totals: {
+        calls: recs.length,
+        connected: recs.filter((x) => x.outcome === "connected").length,
+        placed: recs.filter((x) => x.outcome === "placed").length,
+        leads: new Set(recs.map((x) => x.lead_code)).size,
+        talk: hhmm(recs.reduce((a, x) => a + x.seconds, 0)),
+      },
+    };
+  }
+
+  if (shape === "daily") {
+    const r = await query(
+      `SELECT to_char(c.day, 'YYYY-MM-DD') AS day, c.actor,
+              coalesce(u.display_name, c.actor) AS label,
+              c.calls, c.connected, c.placed, c.no_answer, c.busy, c.failed,
+              c.cancelled, c.seconds, c.leads
+         FROM call_daily c
+         LEFT JOIN app_users u ON lower(u.email) = lower(c.actor)
+        WHERE c.day BETWEEN $1::date AND $2::date
+          AND ($3::text IS NULL OR lower(c.actor) = $3)
+        ORDER BY c.day, lower(c.actor) LIMIT ${CSV_LIMIT}`, [from, to, who]);
+    const recs = r.rows.map((x) => ({ ...x,
+      rate: rate(x.connected, x.calls), talk: hhmm(x.seconds) }));
+    return {
+      recs,
+      csvHeader: ["Date", "Person", "Email", "Calls", "Connected", "Connect rate",
+        "Handed to dialler", "No answer", "Busy", "Failed", "Cancelled",
+        "Talk time", "Leads reached"],
+      csvKeys: ["day", "label", "actor", "calls", "connected", "rate", "placed",
+        "no_answer", "busy", "failed", "cancelled", "talk", "leads"],
+      totals: sumTotals(recs),
+    };
+  }
+
+  /* Summary. The roster is the outer side of the join so somebody who called
+     nothing in the period is a zero row rather than an absence — the same rule
+     the morning email follows, and for the same reason. */
+  const r = await query(
+    `SELECT coalesce(u.email, c.actor) AS actor,
+            coalesce(u.display_name, c.actor, u.email) AS label,
+            coalesce(m.role, '') AS role,
+            coalesce(sum(c.calls), 0)::int      AS calls,
+            coalesce(sum(c.connected), 0)::int  AS connected,
+            coalesce(sum(c.placed), 0)::int     AS placed,
+            coalesce(sum(c.no_answer), 0)::int  AS no_answer,
+            coalesce(sum(c.seconds), 0)::int    AS seconds,
+            coalesce(sum(c.leads), 0)::int      AS leads,
+            count(c.day) FILTER (WHERE c.calls > 0)::int AS days
+       FROM app_users u
+       LEFT JOIN organization_memberships m ON m.user_id = u.id
+       FULL JOIN call_daily c
+         ON lower(c.actor) = lower(u.email)
+        AND c.day BETWEEN $1::date AND $2::date
+      WHERE (u.id IS NULL OR NOT u.disabled)
+        AND (c.day IS NULL OR c.day BETWEEN $1::date AND $2::date)
+        AND ($3::text IS NULL OR lower(coalesce(u.email, c.actor)) = $3)
+      GROUP BY 1, 2, 3
+      ORDER BY calls DESC, lower(coalesce(u.display_name, c.actor, u.email))`,
+    [from, to, who]);
+  const recs = r.rows.map((x) => ({ ...x,
+    role: x.role || "member",
+    rate: rate(x.connected, x.calls), talk: hhmm(x.seconds),
+    perDay: x.days ? Math.round((x.calls / x.days) * 10) / 10 : 0 }));
+  return {
+    recs,
+    csvHeader: ["Person", "Email", "Role", "Calls", "Connected", "Connect rate",
+      "Handed to dialler", "No answer", "Talk time", "Leads reached",
+      "Days with calls", "Calls per active day"],
+    csvKeys: ["label", "actor", "role", "calls", "connected", "rate", "placed",
+      "no_answer", "talk", "leads", "days", "perDay"],
+    totals: sumTotals(recs),
+  };
+}
+
+function sumTotals(recs) {
+  const t = recs.reduce((a, x) => ({
+    calls: a.calls + (+x.calls || 0), connected: a.connected + (+x.connected || 0),
+    placed: a.placed + (+x.placed || 0), leads: a.leads + (+x.leads || 0),
+    seconds: a.seconds + (+x.seconds || 0),
+  }), { calls: 0, connected: 0, placed: 0, leads: 0, seconds: 0 });
+  return { ...t, talk: hhmm(t.seconds) };
+}
+
 router.get("/api/calls/export", requireAdmin, async (req, res, next) => {
   try {
     const iso = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || "")) ? String(v) : null);
@@ -469,112 +578,52 @@ router.get("/api/calls/export", requireAdmin, async (req, res, next) => {
     const who = String(req.query.who || "").trim().toLowerCase() || null;
     const shape = ["summary", "daily", "calls"].includes(req.query.shape)
       ? req.query.shape : (who ? "daily" : "summary");
+    /* PDF is the default: this is a report somebody sends to somebody. CSV
+       stays reachable with ?format=csv for anyone who wants to pivot it. */
+    const format = req.query.format === "csv" ? "csv" : "pdf";
 
     /* Today is not in the rollup, so a range that includes it would under-count
        by a whole day — the one day a manager is most likely to be looking at.
        Roll it up first. It is idempotent and costs one statement. */
     if (to >= today) await rollupDay(today);
 
+    const { recs, csvHeader, csvKeys, totals } = await gatherExport({ from, to, who, shape });
+
     const label = from === to ? from : `${from}_to_${to}`;
-    const name = `karma-calls_${who ? who.split("@")[0] + "_" : ""}${shape}_${label}.csv`;
+    const stem = `karma-calls_${who ? who.split("@")[0] + "_" : ""}${shape}_${label}`;
 
-    let header, rows;
-
-    if (shape === "calls") {
-      const r = await query(
-        `SELECT to_char(a.at AT TIME ZONE $4, 'YYYY-MM-DD') AS day,
-                to_char(a.at AT TIME ZONE $4, 'HH24:MI') AS time,
-                a.actor, a.lead_code, a.lead_name, l.company, l.city, l.state,
-                a.meta->>'outcome' AS outcome,
-                (a.meta->>'seconds')::int AS seconds,
-                a.meta->>'number' AS number
-           FROM activity_log a
-           LEFT JOIN leads l ON l.id = a.lead_id
-          WHERE a.action = 'call'
-            AND call_day(a.at, $4) BETWEEN $1::date AND $2::date
-            AND ($3::text IS NULL OR lower(a.actor) = $3)
-          ORDER BY a.at DESC LIMIT ${CSV_LIMIT}`, [from, to, who, TZ]);
-      header = ["Date", "Time", "Caller", "Lead code", "Company", "Trading name",
-        "City", "State", "Outcome", "Seconds", "Number dialled"];
-      rows = r.rows.map((x) => [x.day, x.time, x.actor, x.lead_code, x.lead_name,
-        x.company, x.city, x.state, x.outcome, x.seconds || 0, phoneForCsv(x.number)]);
-
-    } else if (shape === "daily") {
-      const r = await query(
-        `SELECT to_char(c.day, 'YYYY-MM-DD') AS day, c.actor,
-                coalesce(u.display_name, c.actor) AS label,
-                c.calls, c.connected, c.placed, c.no_answer, c.busy, c.failed,
-                c.cancelled, c.seconds, c.leads
-           FROM call_daily c
-           LEFT JOIN app_users u ON lower(u.email) = lower(c.actor)
-          WHERE c.day BETWEEN $1::date AND $2::date
-            AND ($3::text IS NULL OR lower(c.actor) = $3)
-          ORDER BY c.day, lower(c.actor) LIMIT ${CSV_LIMIT}`, [from, to, who]);
-      header = ["Date", "Person", "Email", "Calls", "Connected", "Connect rate",
-        "Handed to dialler", "No answer", "Busy", "Failed", "Cancelled",
-        "Talk time", "Leads reached"];
-      rows = r.rows.map((x) => [x.day, x.label, x.actor, x.calls, x.connected,
-        rate(x.connected, x.calls), x.placed, x.no_answer, x.busy, x.failed,
-        x.cancelled, hhmm(x.seconds), x.leads]);
-
-    } else {
-      /* Summary. The roster is the outer side of the join so somebody who
-         called nothing in the period is a zero row rather than an absence —
-         the same rule the morning email follows, and for the same reason. */
-      const r = await query(
-        `SELECT coalesce(u.email, c.actor) AS email,
-                coalesce(u.display_name, c.actor, u.email) AS label,
-                coalesce(m.role, '') AS role,
-                coalesce(sum(c.calls), 0)::int      AS calls,
-                coalesce(sum(c.connected), 0)::int  AS connected,
-                coalesce(sum(c.placed), 0)::int     AS placed,
-                coalesce(sum(c.no_answer), 0)::int  AS no_answer,
-                coalesce(sum(c.seconds), 0)::int    AS seconds,
-                coalesce(sum(c.leads), 0)::int      AS leads,
-                count(c.day) FILTER (WHERE c.calls > 0)::int AS active_days
-           FROM app_users u
-           LEFT JOIN organization_memberships m ON m.user_id = u.id
-           FULL JOIN call_daily c
-             ON lower(c.actor) = lower(u.email)
-            AND c.day BETWEEN $1::date AND $2::date
-          WHERE (u.id IS NULL OR NOT u.disabled)
-            AND (c.day IS NULL OR c.day BETWEEN $1::date AND $2::date)
-            AND ($3::text IS NULL
-                 OR lower(coalesce(u.email, c.actor)) = $3)
-          GROUP BY 1, 2, 3
-          ORDER BY calls DESC, lower(coalesce(u.display_name, c.actor, u.email))`,
-        [from, to, who]);
-
-      header = ["Person", "Email", "Role", "Calls", "Connected", "Connect rate",
-        "Handed to dialler", "No answer", "Talk time", "Leads reached",
-        "Days with calls", "Calls per active day"];
-      rows = r.rows.map((x) => [x.label, x.email, x.role || "member", x.calls,
-        x.connected, rate(x.connected, x.calls), x.placed, x.no_answer,
-        hhmm(x.seconds), x.leads, x.active_days,
-        x.active_days ? Math.round((x.calls / x.active_days) * 10) / 10 : 0]);
-
-      const t = r.rows.reduce((a, x) => ({
-        calls: a.calls + x.calls, connected: a.connected + x.connected,
-        placed: a.placed + x.placed, no_answer: a.no_answer + x.no_answer,
-        seconds: a.seconds + x.seconds, leads: a.leads + x.leads,
-      }), { calls: 0, connected: 0, placed: 0, no_answer: 0, seconds: 0, leads: 0 });
-      rows.push([]);
-      rows.push(["TOTAL", "", "", t.calls, t.connected, rate(t.connected, t.calls),
-        t.placed, t.no_answer, hhmm(t.seconds), t.leads, "", ""]);
+    /* Who the report is about, said in words, because a file that has been
+       forwarded twice has lost the screen it came from. */
+    let scope = "The whole team";
+    if (who) {
+      const n = (await query(
+        "SELECT display_name FROM app_users WHERE lower(email) = $1", [who])).rows[0];
+      scope = (n && n.display_name) ? `${n.display_name} · ${who}` : who;
     }
 
-    /* The caveat travels with the file. A spreadsheet gets mailed on and read
-       by somebody who never saw the screen it came from, and a connect rate
-       without this line is a number that will be quoted at a customer. */
+    if (format === "pdf") {
+      return require("./report-pdf").streamCallReportPdf(res, {
+        from, to, who, scope, shape, tz: TZ, totals,
+        rows: recs, filename: stem + ".pdf",
+      });
+    }
+
+    const rows = recs.map((x) => csvKeys.map((k) => x[k]));
+    if (shape !== "calls") {
+      rows.push([]);
+      rows.push(["TOTAL", "", "", totals.calls, totals.connected,
+        rate(totals.connected, totals.calls), totals.placed, "", totals.talk,
+        totals.leads, "", ""]);
+    }
     rows.push([]);
-    rows.push([`Karma Leads call report · ${from} to ${to} · times in ${TZ}`]);
+    rows.push([`Karma Leads call report · ${from} to ${to} · times in ${TZ} · ${scope}`]);
     rows.push(["Counts only calls placed through the dashboard. A call dialled from a handset or the Zoho app is not recorded."]);
     if (shape !== "calls")
       rows.push(["“Handed to dialler” are calls Zoho's own dialler took, which never reports the result — they are never counted as connected, so the connect rate is a floor."]);
 
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader("Content-Disposition", `attachment; filename="${name}"`);
-    res.send(csvRows(header, rows));
+    res.setHeader("Content-Disposition", `attachment; filename="${stem}.csv"`);
+    res.send(csvRows(csvHeader, rows));
   } catch (e) { next(e); }
 });
 

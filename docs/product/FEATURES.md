@@ -192,7 +192,7 @@ drill-down into one person.
 
 **Current state**: 232 calls over 30 days; history back to 18 Sept.
 
-### KL-11b · Downloading the report *(admin)*
+### KL-11b · Downloading the report as a PDF *(admin)*
 
 One Download button in the call report header, opening a small panel: period,
 detail, go.
@@ -212,13 +212,16 @@ detail, go.
   the morning email follows.
 - **Today is rolled up before any export that includes it**, or a range ending
   today would be short by the day most likely being looked at.
-- CSV, not PDF: a manager opens it and starts sorting. It also needs no
-  dependency.
-- Written with a **UTF-8 BOM**, or Excel renders names as mojibake.
-- Cells starting `=`, `+`, `-` or `@` are prefixed so Excel cannot treat
-  scraped company names as formulas.
-- Phone numbers are grouped without the `+` (`612 478 2422`) so Excel shows
-  them as text rather than mangling them into scientific notation.
+- **PDF**, branded, built with `pdfkit`. Playwright is deliberately not
+  installed on the deploy, so there is no browser on the server to print with;
+  pdfkit is already a runtime dependency and draws to the response stream.
+- Four headline numbers, then the table, then a totals row.
+- The header names the **period and the scope**, because a file that has been
+  forwarded twice has lost the screen it came from.
+- Long company names are **measured and truncated**, not wrapped — rows are a
+  fixed height and a wrapped name prints over the row below.
+- CSV remains available at `?format=csv` for anyone who wants to pivot it, with
+  a UTF-8 BOM, formula-injection guards and phone numbers formatted as text.
 - **The caveat travels with the file** — the footer rows say it counts only
   calls placed through the dashboard. A spreadsheet gets mailed on and read by
   someone who never saw the screen.
