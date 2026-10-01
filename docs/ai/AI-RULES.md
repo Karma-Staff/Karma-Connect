@@ -47,6 +47,7 @@ literal that broke the build. If you must, verify with `od -c`.
 | Role checks are rank comparisons, never `=== "admin"` | or an owner loses screens they outrank |
 | Counting by state matches both `FL` and `Florida` | or Florida is under-reported by 611 |
 | Never hand-bump the `?v=` cache-busters | `cachebust.js` does it from the file bytes |
+| Run `npm run docs:api` after editing **any** file that declares routes | API.md embeds `file:line` links, so adding a comment to `server.js` is enough to make it stale and fail CI |
 | Never commit a secret; `.env` is gitignored | tokens in this project are durable keys to a phone system |
 | Never put a placeholder in a config value | `YOUR_CLIENT_ID`, `<from the other service>` and a grant code have all been pasted into production here |
 | Do not add a dependency without saying why | the runtime is twelve packages and that is a feature |
