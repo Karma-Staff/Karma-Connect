@@ -558,6 +558,66 @@ async function gatherExport({ from, to, who, shape }) {
   };
 }
 
+/* Everything the PDF shows beyond the table. The CSV does not ask for any of
+   it — a spreadsheet is for sorting, a report is for reading, and the report
+   is generated rarely enough that five more queries cost nothing. */
+async function gatherExtras({ from, to, who }) {
+  const span = (await query(
+    "SELECT ($2::date - $1::date) + 1 AS n", [from, to])).rows[0].n;
+
+  /* The daily series, zeros included. A missing day must read as "nobody
+     called", never as a gap in the chart. */
+  const series = (await query(
+    `SELECT to_char(d, 'YYYY-MM-DD') AS day,
+            coalesce(sum(c.calls), 0)::int     AS calls,
+            coalesce(sum(c.connected), 0)::int AS connected
+       FROM generate_series($1::date, $2::date, '1 day') d
+       LEFT JOIN call_daily c ON c.day = d
+        AND ($3::text IS NULL OR lower(c.actor) = $3)
+      GROUP BY d ORDER BY d`, [from, to, who])).rows;
+
+  /* Per person, their own run of days — for the small chart on each card. */
+  const perPerson = (await query(
+    `SELECT lower(c.actor) AS actor, to_char(c.day, 'YYYY-MM-DD') AS day,
+            c.calls, c.connected
+       FROM call_daily c
+      WHERE c.day BETWEEN $1::date AND $2::date
+        AND ($3::text IS NULL OR lower(c.actor) = $3)
+      ORDER BY c.day`, [from, to, who])).rows;
+
+  const outcomes = (await query(
+    `SELECT coalesce(meta->>'outcome', 'unknown') AS outcome, count(*)::int AS n
+       FROM activity_log
+      WHERE action = 'call'
+        AND call_day(at, $4) BETWEEN $1::date AND $2::date
+        AND ($3::text IS NULL OR lower(actor) = $3)
+      GROUP BY 1 ORDER BY n DESC`, [from, to, who, TZ])).rows;
+
+  /* Where the calling went. Both spellings of a state, as everywhere else. */
+  const states = (await query(
+    `SELECT upper(btrim(l.state)) AS state, count(*)::int AS n
+       FROM activity_log a JOIN leads l ON l.id = a.lead_id
+      WHERE a.action = 'call'
+        AND call_day(a.at, $4) BETWEEN $1::date AND $2::date
+        AND ($3::text IS NULL OR lower(a.actor) = $3)
+        AND nullif(btrim(l.state), '') IS NOT NULL
+      GROUP BY 1 ORDER BY n DESC LIMIT 8`, [from, to, who, TZ])).rows;
+
+  /* The same length of time immediately before, so the headline number has
+     something to mean. */
+  const prev = (await query(
+    `SELECT coalesce(sum(calls), 0)::int AS calls,
+            coalesce(sum(connected), 0)::int AS connected
+       FROM call_daily
+      WHERE day BETWEEN ($1::date - $3::int) AND ($1::date - 1)
+        AND ($2::text IS NULL OR lower(actor) = $2)`,
+    [from, who, span])).rows[0];
+
+  const busiest = series.reduce((a, d) => (d.calls > (a ? a.calls : -1) ? d : a), null);
+
+  return { span, series, perPerson, outcomes, states, prev, busiest };
+}
+
 function sumTotals(recs) {
   const t = recs.reduce((a, x) => ({
     calls: a.calls + (+x.calls || 0), connected: a.connected + (+x.connected || 0),
@@ -602,9 +662,10 @@ router.get("/api/calls/export", requireAdmin, async (req, res, next) => {
     }
 
     if (format === "pdf") {
+      const extras = await gatherExtras({ from, to, who });
       return require("./report-pdf").streamCallReportPdf(res, {
         from, to, who, scope, shape, tz: TZ, totals,
-        rows: recs, filename: stem + ".pdf",
+        rows: recs, filename: stem + ".pdf", ...extras,
       });
     }
 

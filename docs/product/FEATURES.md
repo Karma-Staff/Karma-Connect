@@ -215,7 +215,18 @@ detail, go.
 - **PDF**, branded, built with `pdfkit`. Playwright is deliberately not
   installed on the deploy, so there is no browser on the server to print with;
   pdfkit is already a runtime dependency and draws to the response stream.
-- Four headline numbers, then the table, then a totals row.
+- **Six headline numbers**, then an activity chart, the table, a card per
+  person, how the calls ended, and where the calling went.
+- The **activity chart** is one bar per day with the connected share solid —
+  height inside the bar, never a second bar beside it, so the two cannot be
+  read as separate quantities. Empty days are drawn, because a gap must mean
+  "nobody called".
+- Only the ends and the busiest day are labelled, and a label is dropped where
+  it would print on top of its neighbour.
+- Each person gets a **card**: their own run of days on the same scale, their
+  rate, and how many companies they reached.
+- On an individual report the sixth tile becomes **Days calling**, because the
+  rows are days and counting them as people says "3 of 3" and means nothing.
 - The header names the **period and the scope**, because a file that has been
   forwarded twice has lost the screen it came from.
 - Long company names are **measured and truncated**, not wrapped — rows are a
