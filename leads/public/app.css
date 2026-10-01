@@ -1837,3 +1837,22 @@ label.check input[type="checkbox"] { width: auto; margin: 0; accent-color: var(-
 .dl-row > span { color: var(--ink-3); }
 .dl-go { width: 100%; margin-top: 4px; }
 .dl-note { margin: 8px 0 0; font-size: 11px; color: var(--ink-3); text-align: center; }
+
+/* ---- RingCentral connect bar --------------------------------------------
+   Connecting a phone is the rep's own job, so the prompt sits where they
+   already look at their calling rather than in an admin screen they never
+   open. */
+.rc-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 0 0 14px; padding: 11px 14px; border-radius: 9px;
+  background: var(--accent-soft); border: 1px solid var(--border);
+  font-size: 13px; color: var(--ink-2);
+}
+.rc-bar b { color: var(--ink); }
+.rc-bar.on { background: var(--surface-2); }
+.rc-dot {
+  width: 8px; height: 8px; border-radius: 50%; background: var(--good);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--good) 25%, transparent);
+}
+.rc-go { margin-left: auto; text-decoration: none; }
+.rc-off { margin-left: auto; }

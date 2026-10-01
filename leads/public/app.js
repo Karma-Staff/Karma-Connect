@@ -2919,8 +2919,120 @@ function watchForSoftphone() {
   setTimeout(() => obs.disconnect(), 30000);
 }
 
+/* ---------------- RingCentral ----------------
+
+   Preferred over Zoho when this rep has connected their own account, because
+   it is per seat: the call goes out as them, with their caller ID and their
+   entry in RingCentral's own log. Zoho was one shared identity for everybody,
+   which is also what the carriers have been labelling as spam.
+
+   The whole provider-specific surface is this block: load a bundle, swap a
+   short-lived SIP registration for a phone, place a call, listen for four
+   events. Everything else — the queue, the countdown, the outcome logging —
+   never knew which telephony vendor it was talking to. */
+
+const RC_SDK = "https://cdn.jsdelivr.net/npm/ringcentral-web-phone@2.6.0/dist/index.iife.js";
+
+function loadRcSdk() {
+  if (window.WebPhone) return Promise.resolve(window.WebPhone);
+  if (VOICE.rcLoading) return VOICE.rcLoading;
+  VOICE.rcLoading = new Promise((resolve, reject) => {
+    const el = document.createElement("script");
+    el.src = RC_SDK;
+    el.async = true;
+    el.onerror = () => reject(new Error("could not load the RingCentral web phone"));
+    el.onload = () => (window.WebPhone
+      ? resolve(window.WebPhone)
+      : reject(new Error("RingCentral loaded but exposed no WebPhone")));
+    document.head.appendChild(el);
+  });
+  return VOICE.rcLoading;
+}
+
+/* Register a softphone for this rep. The browser never sees the client secret:
+   the server hands back only a SIP registration, and that expires. */
+async function rcStart() {
+  const WP = await loadRcSdk();
+  const s = await api("/api/voice/rc/session", { method: "POST" });
+  if (!s || !s.sipInfo) throw new Error("RingCentral returned no SIP details");
+
+  const phone = new WP({
+    sipInfo: Array.isArray(s.sipInfo) ? s.sipInfo[0] : s.sipInfo,
+    /* A stable id per browser, so RingCentral treats a reload as the same
+       device rather than accumulating phantom registrations against the seat. */
+    instanceId: rcInstanceId(),
+  });
+  await phone.start();
+
+  VOICE.rc = phone;
+  VOICE.sdk = phone;
+  VOICE.mode = "sdk";
+  VOICE.provider = "ringcentral";
+  VOICE.ready = true;
+  VOICE.sandbox = !!s.sandbox;
+  if (s.sandbox)
+    toast("RingCentral is in SANDBOX — calls reach test numbers only", 12000);
+  return phone;
+}
+
+function rcInstanceId() {
+  try {
+    let v = localStorage.getItem("kl_rc_instance");
+    if (!v) {
+      v = "karma-" + Math.random().toString(36).slice(2, 12);
+      localStorage.setItem("kl_rc_instance", v);
+    }
+    return v;
+  } catch (e) { return "karma-" + Math.random().toString(36).slice(2, 12); }
+}
+
+/* Place a call and wire its four states onto the same reportCall() the Zoho
+   path uses, so a call is logged identically whichever vendor carried it. */
+async function rcCall(digits, name, leadId) {
+  reportCall(null, "cancelled");          // close out anything left open
+  VOICE.call = { leadId: leadId || null, number: digits,
+    connected: false, seconds: 0, reported: false };
+
+  const session = await VOICE.rc.call(digits);
+  VOICE.rcSession = session;
+  const started = Date.now();
+
+  session.on("answered", () => {
+    VOICE.call.connected = true;
+    toast("Connected to " + (name || digits));
+  });
+  /* RingCentral has no timer event, so the duration is measured here. It is
+     wall-clock from dial to hang-up, which includes ringing — the honest
+     label for it is "call length", not "talk time". */
+  const finish = (state) => {
+    VOICE.call.seconds = Math.max(0, Math.round((Date.now() - started) / 1000));
+    reportCall(null, state);
+    if (VOICE.rcSession === session) VOICE.rcSession = null;
+  };
+  session.on("disposed", () => finish(VOICE.call.connected ? "connected" : "no-answer"));
+  session.on("failed", () => finish("failed"));
+  return session;
+}
+
 async function voiceInit() {
   watchVoiceBlocks();
+
+  /* RingCentral first: if this rep has connected their own account it wins,
+     and Zoho is never loaded. */
+  try {
+    const rc = await api("/api/voice/rc/status");
+    VOICE.rcEnabled = !!rc.enabled;
+    VOICE.rcConnected = !!rc.connected;
+    VOICE.rcExtension = rc.extension || "";
+    if (rc.enabled && rc.connected) {
+      await rcStart();
+      return;
+    }
+  } catch (e) {
+    console.warn("[karma] RingCentral unavailable:", e.message);
+    VOICE.rcError = e.message;
+  }
+
   try {
     const cfg = await api("/api/voice/config");
     VOICE.mode = cfg.mode || "tel";
@@ -3132,6 +3244,24 @@ function recordHandOff(digits, leadId) {
    Never throws at a click handler. */
 function dialInPage(number, name, leadId) {
   if (VOICE.mode === "tel") return false;            // deliberately the OS's job
+
+  /* RingCentral, where this rep has connected their own seat. Checked before
+     the Zoho branch because both report mode "sdk". */
+  if (VOICE.provider === "ringcentral" && VOICE.rc && VOICE.ready) {
+    const digits = normalizeNumber(number);
+    softphoneToggle(true);
+    rcCall(digits, name, leadId).catch((e) => {
+      console.warn("[karma] RingCentral could not dial:", e.message);
+      reportCall(null, "failed");
+      /* A seat that has lost its grant should say so rather than silently
+         falling back to copy-and-paste, because signing in again fixes it. */
+      toast(/428|connect/i.test(e.message)
+        ? "Your RingCentral sign-in has expired — reconnect it in Call report"
+        : "Could not dial: " + e.message, 9000);
+      dialHandOff(number, leadId);
+    });
+    return true;
+  }
 
   if (VOICE.mode === "sdk") {
     if (VOICE.sdk && VOICE.ready) {
@@ -3577,6 +3707,14 @@ const autoGap = () => {
 /* Can it actually dial without a person? Says why not, so the switch can
    explain itself instead of silently doing nothing. */
 function autoReady() {
+  if (VOICE.provider === "ringcentral")
+    return VOICE.ready
+      ? { ok: true, why: "" }
+      : { ok: false, why: "the RingCentral phone has not registered yet" };
+  /* Not connected, but it could be — point at the fix rather than at the
+     limitation, since connecting is something the rep can do themselves. */
+  if (VOICE.rcEnabled && !VOICE.rcConnected)
+    return { ok: false, why: "connect your RingCentral account to dial from here" };
   if (VOICE.mode !== "sdk") return { ok: false, why: "needs the in-page softphone — right now numbers open in Zoho's dialler" };
   if (!VOICE.ready) return { ok: false, why: "the softphone has not connected yet" };
   return { ok: true, why: "" };
@@ -4445,6 +4583,21 @@ function renderCallReport(d) {
   const peak = Math.max(1, ...people.map((p) => p.calls));
   const live = people.filter((p) => p.active);
 
+  /* Connecting a phone is the rep's own job — nobody can do it for them — so
+     the prompt lives where they already look at their calling. */
+  const rcBar = !VOICE.rcEnabled ? "" : VOICE.rcConnected
+    ? `<div class="rc-bar on">
+         <span class="rc-dot"></span>
+         RingCentral connected${VOICE.rcExtension ? " · extension " + esc(VOICE.rcExtension) : ""}${
+           VOICE.sandbox ? ` <span class="asg-tag">sandbox — test numbers only</span>` : ""}
+         <button class="btn-ghost rc-off" id="rc-disconnect">Disconnect</button>
+       </div>`
+    : `<div class="rc-bar">
+         <b>Dial from your own RingCentral extension.</b>
+         Sign in once and calls go out as you — your caller ID, your call log.
+         <a class="btn-primary rc-go" href="/api/voice/rc/connect">Connect RingCentral</a>
+       </div>`;
+
   /* The 30-day strip. This is the whole point of storing days: the shape of
      the last month, rather than one number that resets every midnight. */
   const hist = d.history || [];
@@ -4468,6 +4621,7 @@ function renderCallReport(d) {
     </div>` : "";
 
   el.innerHTML = `
+    ${rcBar}
     <div class="kpi-strip">
       ${kpiTile(d.isToday ? "Calls today" : "Calls", t.calls.toLocaleString(),
         t.callers === 1 ? "by 1 person" : `by ${t.callers} people`)}
@@ -5519,6 +5673,13 @@ function wire() {
     if (bar) { callsDate = bar.dataset.date; stopCallPolling(); return loadCallReport(); }
     const row = e.target.closest(".person-row[data-person]");
     if (row) return openPerson(row.dataset.person);
+    if (e.target.closest("#rc-disconnect")) {
+      if (!confirm("Disconnect RingCentral? You will dial from the shared line until you sign in again.")) return;
+      api("/api/voice/rc/connect", { method: "DELETE" })
+        .then(() => { VOICE.rcConnected = false; VOICE.provider = ""; VOICE.ready = false;
+          toast("RingCentral disconnected"); loadCallReport(); })
+        .catch((err) => toast("Could not disconnect: " + err.message));
+    }
   });
 
   /* Delegated so it covers the reading pane, which is re-rendered constantly.
