@@ -104,6 +104,7 @@ function mount(app, opts = {}) {
      configured at once while the team moves across, and the front end picks
      whichever actually has a working seat for that rep. */
   app.use(require("./ringcentral").router);
+  app.use(require("./zoho-crm").router);
   /* recording calls, and the manager's report built from them. After leads.js
      so its requireOwnLead guard has already run for /api/leads/:id paths. */
   app.use(require("./calls").router);

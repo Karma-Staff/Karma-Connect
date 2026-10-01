@@ -4,7 +4,7 @@
 
 # API
 
-**144 routes**, generated from the source on 2026-10-01.
+**146 routes**, generated from the source on 2026-10-01.
 
 Every path is absolute. That is deliberate: Karma Leads' API paths are the same
 whether it runs standalone or mounted into Connect, which is what let its front
@@ -47,13 +47,13 @@ declared once for the group.
 
 ---
 
-## Karma Leads — 82 routes
+## Karma Leads — 84 routes
 
 ### `/api/activity`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/activity` | admin | [leads/server/index.js:134](../../leads/server/index.js#L134) |  |
+| GET | `/api/activity` | admin | [leads/server/index.js:135](../../leads/server/index.js#L135) |  |
 
 ### `/api/alerts`
 
@@ -127,6 +127,13 @@ declared once for the group.
 |---|---|---|---|---|
 | GET | `/api/counts` | signed in | [leads/server/counts.js:19](../../leads/server/counts.js#L19) |  |
 | GET | `/api/counts` | signed in | [leads/server/demo.js:342](../../leads/server/demo.js#L342) | Counted from the same rows the list serves. |
+
+### `/api/crm`
+
+| Method | Path | Guard | Source | |
+|---|---|---|---|---|
+| GET | `/api/crm/preview` | admin | [leads/server/zoho-crm.js:142](../../leads/server/zoho-crm.js#L142) | How much of our own base would ever reach the CRM. |
+| GET | `/api/crm/status` | admin | [leads/server/zoho-crm.js:102](../../leads/server/zoho-crm.js#L102) | GET /api/crm/status — is it connected, and what is actually in there. |
 
 ### `/api/cron`
 
