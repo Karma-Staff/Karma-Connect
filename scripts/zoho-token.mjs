@@ -1,4 +1,9 @@
-// Turn a Zoho Self Client grant code into the refresh token server/voice.js needs.
+// Turn a Zoho Self Client grant code into a refresh token.
+//
+// Two uses now: the Voice softphone (--for voice, the default) and the CRM
+// sync (--for crm). Same exchange, different scope chosen in the console and a
+// different variable name printed at the end, so the two tokens cannot be
+// pasted into each other’s slot.
 //
 // The grant code from the API console expires in minutes and can only be
 // exchanged once, so this exists to make that exchange a single command rather
@@ -23,15 +28,24 @@ const code = arg("code");
 const dc = (arg("dc") || "com").replace(/^\./, "");
 
 const USAGE = `Usage:
-  node scripts/zoho-token.mjs --id <client id> --secret <client secret> --code <grant code> [--dc com|eu|in|com.au|jp|ca]
+  node scripts/zoho-token.mjs --id <client id> --secret <client secret> --code <grant code> [--dc com|eu|in|com.au|jp|ca] [--for voice|crm]
 
 Get all three from https://api-console.zoho.com:
   1. Add Client -> Self Client -> Create   (or open the one already there)
   2. Client Secret tab   -> the id and the secret
-  3. Generate Code tab   -> scope "ZohoVoice.sdk.ALL", pick a duration, Create
-                            (ALL, not READ: a read-only token dials fine and
-                             then fails with "Invalid OAuth scope" the moment
-                             the softphone saves a disposition or a note)
+  3. Generate Code tab   -> paste the SCOPE for what you are setting up:
+
+       --for voice   ZohoVoice.sdk.ALL
+                     (ALL, not READ: a read-only token dials fine and then
+                      fails with "Invalid OAuth scope" the moment the softphone
+                      saves a disposition or a note)
+
+       --for crm     ZohoCRM.modules.ALL,ZohoCRM.settings.modules.READ,ZohoCRM.settings.fields.READ,ZohoCRM.coql.READ
+                     (modules to write Accounts/Contacts/Calls/Notes; settings
+                      to read the field names before mapping onto them; coql to
+                      look for an existing record rather than making a second)
+
+                         -> pick a duration, Create
                          -> the code (it expires in minutes; use it now)`;
 
 /* Catch the placeholders from the instructions being pasted verbatim. Zoho
@@ -97,15 +111,18 @@ Zoho refused the exchange: ${data.error || `HTTP ${res.status}`}`
   console.log(`
 Done. Put these in .env (and in Render's environment for the deploy):
 
-ZOHO_VOICE_ENABLED=1
+${forWhat === "crm" ? `ZOHO_CRM_CLIENT_ID=${id}
+ZOHO_CRM_CLIENT_SECRET=${secret}
+ZOHO_CRM_REFRESH_TOKEN=${data.refresh_token}` : `ZOHO_VOICE_ENABLED=1
 ZOHO_DIAL_MODE=sdk
 ZOHO_CLIENT_ID=${id}
 ZOHO_CLIENT_SECRET=${secret}
-ZOHO_REFRESH_TOKEN=${data.refresh_token}${dc === "com" ? "" : `
+ZOHO_REFRESH_TOKEN=${data.refresh_token}`}${dc === "com" ? "" : `
 ZOHO_ACCOUNTS_DOMAIN=https://accounts.zoho.${dc}`}
 
 The refresh token does not expire, so keep it like a password: it is a durable
-key to the phone account. Never commit it — .env is gitignored.
+key to ${forWhat === "crm" ? "your CRM data" : "the phone account"}. Never
+commit it — .env is gitignored.
 `);
 }
 
