@@ -499,6 +499,37 @@
      projected and simplified offline by leads/scripts/build-na-geo.mjs.
      Generated — re-run that script rather than editing it. -->
 <script src="na-geo.js?v=3"></script>
+  <!-- The call bar. RingCentral's SDK is headless — it ships the SIP engine
+       and no interface — so without this a rep on a call has audio and no
+       controls. The keypad matters more than it looks: these are B2B numbers
+       and most answer with a menu. -->
+  <div id="rc-call" class="rc-call hidden" role="region" aria-label="Call in progress">
+    <div class="rc-call-main">
+      <div class="rc-call-id">
+        <b id="rc-call-who">Calling</b>
+        <span id="rc-call-num"></span>
+      </div>
+      <div class="rc-call-meta">
+        <span id="rc-call-state">calling…</span>
+        <span id="rc-call-time" class="rc-call-time">0:00</span>
+      </div>
+    </div>
+    <div class="rc-call-btns">
+      <button id="rc-mute" class="btn-ghost" aria-pressed="false">Mute</button>
+      <button id="rc-hold" class="btn-ghost" aria-pressed="false">Hold</button>
+      <button id="rc-keypad" class="btn-ghost" title="Send tones for phone menus">Keypad</button>
+      <button id="rc-hangup" class="rc-hangup">Hang up</button>
+    </div>
+    <div id="rc-dtmf" class="rc-dtmf hidden">
+      <div class="rc-dtmf-keys">
+        <button data-dtmf="1">1</button><button data-dtmf="2">2</button><button data-dtmf="3">3</button>
+        <button data-dtmf="4">4</button><button data-dtmf="5">5</button><button data-dtmf="6">6</button>
+        <button data-dtmf="7">7</button><button data-dtmf="8">8</button><button data-dtmf="9">9</button>
+        <button data-dtmf="*">*</button><button data-dtmf="0">0</button><button data-dtmf="#">#</button>
+      </div>
+      <div id="rc-dtmf-sent" class="rc-dtmf-sent"></div>
+    </div>
+  </div>
 <script src="app.js?v=78"></script>
 </body>
 </html>

@@ -2986,6 +2986,93 @@ function rcInstanceId() {
   } catch (e) { return "karma-" + Math.random().toString(36).slice(2, 12); }
 }
 
+/* ---------------- the call bar ----------------
+
+   RingCentral's SDK is HEADLESS. Zoho shipped a draggable widget with a
+   dialpad, a timer and a mute button; ringcentral-web-phone ships the SIP
+   engine and nothing else. So a rep on a call had audio and no controls —
+   no way to mute, no way to hang up except waiting for the other side, and
+   no sign on screen that a call was even happening.
+
+   The keypad is not an afterthought. These are B2B numbers and most of them
+   answer with a menu; without DTMF a rep cannot get past "press 1 for
+   sales", which is most of the calls that matter. */
+
+let RCBAR = { timer: null, muted: false, held: false, session: null, started: 0 };
+
+function rcBarEl() { return $("rc-call"); }
+
+function rcShowCall(session, name, digits) {
+  const el = rcBarEl();
+  if (!el) return;
+  RCBAR.session = session;
+  RCBAR.muted = false; RCBAR.held = false; RCBAR.started = Date.now();
+  $("rc-call-who").textContent = name || digits || "Calling";
+  $("rc-call-num").textContent = digits || "";
+  $("rc-call-state").textContent = "calling…";
+  el.classList.remove("hidden");
+  rcTick();
+  clearInterval(RCBAR.timer);
+  RCBAR.timer = setInterval(rcTick, 1000);
+  $("rc-dtmf")?.classList.add("hidden");
+  rcPaintButtons();
+}
+
+function rcTick() {
+  const s = Math.max(0, Math.round((Date.now() - RCBAR.started) / 1000));
+  const el = $("rc-call-time");
+  if (el) el.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+function rcHideCall() {
+  clearInterval(RCBAR.timer); RCBAR.timer = null;
+  RCBAR.session = null;
+  rcBarEl()?.classList.add("hidden");
+}
+
+function rcPaintButtons() {
+  const m = $("rc-mute"), h = $("rc-hold");
+  if (m) { m.textContent = RCBAR.muted ? "Unmute" : "Mute"; m.setAttribute("aria-pressed", String(RCBAR.muted)); }
+  if (h) { h.textContent = RCBAR.held ? "Resume" : "Hold"; h.setAttribute("aria-pressed", String(RCBAR.held)); }
+}
+
+/* Every control is wrapped: the SDK rejects rather than throwing, and an
+   unhandled rejection in a click handler would leave the bar looking frozen
+   with no clue why. */
+function rcGuard(fn, what) {
+  return Promise.resolve().then(fn).catch((e) => {
+    console.warn("[karma] " + what + ":", e);
+    toast("Could not " + what + " — " + (describeErr(e) || "unknown"), 6000);
+  });
+}
+
+function rcWireBar() {
+  on("rc-hangup", "click", () => RCBAR.session
+    && rcGuard(() => RCBAR.session.hangup(), "hang up"));
+  on("rc-mute", "click", () => {
+    if (!RCBAR.session) return;
+    RCBAR.muted = !RCBAR.muted;
+    rcGuard(() => (RCBAR.muted ? RCBAR.session.mute() : RCBAR.session.unmute()),
+      RCBAR.muted ? "mute" : "unmute");
+    rcPaintButtons();
+  });
+  on("rc-hold", "click", () => {
+    if (!RCBAR.session) return;
+    RCBAR.held = !RCBAR.held;
+    rcGuard(() => (RCBAR.held ? RCBAR.session.hold() : RCBAR.session.unhold()),
+      RCBAR.held ? "hold" : "resume");
+    rcPaintButtons();
+  });
+  on("rc-keypad", "click", () => $("rc-dtmf")?.classList.toggle("hidden"));
+  $("rc-dtmf")?.addEventListener("click", (e) => {
+    const k = e.target.closest("button[data-dtmf]");
+    if (!k || !RCBAR.session) return;
+    rcGuard(() => RCBAR.session.sendDtmf(k.dataset.dtmf), "send " + k.dataset.dtmf);
+    const t = $("rc-dtmf-sent");
+    if (t) t.textContent = (t.textContent + k.dataset.dtmf).slice(-18);
+  });
+}
+
 /* Place a call and wire its four states onto the same reportCall() the Zoho
    path uses, so a call is logged identically whichever vendor carried it. */
 async function rcCall(digits, name, leadId) {
@@ -2996,9 +3083,18 @@ async function rcCall(digits, name, leadId) {
   const session = await VOICE.rc.call(digits);
   VOICE.rcSession = session;
   const started = Date.now();
+  rcShowCall(session, name, digits);
 
+  session.on("ringing", () => {
+    const el = $("rc-call-state"); if (el) el.textContent = "ringing…";
+  });
   session.on("answered", () => {
     VOICE.call.connected = true;
+    const el = $("rc-call-state"); if (el) el.textContent = "connected";
+    /* The timer restarts on answer so it reads talk time rather than time
+       since dialling — the number a rep glances at mid-call is "how long
+       have I had this person", not "how long ago did I press the button". */
+    RCBAR.started = Date.now();
     toast("Connected to " + (name || digits));
   });
   /* RingCentral has no timer event, so the duration is measured here. It is
@@ -3007,6 +3103,7 @@ async function rcCall(digits, name, leadId) {
   const finish = (state) => {
     VOICE.call.seconds = Math.max(0, Math.round((Date.now() - started) / 1000));
     reportCall(null, state);
+    rcHideCall();
     if (VOICE.rcSession === session) VOICE.rcSession = null;
   };
   session.on("disposed", () => finish(VOICE.call.connected ? "connected" : "no-answer"));
@@ -3258,7 +3355,8 @@ function dialInPage(number, name, leadId) {
      the Zoho branch because both report mode "sdk". */
   if (VOICE.provider === "ringcentral" && VOICE.rc && VOICE.ready) {
     const digits = normalizeNumber(number);
-    softphoneToggle(true);
+    /* No softphoneToggle here: that reveals Zohos widget, and RingCentrals
+       SDK is headless. The call bar below is our own. */
     rcCall(digits, name, leadId).catch((e) => {
       console.warn("[karma] RingCentral could not dial:", e.message);
       reportCall(null, "failed");
@@ -5723,6 +5821,7 @@ function wire() {
       e.preventDefault();
     // otherwise: not prevented, so the browser follows tel: as it always did
   });
+  rcWireBar();
   voiceInit();
   on("act-phones", "click", runPhoneRefresh);
   on("act-logs", "click", () => { actFull = !actFull; loadStats(); });
