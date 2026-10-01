@@ -411,6 +411,40 @@
           <button id="calls-live" class="btn-ghost" aria-pressed="false"
             title="Reload every 30 seconds">Auto-refresh</button>
           <button id="calls-refresh" class="btn-ghost" title="Reload now">Refresh</button>
+          <!-- Download lives behind one button. Laid out inline, the period,
+               date and detail controls overflowed the header and pushed the
+               title out of its own row. -->
+          <div class="dl-wrap">
+            <button id="calls-dl-open" class="btn-ghost" aria-expanded="false"
+              title="Download this report as a spreadsheet">↓ Download</button>
+            <div class="dl-pop hidden" id="calls-dl-pop" role="dialog" aria-label="Download report">
+              <h5>Download report</h5>
+              <p class="dl-scope" id="calls-dl-scope">The whole team</p>
+              <label class="dl-row">Period
+                <select id="calls-dl-range">
+                  <option value="week">This week</option>
+                  <option value="lastweek">Last week</option>
+                  <option value="month">This month</option>
+                  <option value="lastmonth">Last month</option>
+                  <option value="custom">Custom dates…</option>
+                </select>
+              </label>
+              <div class="dl-row hidden" id="calls-dl-custom">
+                <input type="date" id="calls-dl-from" aria-label="From">
+                <span>→</span>
+                <input type="date" id="calls-dl-to" aria-label="To">
+              </div>
+              <label class="dl-row">Detail
+                <select id="calls-dl-shape">
+                  <option value="summary">Totals per person</option>
+                  <option value="daily">Day by day</option>
+                  <option value="calls">Every call, with the company</option>
+                </select>
+              </label>
+              <button id="calls-dl" class="btn-primary dl-go">Download CSV</button>
+              <p class="dl-note">Opens in Excel or Google Sheets.</p>
+            </div>
+          </div>
         </div>
       </div>
       <div id="calls-body" class="stats-body"></div>

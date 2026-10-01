@@ -4,7 +4,7 @@
 
 # API
 
-**135 routes**, generated from the source on 2026-09-30.
+**136 routes**, generated from the source on 2026-10-01.
 
 Every path is absolute. That is deliberate: Karma Leads' API paths are the same
 whether it runs standalone or mounted into Connect, which is what let its front
@@ -47,7 +47,7 @@ declared once for the group.
 
 ---
 
-## Karma Leads — 73 routes
+## Karma Leads — 74 routes
 
 ### `/api/activity`
 
@@ -99,6 +99,7 @@ declared once for the group.
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
+| GET | `/api/calls/export` | admin | [leads/server/calls.js:461](../../leads/server/calls.js#L461) |  |
 | GET | `/api/calls/person/:email` | admin | [leads/server/calls.js:268](../../leads/server/calls.js#L268) | GET /api/calls/person/:email — one person, in depth. |
 | GET | `/api/calls/report` | admin | [leads/server/calls.js:141](../../leads/server/calls.js#L141) | GET /api/calls/report — the manager's screen. |
 | POST | `/api/calls/rollup` | admin | [leads/server/calls.js:390](../../leads/server/calls.js#L390) | POST /api/calls/rollup — rebuild stored days. |

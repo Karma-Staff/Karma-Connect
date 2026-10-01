@@ -402,4 +402,180 @@ router.post("/api/calls/rollup", requireAdmin, express.json({ limit: "1kb" }),
     } catch (e) { next(e); }
   });
 
+/* ---------------- downloadable reports ----------------
+
+   CSV, not PDF or XLSX. A manager who downloads a call report opens it in
+   Excel and starts sorting and filtering; a PDF is a picture of numbers and
+   cannot be worked. CSV also needs no dependency, which keeps the runtime at
+   twelve packages.
+
+   Three shapes, because "the report" means three different things depending
+   on who is asking:
+     summary — one row per person for the whole period. The management view.
+     daily   — one row per person per day. The trend, for a chart.
+     calls   — one row per call, with the company named. For reviewing a rep.
+
+   `who` narrows any of them to one person. So the overall report and the
+   individual report are the same endpoint, which is why they can never
+   disagree about what a call is. */
+
+const CSV_LIMIT = 20000;             // rows; a bigger answer is a query, not a file
+
+/* Excel decides a CSV's encoding by sniffing, and without a BOM it renders
+   UTF-8 names as mojibake. One invisible character; endless confusion saved. */
+const BOM = "﻿";
+
+function csvCell(v) {
+  if (v === null || v === undefined) return "";
+  const s = String(v);
+  /* A leading =, +, - or @ makes Excel treat the cell as a formula. Company
+     names from scraped data do start with those. Prefix with an apostrophe so
+     the text is shown rather than evaluated. */
+  const safe = /^[=+\-@]/.test(s) ? "'" + s : s;
+  return /[",\n\r]/.test(safe) ? '"' + safe.replace(/"/g, '""') + '"' : safe;
+}
+const csvRows = (header, rows) =>
+  BOM + [header, ...rows].map((r) => r.map(csvCell).join(",")).join("\r\n") + "\r\n";
+
+/* A dialled number as something Excel will leave alone.
+
+   "+16124782422" starts with +, so the formula guard above prefixes it with an
+   apostrophe — and Excel's CSV parser shows that apostrophe rather than
+   honouring it, which puts 'ters in front of every number in the column. Drop
+   the + and group the digits instead: it starts with a digit so no guard
+   fires, the spaces stop Excel reading it as a number and mangling it into
+   scientific notation, and a human can still read it out loud. */
+function phoneForCsv(v) {
+  const d = String(v || "").replace(/\D/g, "");
+  if (!d) return "";
+  const n = d.length === 11 && d[0] === "1" ? d.slice(1) : d;
+  return n.length === 10 ? `${n.slice(0, 3)} ${n.slice(3, 6)} ${n.slice(6)}` : d;
+}
+
+const hhmm = (sec) => {
+  const s = Math.max(0, Math.floor(sec || 0));
+  return `${Math.floor(s / 3600)}:${String(Math.floor(s / 60) % 60).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+};
+const rate = (n, d) => (d ? Math.round((n / d) * 100) + "%" : "");
+
+router.get("/api/calls/export", requireAdmin, async (req, res, next) => {
+  try {
+    const iso = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || "")) ? String(v) : null);
+    const today = (await query("SELECT call_day(now(), $1)::text AS d", [TZ])).rows[0].d;
+    let from = iso(req.query.from) || today;
+    let to = iso(req.query.to) || today;
+    if (from > to) [from, to] = [to, from];
+
+    const who = String(req.query.who || "").trim().toLowerCase() || null;
+    const shape = ["summary", "daily", "calls"].includes(req.query.shape)
+      ? req.query.shape : (who ? "daily" : "summary");
+
+    /* Today is not in the rollup, so a range that includes it would under-count
+       by a whole day — the one day a manager is most likely to be looking at.
+       Roll it up first. It is idempotent and costs one statement. */
+    if (to >= today) await rollupDay(today);
+
+    const label = from === to ? from : `${from}_to_${to}`;
+    const name = `karma-calls_${who ? who.split("@")[0] + "_" : ""}${shape}_${label}.csv`;
+
+    let header, rows;
+
+    if (shape === "calls") {
+      const r = await query(
+        `SELECT to_char(a.at AT TIME ZONE $4, 'YYYY-MM-DD') AS day,
+                to_char(a.at AT TIME ZONE $4, 'HH24:MI') AS time,
+                a.actor, a.lead_code, a.lead_name, l.company, l.city, l.state,
+                a.meta->>'outcome' AS outcome,
+                (a.meta->>'seconds')::int AS seconds,
+                a.meta->>'number' AS number
+           FROM activity_log a
+           LEFT JOIN leads l ON l.id = a.lead_id
+          WHERE a.action = 'call'
+            AND call_day(a.at, $4) BETWEEN $1::date AND $2::date
+            AND ($3::text IS NULL OR lower(a.actor) = $3)
+          ORDER BY a.at DESC LIMIT ${CSV_LIMIT}`, [from, to, who, TZ]);
+      header = ["Date", "Time", "Caller", "Lead code", "Company", "Trading name",
+        "City", "State", "Outcome", "Seconds", "Number dialled"];
+      rows = r.rows.map((x) => [x.day, x.time, x.actor, x.lead_code, x.lead_name,
+        x.company, x.city, x.state, x.outcome, x.seconds || 0, phoneForCsv(x.number)]);
+
+    } else if (shape === "daily") {
+      const r = await query(
+        `SELECT to_char(c.day, 'YYYY-MM-DD') AS day, c.actor,
+                coalesce(u.display_name, c.actor) AS label,
+                c.calls, c.connected, c.placed, c.no_answer, c.busy, c.failed,
+                c.cancelled, c.seconds, c.leads
+           FROM call_daily c
+           LEFT JOIN app_users u ON lower(u.email) = lower(c.actor)
+          WHERE c.day BETWEEN $1::date AND $2::date
+            AND ($3::text IS NULL OR lower(c.actor) = $3)
+          ORDER BY c.day, lower(c.actor) LIMIT ${CSV_LIMIT}`, [from, to, who]);
+      header = ["Date", "Person", "Email", "Calls", "Connected", "Connect rate",
+        "Handed to dialler", "No answer", "Busy", "Failed", "Cancelled",
+        "Talk time", "Leads reached"];
+      rows = r.rows.map((x) => [x.day, x.label, x.actor, x.calls, x.connected,
+        rate(x.connected, x.calls), x.placed, x.no_answer, x.busy, x.failed,
+        x.cancelled, hhmm(x.seconds), x.leads]);
+
+    } else {
+      /* Summary. The roster is the outer side of the join so somebody who
+         called nothing in the period is a zero row rather than an absence —
+         the same rule the morning email follows, and for the same reason. */
+      const r = await query(
+        `SELECT coalesce(u.email, c.actor) AS email,
+                coalesce(u.display_name, c.actor, u.email) AS label,
+                coalesce(m.role, '') AS role,
+                coalesce(sum(c.calls), 0)::int      AS calls,
+                coalesce(sum(c.connected), 0)::int  AS connected,
+                coalesce(sum(c.placed), 0)::int     AS placed,
+                coalesce(sum(c.no_answer), 0)::int  AS no_answer,
+                coalesce(sum(c.seconds), 0)::int    AS seconds,
+                coalesce(sum(c.leads), 0)::int      AS leads,
+                count(c.day) FILTER (WHERE c.calls > 0)::int AS active_days
+           FROM app_users u
+           LEFT JOIN organization_memberships m ON m.user_id = u.id
+           FULL JOIN call_daily c
+             ON lower(c.actor) = lower(u.email)
+            AND c.day BETWEEN $1::date AND $2::date
+          WHERE (u.id IS NULL OR NOT u.disabled)
+            AND (c.day IS NULL OR c.day BETWEEN $1::date AND $2::date)
+            AND ($3::text IS NULL
+                 OR lower(coalesce(u.email, c.actor)) = $3)
+          GROUP BY 1, 2, 3
+          ORDER BY calls DESC, lower(coalesce(u.display_name, c.actor, u.email))`,
+        [from, to, who]);
+
+      header = ["Person", "Email", "Role", "Calls", "Connected", "Connect rate",
+        "Handed to dialler", "No answer", "Talk time", "Leads reached",
+        "Days with calls", "Calls per active day"];
+      rows = r.rows.map((x) => [x.label, x.email, x.role || "member", x.calls,
+        x.connected, rate(x.connected, x.calls), x.placed, x.no_answer,
+        hhmm(x.seconds), x.leads, x.active_days,
+        x.active_days ? Math.round((x.calls / x.active_days) * 10) / 10 : 0]);
+
+      const t = r.rows.reduce((a, x) => ({
+        calls: a.calls + x.calls, connected: a.connected + x.connected,
+        placed: a.placed + x.placed, no_answer: a.no_answer + x.no_answer,
+        seconds: a.seconds + x.seconds, leads: a.leads + x.leads,
+      }), { calls: 0, connected: 0, placed: 0, no_answer: 0, seconds: 0, leads: 0 });
+      rows.push([]);
+      rows.push(["TOTAL", "", "", t.calls, t.connected, rate(t.connected, t.calls),
+        t.placed, t.no_answer, hhmm(t.seconds), t.leads, "", ""]);
+    }
+
+    /* The caveat travels with the file. A spreadsheet gets mailed on and read
+       by somebody who never saw the screen it came from, and a connect rate
+       without this line is a number that will be quoted at a customer. */
+    rows.push([]);
+    rows.push([`Karma Leads call report · ${from} to ${to} · times in ${TZ}`]);
+    rows.push(["Counts only calls placed through the dashboard. A call dialled from a handset or the Zoho app is not recorded."]);
+    if (shape !== "calls")
+      rows.push(["“Handed to dialler” are calls Zoho's own dialler took, which never reports the result — they are never counted as connected, so the connect rate is a floor."]);
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${name}"`);
+    res.send(csvRows(header, rows));
+  } catch (e) { next(e); }
+});
+
 module.exports = { router, OUTCOMES, rollupDay, TZ };

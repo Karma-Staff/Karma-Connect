@@ -4335,6 +4335,7 @@ let callsDate = "";
 async function loadCallReport(quiet = false) {
   const el = $("calls-body");
   if (!el) return;
+  callsPerson = ""; callsPersonLabel = "";   // back to the whole team
   if (!quiet) el.innerHTML = `<p class="act-empty">Reading calls…</p>`;
   const minutes = +$("calls-minutes")?.value || 15;
   const q = `/api/calls/report?minutes=${minutes}&days=30`
@@ -4349,6 +4350,60 @@ async function loadCallReport(quiet = false) {
     if (quiet) return;                   // a failed poll keeps the last good view
     el.innerHTML = `<p class="act-empty">Could not load the call report (${esc(e.message)})</p>`;
   }
+}
+
+/* ---------------- downloading the report ----------------
+
+   Who the download is for follows what you are looking at: on the team report
+   it is everyone, and while a person's record is open it is that person. That
+   is the behaviour people expect from a Download button and it saves a second
+   control that would only ever be set to match the screen. */
+let callsPerson = "";               // whose record is open; "" = the whole team
+let callsPersonLabel = "";          // their display name, for the download panel
+
+
+const ymd = (d) => d.toISOString().slice(0, 10);
+
+/* The period, as from/to. Weeks start Monday: a sales week does, and a Sunday
+   start puts Monday's calls in "last week" every Monday morning. */
+function dlRange(kind) {
+  const now = new Date();
+  const t = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+  const dow = (t.getUTCDay() + 6) % 7;                 // Mon = 0
+  const monday = new Date(t); monday.setUTCDate(t.getUTCDate() - dow);
+  switch (kind) {
+    case "week":  return { from: ymd(monday), to: ymd(t) };
+    case "lastweek": {
+      const s = new Date(monday); s.setUTCDate(monday.getUTCDate() - 7);
+      const e = new Date(monday); e.setUTCDate(monday.getUTCDate() - 1);
+      return { from: ymd(s), to: ymd(e) };
+    }
+    case "month":
+      return { from: ymd(new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), 1))), to: ymd(t) };
+    case "lastmonth": {
+      const s = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() - 1, 1));
+      const e = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), 0));
+      return { from: ymd(s), to: ymd(e) };
+    }
+    default:
+      return { from: $("calls-dl-from")?.value || ymd(t),
+               to: $("calls-dl-to")?.value || ymd(t) };
+  }
+}
+
+function downloadCallReport() {
+  const kind = $("calls-dl-range")?.value || "week";
+  const { from, to } = dlRange(kind);
+  if (!from || !to) return toast("Pick both dates first");
+  const shape = $("calls-dl-shape")?.value || "summary";
+  const q = new URLSearchParams({ from, to, shape });
+  if (callsPerson) q.set("who", callsPerson);
+  /* A plain navigation, not fetch(): the browser then handles the download,
+     the filename from Content-Disposition is honoured, and the cookie goes
+     with it. Reading it into memory first would buy nothing. */
+  window.location.href = "/api/calls/export?" + q.toString();
+  toast(`Downloading ${from === to ? from : from + " to " + to}`
+    + (callsPerson ? " for " + callsPerson.split("@")[0] : "") + "…");
 }
 
 /* Step a day at a time. Never past today — there is nothing there, and an
@@ -4509,6 +4564,8 @@ async function openPerson(email) {
   const el = $("calls-body");
   if (!el) return;
   stopCallPolling();
+  callsPerson = email;            // Download now means this person
+  callsPersonLabel = email;
   el.innerHTML = `<p class="act-empty">Reading ${esc(email)}…</p>`;
   try {
     renderPerson(await api(`/api/calls/person/${encodeURIComponent(email)}?days=30`));
@@ -4527,6 +4584,7 @@ const OUTCOME_WORDS = {
 
 function renderPerson(p) {
   const el = $("calls-body");
+  callsPersonLabel = p.label;          // the download panel names who it is for
   const t = p.totals;
   const peak = Math.max(1, ...p.daily.map((d) => +d.calls));
   const rate = t.calls ? Math.round((t.connected / t.calls) * 100) : 0;
@@ -5414,6 +5472,40 @@ function wire() {
   on("calls-refresh", "click", () => loadCallReport());
   on("calls-live", "click", toggleCallPolling);
   on("calls-minutes", "change", () => loadCallReport());
+  on("calls-dl-open", "click", (e) => {
+    e.stopPropagation();
+    const pop = $("calls-dl-pop");
+    const show = pop.classList.contains("hidden");
+    pop.classList.toggle("hidden", !show);
+    $("calls-dl-open")?.setAttribute("aria-expanded", String(show));
+    /* Say what will be downloaded. The button is the same button on both
+       screens, so without this there is no way to tell the overall report
+       from one person's. */
+    if (show && $("calls-dl-scope"))
+      $("calls-dl-scope").textContent = callsPerson
+        ? "Just " + (callsPersonLabel || callsPerson) : "The whole team";
+  });
+  /* Click-away, but not when the click is inside the panel — a date picker
+     closing the thing it lives in would be maddening. */
+  document.addEventListener("click", (e) => {
+    const pop = $("calls-dl-pop");
+    if (!pop || pop.classList.contains("hidden")) return;
+    if (pop.contains(e.target) || e.target.closest("#calls-dl-open")) return;
+    pop.classList.add("hidden");
+    $("calls-dl-open")?.setAttribute("aria-expanded", "false");
+  });
+  on("calls-dl", "click", () => { $("calls-dl-pop")?.classList.add("hidden"); downloadCallReport(); });
+  on("calls-dl-range", "change", (e) => {
+    const custom = e.target.value === "custom";
+    $("calls-dl-custom")?.classList.toggle("hidden", !custom);
+    /* Seed the custom inputs from the period just shown, so "Custom" starts
+       from something real rather than from 1970. */
+    if (custom) {
+      const r = dlRange("month");
+      if ($("calls-dl-from") && !$("calls-dl-from").value) $("calls-dl-from").value = r.from;
+      if ($("calls-dl-to") && !$("calls-dl-to").value) $("calls-dl-to").value = r.to;
+    }
+  });
   on("calls-prev", "click", () => stepCallDate(-1));
   on("calls-next", "click", () => stepCallDate(1));
   on("calls-today", "click", () => { callsDate = ""; loadCallReport(); });

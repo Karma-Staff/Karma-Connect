@@ -192,6 +192,38 @@ drill-down into one person.
 
 **Current state**: 232 calls over 30 days; history back to 18 Sept.
 
+### KL-11b · Downloading the report *(admin)*
+
+One Download button in the call report header, opening a small panel: period,
+detail, go.
+
+**Acceptance**
+
+- Periods: **this week, last week, this month, last month, custom dates**.
+  Weeks start **Monday** — a sales week does, and a Sunday start files Monday's
+  calls under "last week" every Monday morning.
+- Three levels of detail: **totals per person**, **day by day**, **every call**
+  with the company named.
+- **Scope follows the screen.** On the team report it exports everyone; with a
+  person's record open it exports just them, and the panel says which
+  ("The whole team" / "Just Surbhi Panwar"). Overall and individual are the
+  same endpoint, so they can never disagree about what a call is.
+- Somebody who called nothing is a **zero row, not an absence** — the same rule
+  the morning email follows.
+- **Today is rolled up before any export that includes it**, or a range ending
+  today would be short by the day most likely being looked at.
+- CSV, not PDF: a manager opens it and starts sorting. It also needs no
+  dependency.
+- Written with a **UTF-8 BOM**, or Excel renders names as mojibake.
+- Cells starting `=`, `+`, `-` or `@` are prefixed so Excel cannot treat
+  scraped company names as formulas.
+- Phone numbers are grouped without the `+` (`612 478 2422`) so Excel shows
+  them as text rather than mangling them into scientific notation.
+- **The caveat travels with the file** — the footer rows say it counts only
+  calls placed through the dashboard. A spreadsheet gets mailed on and read by
+  someone who never saw the screen.
+- Capped at 20,000 rows; a bigger answer is a query, not a file.
+
 ### KL-11a · One person *(admin)*
 
 The question a manager asks after "who is calling", which is "what is *this

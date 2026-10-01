@@ -1809,3 +1809,31 @@ label.check input[type="checkbox"] { width: auto; margin: 0; accent-color: var(-
 @media (min-width: 900px) {
   .person-cols { grid-template-columns: repeat(3, 1fr); }
 }
+
+/* ---- Download popover ---------------------------------------------------
+   One button in the header, the options inside. Laid out inline these five
+   controls overflowed the header and pushed the title out of its own row. */
+.dl-wrap { position: relative; }
+.dl-pop {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 40;
+  width: 282px; padding: 14px; border-radius: 10px;
+  background: var(--surface); border: 1px solid var(--border);
+  box-shadow: 0 14px 40px rgba(0,0,0,.34);
+}
+.dl-pop h5 { margin: 0 0 2px; font-size: 13px; }
+.dl-scope {
+  margin: 0 0 10px; font-size: 12px; color: var(--accent);
+  font-weight: 600;
+}
+.dl-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin: 0 0 8px; font-size: 12px; color: var(--ink-2);
+}
+.dl-row select, .dl-row input {
+  flex: 1 1 auto; min-width: 0; padding: 6px 8px; font-size: 12px;
+  border-radius: 6px; border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--ink);
+}
+.dl-row > span { color: var(--ink-3); }
+.dl-go { width: 100%; margin-top: 4px; }
+.dl-note { margin: 8px 0 0; font-size: 11px; color: var(--ink-3); text-align: center; }
