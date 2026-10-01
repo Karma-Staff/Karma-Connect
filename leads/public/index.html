@@ -503,8 +503,28 @@
        and no interface — so without this a rep on a call has audio and no
        controls. The keypad matters more than it looks: these are B2B numbers
        and most answer with a menu. -->
-  <div id="rc-call" class="rc-call hidden" role="region" aria-label="Call in progress">
-    <div class="rc-call-main">
+  <!-- The launcher. Hidden until RingCentral registers, because a phone
+       button that cannot phone anybody is worse than no button. -->
+  <button id="rc-launch" class="rc-launch hidden" aria-expanded="false"
+    title="Dialler — type a number or use the keypad">
+    <span class="rc-launch-ic">☎</span>
+  </button>
+
+  <div id="rc-call" class="rc-call hidden" role="region" aria-label="Dialler">
+    <!-- Idle: type or tap a number and call it. The lead list can only dial
+         numbers that are ON a lead; a rep returning a missed call or working
+         from a note needs to dial something that is not in front of them. -->
+    <div id="rc-idle" class="rc-idle">
+      <div class="rc-idle-head">
+        <b>Dialler</b>
+        <button id="rc-close" class="rc-close" title="Close">×</button>
+      </div>
+      <input id="rc-dial-num" class="rc-dial-num" type="tel"
+        placeholder="Type a number" autocomplete="off" aria-label="Number to call">
+      <button id="rc-dial-go" class="btn-primary rc-dial-go">Call</button>
+    </div>
+
+    <div class="rc-call-main" id="rc-active">
       <div class="rc-call-id">
         <b id="rc-call-who">Calling</b>
         <span id="rc-call-num"></span>

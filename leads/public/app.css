@@ -1909,3 +1909,45 @@ label.check input[type="checkbox"] { width: auto; margin: 0; accent-color: var(-
   font-variant-numeric: tabular-nums; letter-spacing: 2px;
   font-size: 12px; color: var(--ink-3);
 }
+
+/* ---- Dialler launcher ---------------------------------------------------
+   Fixed to the right edge. Hidden until a phone registers — a phone button
+   that cannot phone anybody is worse than no button. */
+.rc-launch {
+  position: fixed; right: 18px; bottom: 18px; z-index: 89;
+  width: 52px; height: 52px; border-radius: 50%;
+  background: var(--accent); color: #fff; border: 0; cursor: pointer;
+  box-shadow: 0 10px 28px rgba(0,0,0,.42);
+  display: flex; align-items: center; justify-content: center;
+  transition: transform .12s, background .12s;
+}
+.rc-launch.hidden { display: none; }
+.rc-launch:hover { transform: scale(1.06); }
+.rc-launch[aria-expanded="true"] { background: var(--ink-3); }
+.rc-launch-ic { font-size: 22px; line-height: 1; }
+
+/* the panel sits above the launcher rather than on top of it */
+.rc-call { bottom: 82px; }
+
+/* ---- Dialler, idle ---- */
+.rc-idle.hidden, #rc-active.hidden { display: none; }
+.rc-idle-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 9px;
+}
+.rc-idle-head b { font-size: 14px; color: var(--ink); }
+.rc-close {
+  background: none; border: 0; color: var(--ink-3); cursor: pointer;
+  font-size: 20px; line-height: 1; padding: 0 4px;
+}
+.rc-close:hover { color: var(--ink); }
+.rc-dial-num {
+  width: 100%; padding: 9px 11px; margin-bottom: 8px;
+  border-radius: 8px; border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--ink);
+  font-size: 15px; font-variant-numeric: tabular-nums; letter-spacing: .5px;
+}
+.rc-dial-go { width: 100%; margin-bottom: 4px; }
+.rc-call-btns button[disabled] { opacity: .4; cursor: not-allowed; }
+
+.rc-call-btns.hidden { display: none; }

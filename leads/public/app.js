@@ -2970,6 +2970,7 @@ async function rcStart() {
   VOICE.provider = "ringcentral";
   VOICE.ready = true;
   VOICE.sandbox = !!s.sandbox;
+  rcShowLauncher(true);
   if (s.sandbox)
     toast("RingCentral is in SANDBOX — calls reach test numbers only", 12000);
   return phone;
@@ -3011,6 +3012,7 @@ function rcShowCall(session, name, digits) {
   $("rc-call-num").textContent = digits || "";
   $("rc-call-state").textContent = "calling…";
   el.classList.remove("hidden");
+  rcSetMode(true);
   rcTick();
   clearInterval(RCBAR.timer);
   RCBAR.timer = setInterval(rcTick, 1000);
@@ -3027,7 +3029,13 @@ function rcTick() {
 function rcHideCall() {
   clearInterval(RCBAR.timer); RCBAR.timer = null;
   RCBAR.session = null;
+  /* Back to the dialler rather than disappearing: a rep who has just hung up
+     is often about to ring somebody else, and a panel that vanishes makes
+     them hunt for the launcher again. */
+  rcSetMode(false);
+  const sent = $("rc-dtmf-sent"); if (sent) sent.textContent = "";
   rcBarEl()?.classList.add("hidden");
+  rcPanelToggle(false);
 }
 
 function rcPaintButtons() {
@@ -3046,7 +3054,53 @@ function rcGuard(fn, what) {
   });
 }
 
+/* Idle (no call) versus active (on a call). The same panel and the same
+   keypad serve both: tapping a key types a digit when idle and sends a tone
+   when on a call, which is the behaviour of every phone anyone has used. */
+function rcSetMode(active) {
+  $("rc-idle")?.classList.toggle("hidden", !!active);
+  $("rc-active")?.classList.toggle("hidden", !active);
+  /* The in-call row is hidden rather than disabled while idle. Four greyed
+     buttons are clutter, and one of them — Keypad — would hide the keypad,
+     which is the entire reason the panel is open. */
+  document.querySelector(".rc-call-btns")?.classList.toggle("hidden", !active);
+}
+
+/* Show the launcher only once a phone is actually registered. A phone button
+   that cannot phone anybody is worse than no button. */
+function rcShowLauncher(on) {
+  $("rc-launch")?.classList.toggle("hidden", !on);
+}
+
+function rcPanelToggle(show) {
+  const el = rcBarEl();
+  if (!el) return;
+  const open = show === undefined ? el.classList.contains("hidden") : show;
+  el.classList.toggle("hidden", !open);
+  $("rc-launch")?.setAttribute("aria-expanded", String(open));
+  if (open && !RCBAR.session) {
+    rcSetMode(false);
+    $("rc-dtmf")?.classList.remove("hidden");   // idle: the keypad IS the point
+    $("rc-dial-num")?.focus();
+  }
+}
+
+/* Dial whatever is typed. Goes through dialInPage so the call is logged and
+   attributed exactly as one started from a lead — it simply has no lead. */
+function rcDialTyped() {
+  const input = $("rc-dial-num");
+  const raw = (input?.value || "").trim();
+  if (!raw) return toast("Type a number first");
+  $("rc-dtmf-sent") && ($("rc-dtmf-sent").textContent = "");
+  dialInPage(raw, raw, null);
+  if (input) input.value = "";
+}
+
 function rcWireBar() {
+  on("rc-launch", "click", () => rcPanelToggle());
+  on("rc-close", "click", () => rcPanelToggle(false));
+  on("rc-dial-go", "click", rcDialTyped);
+  on("rc-dial-num", "keydown", (e) => { if (e.key === "Enter") rcDialTyped(); });
   on("rc-hangup", "click", () => RCBAR.session
     && rcGuard(() => RCBAR.session.hangup(), "hang up"));
   on("rc-mute", "click", () => {
@@ -3066,7 +3120,13 @@ function rcWireBar() {
   on("rc-keypad", "click", () => $("rc-dtmf")?.classList.toggle("hidden"));
   $("rc-dtmf")?.addEventListener("click", (e) => {
     const k = e.target.closest("button[data-dtmf]");
-    if (!k || !RCBAR.session) return;
+    if (!k) return;
+    if (!RCBAR.session) {
+      /* Idle: the keypad types, like a phone. */
+      const input = $("rc-dial-num");
+      if (input) { input.value += k.dataset.dtmf; input.focus(); }
+      return;
+    }
     rcGuard(() => RCBAR.session.sendDtmf(k.dataset.dtmf), "send " + k.dataset.dtmf);
     const t = $("rc-dtmf-sent");
     if (t) t.textContent = (t.textContent + k.dataset.dtmf).slice(-18);
