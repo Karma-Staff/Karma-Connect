@@ -197,7 +197,7 @@ function streamCallReportPdf(res, d) {
   res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
 
   const doc = new PDFDocument({ size: "A4", margin: 40, bufferPages: true,
-    info: { Title: `Karma Leads call report ${from} to ${to}`,
+    info: { Title: `Karma Connect call report ${from} to ${to}`,
             Author: "Karma Staff", Subject: scope } });
   doc.pipe(res);
 
@@ -206,7 +206,7 @@ function streamCallReportPdf(res, d) {
   /* ---------- masthead ---------- */
   doc.rect(0, 0, 595, 96).fill(NAVY);
   doc.rect(0, 94, 595, 2.5).fill(GOLD);
-  doc.fillColor("#ffffff").font("Helvetica-Bold").fontSize(18).text("Karma Leads", LEFT, 22);
+  doc.fillColor("#ffffff").font("Helvetica-Bold").fontSize(18).text("Karma Connect", LEFT, 22);
   doc.fillColor("#b9c9e4").font("Helvetica").fontSize(10.5)
      .text("Call report  ·  " + (TITLES[shape] || ""), LEFT, 45);
   doc.fillColor("#8fa6c8").fontSize(8.5).text(scope, LEFT, 64, { width: 320 });

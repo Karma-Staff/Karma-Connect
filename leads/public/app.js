@@ -1,4 +1,4 @@
-/* Karma Leads — email-style client over the domain API */
+/* Karma Connect, the lead floor — email-style client over the domain API */
 "use strict";
 
 const $ = (id) => document.getElementById(id);
@@ -5475,7 +5475,7 @@ function wireSplitter() {
    any time from the ? button in the top bar. Purely presentational: it never
    clicks anything or touches S. */
 const TOUR_STEPS = [
-  { title: "Welcome to Karma Leads",
+  { title: "Welcome to Karma Connect",
     body: "This is the team lead dashboard. Every company, contact and job " +
       "posting lives here in one place, already deduped. This tour points " +
       "out where everything is." },

@@ -981,11 +981,11 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
             <span className="mark"><KarmaIcon w={44} /></span>
             <div><h1>Karma <b>Connect</b></h1><span>AI Prospecting</span></div>
           </div>
-          {/* Karma Connect and Karma Leads are one site now; this flips to the other
+          {/* One product, two halves; this flips to the other
               half. A real link rather than a button so middle-click opens a tab and
               it survives a JS error on this page. */}
-          <a className="appswitch" href="/leads/" title="Switch to Karma Leads">
-            {Ic.swap}<span>Karma <b>Leads</b></span>
+          <a className="appswitch" href="/leads/" title="Switch to the lead floor">
+            {Ic.swap}<span>The <b>Leads</b></span>
           </a>
           <nav aria-label="Primary">
           <div className="navlbl">Workspace</div>

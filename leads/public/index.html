@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Karma Leads</title>
+<title>Karma Connect</title>
 <!-- geometric K, drawn rather than typeset, so it matches the mark in the app.
      Steel rather than the old blue, tracking --accent on the navy palette. -->
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%234a86c8'/><path d='M11 7.5v17M11 16l9.5-8.5M11 16l9.5 8.5' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round' fill='none'/></svg>">
@@ -21,20 +21,25 @@
 <!-- There is ONE sign-in on this site and it is not here: anyone arriving
      without a session is sent straight to it (see init() in app.js), so this
      panel never shows a sign-in button. It is reached only by someone who IS
-     signed in and still cannot use Karma Leads — where redirecting them would
+     signed in and still cannot use Karma Connect — where redirecting them would
      just bounce them between here and the sign-in forever. -->
 <div id="login-screen" class="login-screen hidden">
   <div class="login-card">
     <div class="login-logo">
-      <svg class="logo-mark" viewBox="0 0 32 32" aria-hidden="true">
-        <rect width="32" height="32" rx="6"/>
-        <path d="M11 7.5v17M11 16l9.5-8.5M11 16l9.5 8.5"/>
+      <svg class="logo-mark" viewBox="-4 -4 131 86" aria-hidden="true" fill="none">
+        <g fill="currentColor">
+          <rect x="0"  y="52" width="20" height="21"/>
+          <rect x="23" y="34" width="20" height="39"/>
+          <rect x="46" y="16" width="20" height="57"/>
+          <rect x="69" y="0"  width="20" height="73"/>
+          <path d="M84 47 L118 24 M84 47 L118 70" fill="none" stroke="currentColor" stroke-width="17" stroke-linecap="butt"/>
+        </g>
       </svg>
-      <span class="wordmark"><b>Karma</b>Leads</span>
+      <span class="wordmark"><b>Karma</b>Connect</span>
     </div>
-    <p class="login-sub" id="login-sub">You don't have access to Karma Leads.</p>
+    <p class="login-sub" id="login-sub">You don't have access to Karma Connect.</p>
     <div id="login-error" class="login-error hidden"></div>
-    <p class="login-alt"><a href="/">Back to Karma Connect</a></p>
+    <p class="login-alt"><a href="/">Back to the main workspace</a></p>
   </div>
 </div>
 
@@ -43,23 +48,30 @@
 
   <header class="topbar">
     <div class="brand">
-      <svg class="logo-mark" viewBox="0 0 32 32" aria-hidden="true">
-        <rect width="32" height="32" rx="6"/>
-        <path d="M11 7.5v17M11 16l9.5-8.5M11 16l9.5 8.5"/>
+      <svg class="logo-mark" viewBox="-4 -4 131 86" aria-hidden="true" fill="none">
+        <g fill="currentColor">
+          <rect x="0"  y="52" width="20" height="21"/>
+          <rect x="23" y="34" width="20" height="39"/>
+          <rect x="46" y="16" width="20" height="57"/>
+          <rect x="69" y="0"  width="20" height="73"/>
+          <path d="M84 47 L118 24 M84 47 L118 70" fill="none" stroke="currentColor" stroke-width="17" stroke-linecap="butt"/>
+        </g>
       </svg>
-      <span class="wordmark"><b>Karma</b>Leads</span>
+      <span class="wordmark"><b>Karma</b>Connect</span>
     </div>
     <div class="searchbox">
       <svg viewBox="0 0 24 24" class="ic"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M20 20l-3.5-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       <input id="search" type="search" placeholder="Search leads" autocomplete="off">
     </div>
     <div class="topbar-right">
-      <!-- Karma Connect and Karma Leads share one site; this flips to the other
-           one. A real link, not a button, so middle-click opens it in a tab and
-           it still works if app.js fails to load. -->
-      <a href="/" class="btn-ghost btn-appswitch" title="Switch to Karma Connect">
+      <!-- One product, two halves. The label names the SECTION rather than the
+           product, now that both halves are called Karma Connect — "switch to
+           Karma Connect" from inside Karma Connect means nothing. A real link,
+           not a button, so middle-click opens a tab and it still works if
+           app.js fails to load. -->
+      <a href="/" class="btn-ghost btn-appswitch" title="Switch to the outreach workspace">
         <svg viewBox="0 0 24 24" class="ic" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5"/><path d="M21 3l-7 7"/><path d="M8 21H3v-5"/><path d="M3 21l7-7"/></svg>
-        Connect
+        Outreach
       </a>
       <!-- replays the guided tour; it also runs once by itself on a first visit -->
       <button id="help-btn" class="btn-ghost btn-help"

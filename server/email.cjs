@@ -162,8 +162,8 @@ async function sendFollowupEmail(to, lead, note, link, idempotencyKey) {
     ${note ? `<p style="background:#f4f6fb;border-left:3px solid #E7B74B;padding:10px 14px;margin:18px 0">${escapeHtml(note)}</p>` : ""}
     ${link
       ? `<p style="margin:24px 0"><a href="${link}" style="background:#E7B74B;color:#071226;text-decoration:none;font-weight:700;padding:12px 22px;border-radius:10px;display:inline-block">Open the lead</a></p>`
-      : `<p style="font-size:12px;color:#667">Open Karma Leads and search for ${escapeHtml(who)}.</p>`}
-    <p style="font-size:12px;color:#667">Set from Karma Leads. Marking it done on the lead stops any further reminder.</p>
+      : `<p style="font-size:12px;color:#667">Open Karma Connect and search for ${escapeHtml(who)}.</p>`}
+    <p style="font-size:12px;color:#667">Set from Karma Connect. Marking it done on the lead stops any further reminder.</p>
   </div>`;
   await send(to, "Follow back: " + who, html, { idempotencyKey });
 }
@@ -262,7 +262,7 @@ async function sendCallDigestEmail(to, d, idempotencyKey) {
 async function sendTeamInviteEmail(to, { inviterName, role, link }) {
   const rank = role === "admin" ? "an <b>admin</b>" : role === "owner" ? "an <b>owner</b>" : "a <b>member</b>";
   const html = `<div style="font-family:Inter,Segoe UI,Arial,sans-serif;max-width:480px;margin:0 auto;color:#0b2545">
-    <h2 style="color:#0b2545">You have been added to Karma Leads</h2>
+    <h2 style="color:#0b2545">You have been added to Karma Connect</h2>
     <p>${inviterName ? escapeHtml(inviterName) + " has" : "You have been"} added you to the team as ${rank}.</p>
     <p><b>One step left:</b> create your sign-in. Use this exact address —
        <b>${escapeHtml(to)}</b> — or your access will not be found.</p>
@@ -270,10 +270,10 @@ async function sendTeamInviteEmail(to, { inviterName, role, link }) {
     <p>${role === "member"
       ? "As a member you will see the leads assigned to you, and can call, take notes and set reminders on them."
       : "You will see the whole base, the team's activity, and can assign work."}</p>
-    <p style="font-size:12px;color:#667">One sign-in covers Karma Connect and Karma Leads.
+    <p style="font-size:12px;color:#667">One sign-in covers the whole of Karma Connect.
       If you already have a Karma Connect account, just sign in — nothing more to do.</p>
   </div>`;
-  await send(to, "You have been added to Karma Leads", html, { idempotencyKey: "invite-" + to });
+  await send(to, "You have been added to Karma Connect", html, { idempotencyKey: "invite-" + to });
 }
 
 async function sendOutreachEmail({ fromName, fromEmail, to, subject, text }) {
