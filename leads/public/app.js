@@ -3033,8 +3033,13 @@ async function voiceInit() {
       return;
     }
   } catch (e) {
-    console.warn("[karma] RingCentral unavailable:", e.message);
-    VOICE.rcError = e.message;
+    /* The SDK rejects with objects that have no .message, so the first
+       version of this logged "RingCentral unavailable: undefined" — which
+       told nobody anything, and the real cause (a CSP blocking the SIP
+       socket) was only visible in the browser's own error a line above.
+       describeErr serialises whatever it is given. */
+    VOICE.rcError = describeErr(e) || "unknown error";
+    console.warn("[karma] RingCentral unavailable:", VOICE.rcError, e);
   }
 
   try {

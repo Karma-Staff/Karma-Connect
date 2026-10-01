@@ -115,7 +115,15 @@ const RC_HOSTS = [
   "https://platform.ringcentral.com", "https://platform.devtest.ringcentral.com",
   "https://*.ringcentral.com", "https://cdn.jsdelivr.net",
 ].join(" ");
-const RC_SOCKETS = ["wss://*.ringcentral.com"].join(" ");
+/* The PORT WILDCARD is load-bearing. RingCentral's SIP socket is on a
+   non-default port — wss://sip123-1211.ringcentral.com:8083 — and a CSP host
+   source with no port matches ONLY the scheme's default port. So plain
+   "wss://*.ringcentral.com" allows 443 and blocks 8083, which is every actual
+   registration. The browser then reports it as a connection failure and the
+   app falls back to the old provider, which looks like the integration not
+   working rather than like a policy. The subdomain is regional and the port
+   is not documented as fixed, so both are wildcards. */
+const RC_SOCKETS = ["wss://*.ringcentral.com:*", "wss://*.ringcentral.com"].join(" ");
 
 const ZOHO_HOSTS = [
   "https://*.zoho.com", "https://*.zohoapis.com", "https://*.zohostatic.com",
