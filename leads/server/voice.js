@@ -18,7 +18,8 @@
    Off unless ZOHO_VOICE_ENABLED=1 and the credentials are present. */
 
 const express = require("express");
-const { requireUser } = require("./auth");
+const { requireUser, requireOwner } = require("./auth");
+const { query } = require("./db");
 
 const router = express.Router();
 
@@ -157,6 +158,20 @@ const COUNTRY_CODE = process.env.ZOHO_DIAL_COUNTRY_CODE === undefined
   ? "+1" : String(process.env.ZOHO_DIAL_COUNTRY_CODE).trim();
 
 router.get("/api/voice/config", requireUser, async (req, res) => {
+  /* Switched off by an owner (migration 013). The credentials stay in the
+     environment — this is a decision, not a secret — so it is reversible in
+     one click if RingCentral has a bad morning.
+
+     "off" means copy-to-clipboard, not nothing: a rep who clicks a number
+     still gets it on their clipboard, which is the worst case we are willing
+     to leave anybody in. */
+  const settings = require("./settings");
+  if (await settings.get("voice.zoho.off", false)) {
+    return res.json({ provider: "zoho", mode: "copy", enabled: false,
+      dialUrl: "", countryCode: COUNTRY_CODE, scope: "", scopeWarning: "",
+      disabledByOwner: true });
+  }
+
   /* Learn the scope now if we do not know it yet. The config call happens
      once at page load, before the softphone asks for a token, so without
      this the warning could never be shown on the visit where it matters.
@@ -209,5 +224,50 @@ router.post("/api/voice/token", requireUser, async (req, res) => {
     });
   }
 });
+
+/* GET/PUT /api/voice/providers — which telephony providers are on offer.
+
+   Owner-only, because switching off the fallback affects everyone who has not
+   connected RingCentral yet. It is reversible in one click, which is the
+   reason it is a setting rather than an environment variable: the moment you
+   want it is the moment a deploy is the last thing you need. */
+router.get("/api/voice/providers", requireUser, async (req, res, next) => {
+  try {
+    const settings = require("./settings");
+    const rc = require("./ringcentral");
+    const row = await settings.describe("voice.zoho.off");
+    res.json({
+      zoho: {
+        configured: ENABLED,
+        off: !!(row && row.value),
+        offSince: row ? row.updated_at : null,
+        offBy: row ? row.updated_by : null,
+      },
+      ringcentral: { configured: rc.ENABLED, sandbox: rc.SANDBOX },
+    });
+  } catch (e) { next(e); }
+});
+
+router.put("/api/voice/providers", requireOwner, express.json({ limit: "1kb" }),
+  async (req, res, next) => {
+    try {
+      const settings = require("./settings");
+      const off = (req.body || {}).zohoOff === true;
+      /* Refuse to leave the floor with no way to dial. If nobody has
+         connected RingCentral yet, turning Zoho off would take the last
+         option away from every rep at once. */
+      if (off) {
+        const rc = require("./ringcentral");
+        const n = rc.ENABLED
+          ? (await query("SELECT count(*)::int n FROM voice_identities WHERE provider = 'ringcentral'")).rows[0].n
+          : 0;
+        if (!n) return res.status(409).json({
+          error: "Nobody has connected RingCentral yet — turning Zoho off now would leave the team with no dialler.",
+          hint: "Connect at least one RingCentral account first." });
+      }
+      await settings.set("voice.zoho.off", off, req.user.email);
+      res.json({ ok: true, zohoOff: off });
+    } catch (e) { next(e); }
+  });
 
 module.exports = { router, ENABLED };

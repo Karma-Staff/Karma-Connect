@@ -4,7 +4,7 @@
 
 # API
 
-**142 routes**, generated from the source on 2026-10-01.
+**144 routes**, generated from the source on 2026-10-01.
 
 Every path is absolute. That is deliberate: Karma Leads' API paths are the same
 whether it runs standalone or mounted into Connect, which is what let its front
@@ -47,7 +47,7 @@ declared once for the group.
 
 ---
 
-## Karma Leads — 80 routes
+## Karma Leads — 82 routes
 
 ### `/api/activity`
 
@@ -250,14 +250,16 @@ declared once for the group.
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/voice/config` | signed in | [leads/server/voice.js:159](../../leads/server/voice.js#L159) |  |
+| GET | `/api/voice/config` | signed in | [leads/server/voice.js:160](../../leads/server/voice.js#L160) |  |
+| GET | `/api/voice/providers` | signed in | [leads/server/voice.js:234](../../leads/server/voice.js#L234) | GET/PUT /api/voice/providers — which telephony providers are on offer. |
+| PUT | `/api/voice/providers` | owner | [leads/server/voice.js:251](../../leads/server/voice.js#L251) |  |
 | GET | `/api/voice/rc/callback` | — | [leads/server/ringcentral.js:122](../../leads/server/ringcentral.js#L122) |  |
 | GET | `/api/voice/rc/connect` | signed in | [leads/server/ringcentral.js:111](../../leads/server/ringcentral.js#L111) |  |
 | DELETE | `/api/voice/rc/connect` | signed in | [leads/server/ringcentral.js:269](../../leads/server/ringcentral.js#L269) |  |
 | POST | `/api/voice/rc/session` | signed in | [leads/server/ringcentral.js:231](../../leads/server/ringcentral.js#L231) | POST /api/voice/rc/session — everything the browser needs to register a softphone, and nothin… |
 | GET | `/api/voice/rc/status` | signed in | [leads/server/ringcentral.js:213](../../leads/server/ringcentral.js#L213) |  |
 | GET | `/api/voice/rc/team` | admin | [leads/server/ringcentral.js:278](../../leads/server/ringcentral.js#L278) | Who on the team has a working phone. |
-| POST | `/api/voice/token` | signed in | [leads/server/voice.js:184](../../leads/server/voice.js#L184) | The SDK's oAuthCallBack fetches this. |
+| POST | `/api/voice/token` | signed in | [leads/server/voice.js:199](../../leads/server/voice.js#L199) | The SDK's oAuthCallBack fetches this. |
 
 ---
 

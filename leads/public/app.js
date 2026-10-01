@@ -3022,6 +3022,10 @@ async function voiceInit() {
   try {
     const rc = await api("/api/voice/rc/status");
     VOICE.rcEnabled = !!rc.enabled;
+    try {
+      const pv = await api("/api/voice/providers");
+      VOICE.zohoOff = !!(pv.zoho && pv.zoho.off);
+    } catch (e) { VOICE.zohoOff = false; }
     VOICE.rcConnected = !!rc.connected;
     VOICE.rcExtension = rc.extension || "";
     if (rc.enabled && rc.connected) {
@@ -4585,11 +4589,21 @@ function renderCallReport(d) {
 
   /* Connecting a phone is the rep's own job — nobody can do it for them — so
      the prompt lives where they already look at their calling. */
+  /* Switching the old provider off is the owner's call, and it belongs next
+     to the evidence that the new one is working rather than in a settings
+     screen nobody opens. */
+  const zohoSwitch = !isOwner() ? "" : VOICE.zohoOff
+    ? `<button class="btn-ghost rc-zoho" id="zoho-on"
+         title="Reps without RingCentral will be handed to Zoho again">Zoho off — turn back on</button>`
+    : `<button class="btn-ghost rc-zoho" id="zoho-off"
+         title="Reps without RingCentral will copy numbers instead of opening Zoho">Turn off Zoho</button>`;
+
   const rcBar = !VOICE.rcEnabled ? "" : VOICE.rcConnected
     ? `<div class="rc-bar on">
          <span class="rc-dot"></span>
          RingCentral connected${VOICE.rcExtension ? " · extension " + esc(VOICE.rcExtension) : ""}${
            VOICE.sandbox ? ` <span class="asg-tag">sandbox — test numbers only</span>` : ""}
+         ${zohoSwitch}
          <button class="btn-ghost rc-off" id="rc-disconnect">Disconnect</button>
        </div>`
     : `<div class="rc-bar">
@@ -5673,6 +5687,18 @@ function wire() {
     if (bar) { callsDate = bar.dataset.date; stopCallPolling(); return loadCallReport(); }
     const row = e.target.closest(".person-row[data-person]");
     if (row) return openPerson(row.dataset.person);
+    const zt = e.target.closest("#zoho-off, #zoho-on");
+    if (zt) {
+      const off = zt.id === "zoho-off";
+      if (off && !confirm("Turn Zoho off? Reps who have not connected RingCentral will have numbers copied to their clipboard instead of opening Zoho.")) return;
+      api("/api/voice/providers", { method: "PUT", body: JSON.stringify({ zohoOff: off }) })
+        .then(() => { VOICE.zohoOff = off;
+          toast(off ? "Zoho turned off" : "Zoho turned back on"); loadCallReport(); })
+        /* The server refuses to leave the floor with no dialler at all; say
+           so rather than letting the button look broken. */
+        .catch((err) => toast(err.message, 9000));
+      return;
+    }
     if (e.target.closest("#rc-disconnect")) {
       if (!confirm("Disconnect RingCentral? You will dial from the shared line until you sign in again.")) return;
       api("/api/voice/rc/connect", { method: "DELETE" })
