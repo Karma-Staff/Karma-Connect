@@ -23,14 +23,25 @@ const AUTH_CSS = `
 .kcauth .center{position:relative; z-index:2; width:100%; max-width:540px; margin:auto; animation:kcrise .6s cubic-bezier(.22,1,.36,1) both}
 @keyframes kcrise{from{opacity:0; transform:translateY(16px)}to{opacity:1; transform:none}}
 .kcauth .brand{text-align:center; margin-bottom:26px}
-/* The icon asset is itself a bevelled navy tile, so this box no longer draws one — otherwise
-   you get a tile inside a tile. It keeps only the size and the glow, via drop-shadow so the
-   glow follows the icon's rounded silhouette rather than a square box. */
-.kcauth .brand .mk{width:62px; height:62px; margin:0 auto 16px; display:flex; align-items:center; justify-content:center}
-.kcauth .brand .mk .kicon{width:100%; height:100%; object-fit:contain; display:block;
-  filter:drop-shadow(0 16px 34px rgba(124,92,255,.5))}
-.kcauth .brand h1{font-family:'Manrope',ui-sans-serif,system-ui,sans-serif; font-size:27px; font-weight:800; letter-spacing:-.02em}
-.kcauth .brand h1 b{background:linear-gradient(135deg,#FFD83A,#E7B74B); -webkit-background-clip:text; background-clip:text; color:transparent; font-weight:800}
+/* The lockup is transparent white ink at 340x200, not the bevelled tile this box
+   was built around. Two things followed from that change:
+   — NO fixed height. A 62px square box around a 150px-wide lockup let the art
+     overflow by about 13px, so the wordmark collided with the heading below it.
+     The box is now auto height and the margin is measured from the real artwork.
+   — NO bloom. The old rule put a violet glow behind the logo, which around a
+     bevelled tile was a lighting effect and around transparent white ink is a
+     purple halo stuck to the page. White ink on this navy is already the
+     brightest thing on screen; it needs no help, and anything added behind it
+     is a colour the backdrop never uses. Depth comes from one soft, dark,
+     downward shadow instead — the logo sits in the page rather than over it. */
+.kcauth .brand .mk{margin:0 auto 18px; display:flex; justify-content:center}
+.kcauth .brand .mk .kicon{filter:drop-shadow(0 10px 26px rgba(2,8,22,.55))}
+/* One word, two weights — the split Karma Leads uses, so both halves of the
+   product write their own name the same way. The gold gradient that used to
+   fill "Connect" was the loudest thing on the page and belonged to no other
+   element on it. */
+.kcauth .brand h1{font-family:'Manrope',ui-sans-serif,system-ui,sans-serif; font-size:27px; font-weight:500; letter-spacing:-.02em; color:#9aa7c4}
+.kcauth .brand h1 b{color:#eef2fb; font-weight:800}
 .kcauth .brand p{margin-top:7px; font-size:13px; font-weight:500; color:#8fa0c4; letter-spacing:.04em}
 .kcauth .card{position:relative; padding:34px 36px; border-radius:20px;
   background:linear-gradient(150deg, rgba(255,255,255,.07), rgba(255,255,255,.02) 42%, rgba(255,255,255,.012) 100%);
@@ -92,9 +103,12 @@ const AUTH_CSS = `
 /* keep particles + network above the aurora veil, content above all */
 .kcauth .net,.kcauth .pdot{z-index:1}
 .kcauth .center{z-index:3}
-/* Violet halo + brighter mark glow. */
+/* Violet halo on the CARD. It used to be on the logo too, and because this rule
+   sits after the brand block it quietly won: the mark kept its violet bloom
+   however the rule up there was written. Removed rather than re-tuned — see the
+   note on .brand .mk. The card keeps it; a bloom behind a translucent panel is
+   lighting, a bloom behind white ink is a halo. */
 .kcauth .card{box-shadow:0 40px 90px -42px rgba(0,0,0,.9), 0 0 0 1px rgba(124,92,255,.08), 0 0 70px -30px rgba(124,92,255,.45), inset 0 1px 0 rgba(255,255,255,.14)}
-.kcauth .brand .mk .kicon{filter:drop-shadow(0 16px 34px rgba(124,92,255,.55)) drop-shadow(0 0 22px rgba(124,92,255,.4))}
 /* Lightning sweep across the main button on hover. */
 .kcauth .cta{position:relative; overflow:hidden}
 .kcauth .cta:after{content:""; position:absolute; top:-20%; left:-70%; width:45%; height:140%; transform:skewX(-22deg);
@@ -348,8 +362,8 @@ export function AuthGate({ children }) {
         <Backdrop />
         <div className="center">
           <div className="brand">
-            <div className="mk"><KarmaIcon w={62} /></div>
-            <h1>Karma <b>Connect</b></h1>
+            <div className="mk"><KarmaIcon w={150} variant="lockup" /></div>
+            <h1><b>Karma</b>Connect</h1>
             <p>AI-Powered Prospect Intelligence</p>
           </div>
           <div className="card">
@@ -383,8 +397,8 @@ export function AuthGate({ children }) {
       <Backdrop />
       <div className="center">
         <div className="brand">
-          <div className="mk"><KarmaIcon w={62} /></div>
-          <h1>Karma <b>Connect</b></h1>
+          <div className="mk"><KarmaIcon w={150} variant="lockup" /></div>
+          <h1><b>Karma</b>Connect</h1>
           <p>AI-Powered Prospect Intelligence</p>
         </div>
 

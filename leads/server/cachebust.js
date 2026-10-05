@@ -24,7 +24,7 @@ const PUBLIC = path.join(__dirname, "..", "public");
 /* Only the files index.html actually references with a ?v=. A stylesheet
    added later without one is not silently covered, which is the honest
    behaviour — it would be worse to look after something we do not. */
-const WATCHED = ["app.js", "app.css", "na-geo.js"];
+const WATCHED = ["app.js", "app.css", "na-geo.js", "world-geo.js"];
 
 let cache = { key: "", html: "", at: 0 };
 const TTL_MS = 2000;            // in dev, notice an edit without a restart

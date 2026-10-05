@@ -104,6 +104,15 @@ function mount(app, opts = {}) {
      configured at once while the team moves across, and the front end picks
      whichever actually has a working seat for that rep. */
   app.use(require("./ringcentral").router);
+  app.use(require("./rc-dashboard").router);
+  app.use(require("./live").router);
+  app.use(require("./calllogs").router);
+  app.use(require("./users-dir").router);
+  /* calls into Zoho CRM's call log, and leads from connected calls — off
+     until an owner turns it on (app_settings "crm.sync") */
+  const crmSync = require("./crm-sync");
+  app.use(crmSync.router);
+  crmSync.startSweeper();
   app.use(require("./zoho-crm").router);
   /* recording calls, and the manager's report built from them. After leads.js
      so its requireOwnLead guard has already run for /api/leads/:id paths. */

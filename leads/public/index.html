@@ -4,9 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Karma Connect</title>
-<!-- geometric K, drawn rather than typeset, so it matches the mark in the app.
-     Steel rather than the old blue, tracking --accent on the navy palette. -->
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%234a86c8'/><path d='M11 7.5v17M11 16l9.5-8.5M11 16l9.5 8.5' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round' fill='none'/></svg>">
+<!-- the real Karma Staff mark on the app navy, the same tile Karma Connect
+     uses, so a pinned tab of either half shows one product. -->
+<link rel="icon" type="image/png" sizes="32x32" href="icon-32.png">
+<link rel="icon" type="image/png" sizes="256x256" href="icon-256.png">
 <!-- the same faces Karma Connect loads, so the two halves of the site read as
      one product rather than two that happen to share a domain -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -26,16 +27,10 @@
 <div id="login-screen" class="login-screen hidden">
   <div class="login-card">
     <div class="login-logo">
-      <svg class="logo-mark" viewBox="-4 -4 131 86" aria-hidden="true" fill="none">
-        <g fill="currentColor">
-          <rect x="0"  y="52" width="20" height="21"/>
-          <rect x="23" y="34" width="20" height="39"/>
-          <rect x="46" y="16" width="20" height="57"/>
-          <rect x="69" y="0"  width="20" height="73"/>
-          <path d="M84 47 L118 24 M84 47 L118 70" fill="none" stroke="currentColor" stroke-width="17" stroke-linecap="butt"/>
-        </g>
-      </svg>
-      <span class="wordmark"><b>Karma</b>Connect</span>
+      <picture class="login-lockup">
+        <img src="karma-lockup-white.png" alt="Karma Staff" class="logo-dark" width="340" height="200">
+        <img src="karma-lockup-navy.png"  alt="Karma Staff" class="logo-light" width="340" height="200">
+      </picture>
     </div>
     <p class="login-sub" id="login-sub">You don't have access to Karma Connect.</p>
     <div id="login-error" class="login-error hidden"></div>
@@ -48,15 +43,10 @@
 
   <header class="topbar">
     <div class="brand">
-      <svg class="logo-mark" viewBox="-4 -4 131 86" aria-hidden="true" fill="none">
-        <g fill="currentColor">
-          <rect x="0"  y="52" width="20" height="21"/>
-          <rect x="23" y="34" width="20" height="39"/>
-          <rect x="46" y="16" width="20" height="57"/>
-          <rect x="69" y="0"  width="20" height="73"/>
-          <path d="M84 47 L118 24 M84 47 L118 70" fill="none" stroke="currentColor" stroke-width="17" stroke-linecap="butt"/>
-        </g>
-      </svg>
+      <picture class="logo-mark">
+        <img src="karma-mark-white.png" alt="" class="logo-dark" width="212" height="128">
+        <img src="karma-mark-navy.png"  alt="" class="logo-light" width="212" height="128">
+      </picture>
       <span class="wordmark"><b>Karma</b>Connect</span>
     </div>
     <div class="searchbox">
@@ -64,6 +54,10 @@
       <input id="search" type="search" placeholder="Search leads" autocomplete="off">
     </div>
     <div class="topbar-right">
+      <!-- Three world clocks — the floor works Indian hours against US
+           customers. Each one is a button: click it to choose its time zone;
+           the choice is kept in this browser. Filled by app.js (clocksWire). -->
+      <div class="clocks" id="clocks" role="group" aria-label="World clocks"></div>
       <!-- One product, two halves. The label names the SECTION rather than the
            product, now that both halves are called Karma Connect — "switch to
            Karma Connect" from inside Karma Connect means nothing. A real link,
@@ -151,83 +145,133 @@
     </button>
   </div>
 
-  <div class="main">
-    <nav class="sidebar">
-      <div class="nav-section">Views</div>
-      <!-- line icons rather than emoji: emoji render differently per platform
-           and carry their own colour, which fights the active/inactive state -->
-      <!-- A rep's landing tab, and the one screen that is not a filter over
-           the base: what to do next, in neglect order. Everyone has it —
-           a manager owns leads too. -->
-      <button class="nav-item" data-tab="tasks">
+  <div class="main" id="app-main">
+    <nav class="sidebar" id="sidebar" aria-label="Sections">
+      <!-- Grouped and collapsible: the section holding the current tab opens by
+           itself, the rest stay folded, and what you open is remembered. The
+           buttons are the same data-tab buttons as before (only their
+           arrangement changed) so setTab() and every counter still find them.
+           Labels sit in .nav-label so the collapsed icon rail can hide them;
+           the title attribute carries the name there instead. -->
+
+      <!-- A rep's landing tab: what to do next, in neglect order. -->
+      <button class="nav-item nav-top" data-tab="tasks" title="My tasks">
         <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 4.8h7c.66 0 1.2.54 1.2 1.2v0c0 .66-.54 1.2-1.2 1.2h-7c-.66 0-1.2-.54-1.2-1.2v0c0-.66.54-1.2 1.2-1.2Z"/><path d="M16.7 6h1.8c.72 0 1.3.58 1.3 1.3v11.4c0 .72-.58 1.3-1.3 1.3H5.5c-.72 0-1.3-.58-1.3-1.3V7.3c0-.72.58-1.3 1.3-1.3h1.8"/><path d="m8.4 12.4 1.7 1.7 3.5-3.5"/><path d="M8.4 17.2h7.2"/></svg>
-        My tasks <span class="nav-count" id="count-tasks"></span></button>
-      <button class="nav-item" data-tab="companies">
-        <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21h18M5 21V5.8c0-.44.36-.8.8-.8h6.4c.44 0 .8.36.8.8V21M13 21V10.5h4.7c.44 0 .8.36.8.8V21M7.6 8.6h3M7.6 12.3h3M7.6 16h3M15.4 14h1.4M15.4 17.4h1.4"/></svg>
-        Companies <span class="nav-count" id="count-companies"></span></button>
-      <button class="nav-item" data-tab="people">
-        <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15.2 20v-1.6a3.4 3.4 0 0 0-3.4-3.4H6.6a3.4 3.4 0 0 0-3.4 3.4V20M9.2 11.6a3.3 3.3 0 1 0 0-6.6 3.3 3.3 0 0 0 0 6.6ZM20.8 20v-1.6a3.4 3.4 0 0 0-2.55-3.29M15.4 5.2a3.3 3.3 0 0 1 0 6.2"/></svg>
-        People <span class="nav-count" id="count-people"></span></button>
-      <button class="nav-item" data-tab="jobs">
-        <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.2 7.8h15.6c.55 0 1 .45 1 1v9.4c0 .55-.45 1-1 1H4.2c-.55 0-1-.45-1-1V8.8c0-.55.45-1 1-1ZM9 7.8V5.9c0-.5.4-.9.9-.9h4.2c.5 0 .9.4.9.9v1.9M3.2 12.6h17.6M10.7 12.6h2.6"/></svg>
-        Job board <span class="nav-count" id="count-jobs"></span></button>
-      <button class="nav-item" data-tab="recent">
-        <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.2"/><path d="M12 7.2V12l3.2 2.1"/></svg>
-        Recent <span class="nav-count" id="count-recent"></span></button>
-      <button class="nav-item" data-tab="favorites">
-        <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 4.3 2.42 4.9 5.41.79-3.92 3.81.93 5.39L12 16.65 7.16 19.19l.93-5.39-3.92-3.81 5.41-.79L12 4.3Z"/></svg>
-        Favorites <span class="nav-count" id="count-favorites"></span></button>
+        <span class="nav-label">My tasks</span><span class="nav-count" id="count-tasks"></span></button>
 
-      <!-- Prospect research. It also lives inside each lead, which is where
-           you use it — but a panel below the fold of a reading pane is not
-           findable, and people looked for it here. -->
-      <button class="nav-item" data-tab="research">
-        <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6M8.5 11h5M11 8.5v5"/></svg>
-        Research <span class="nav-count" id="count-research"></span></button>
+      <div class="nav-group" data-group="leads">
+        <button class="nav-group-h" type="button" aria-expanded="true" title="Leads">
+          <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6.5h16M4 12h16M4 17.5h10"/><circle cx="18.5" cy="17.5" r="2.2"/></svg>
+          <span class="nav-label">Leads</span>
+          <svg class="nav-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+        <div class="nav-group-b">
+          <button class="nav-item" data-tab="companies" title="Companies">
+            <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21h18M5 21V5.8c0-.44.36-.8.8-.8h6.4c.44 0 .8.36.8.8V21M13 21V10.5h4.7c.44 0 .8.36.8.8V21M7.6 8.6h3M7.6 12.3h3M7.6 16h3M15.4 14h1.4M15.4 17.4h1.4"/></svg>
+            <span class="nav-label">Companies</span><span class="nav-count" id="count-companies"></span></button>
+          <button class="nav-item" data-tab="people" title="People">
+            <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15.2 20v-1.6a3.4 3.4 0 0 0-3.4-3.4H6.6a3.4 3.4 0 0 0-3.4 3.4V20M9.2 11.6a3.3 3.3 0 1 0 0-6.6 3.3 3.3 0 0 0 0 6.6ZM20.8 20v-1.6a3.4 3.4 0 0 0-2.55-3.29M15.4 5.2a3.3 3.3 0 0 1 0 6.2"/></svg>
+            <span class="nav-label">People</span><span class="nav-count" id="count-people"></span></button>
+          <button class="nav-item" data-tab="jobs" title="Job board">
+            <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.2 7.8h15.6c.55 0 1 .45 1 1v9.4c0 .55-.45 1-1 1H4.2c-.55 0-1-.45-1-1V8.8c0-.55.45-1 1-1ZM9 7.8V5.9c0-.5.4-.9.9-.9h4.2c.5 0 .9.4.9.9v1.9M3.2 12.6h17.6M10.7 12.6h2.6"/></svg>
+            <span class="nav-label">Job board</span><span class="nav-count" id="count-jobs"></span></button>
+          <button class="nav-item" data-tab="favorites" title="Favorites">
+            <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 4.3 2.42 4.9 5.41.79-3.92 3.81.93 5.39L12 16.650 7.16 19.19l.93-5.39-3.920-3.81 5.410-.79L12 4.3Z"/></svg>
+            <span class="nav-label">Favorites</span><span class="nav-count" id="count-favorites"></span></button>
+          <button class="nav-item" data-tab="recent" title="Recent">
+            <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.2"/><path d="M12 7.2V12l3.2 2.1"/></svg>
+            <span class="nav-label">Recent</span><span class="nav-count" id="count-recent"></span></button>
+        </div>
+      </div>
 
-      <!-- working an assigned list straight through -->
-      <button class="nav-item" data-tab="camp">
-        <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 4.5h2.2l1.3 3.3-1.7 1.3a10.5 10.5 0 0 0 4.9 4.9l1.3-1.7 3.3 1.3v2.2a1.7 1.7 0 0 1-1.85 1.7C10.8 17.2 6.8 13.2 5.8 6.35A1.7 1.7 0 0 1 7.5 4.5Z"/><path d="M14.5 3.5h6M17.5 .5v6" transform="translate(0 2)"/></svg>
-        Call session</button>
+      <div class="nav-group" data-group="calling">
+        <button class="nav-group-h" type="button" aria-expanded="false" title="Calling">
+          <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 4.5h2.2l1.3 3.3-1.7 1.3a10.5 10.5 0 0 0 4.9 4.9l1.3-1.7 3.3 1.3v2.2a1.7 1.7 0 0 1-1.85 1.7C10.8 17.2 6.8 13.2 5.8 6.35A1.7 1.7 0 0 1 7.5 4.5Z"/></svg>
+          <span class="nav-label">Calling</span>
+          <svg class="nav-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+        <div class="nav-group-b">
+          <!-- working an assigned list straight through; also where a
+               power-dialer campaign is worked -->
+          <button class="nav-item" data-tab="camp" title="Call session">
+            <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 4.5h2.2l1.3 3.3-1.7 1.3a10.5 10.5 0 0 0 4.9 4.9l1.3-1.7 3.3 1.3v2.2a1.7 1.7 0 0 1-1.85 1.7C10.8 17.2 6.8 13.2 5.8 6.35A1.7 1.7 0 0 1 7.5 4.5Z"/><path d="M14.5 3.5h6M17.5 .5v6" transform="translate(0 2)"/></svg>
+            <span class="nav-label">Call session</span></button>
+          <button class="nav-item admin-only hidden" data-tab="power" title="Power dialer">
+            <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3 5 13.5h6L10 21l8-10.5h-6L13 3Z"/></svg>
+            <span class="nav-label">Power dialer</span><span class="nav-count live-count hidden" id="count-power"></span></button>
+          <button class="nav-item admin-only hidden" data-tab="live" title="Live calls">
+            <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="2.4"/><path d="M8.1 15.9a5.5 5.5 0 0 1 0-7.8M15.9 8.1a5.5 5.5 0 0 1 0 7.8M5.3 18.7a9.5 9.5 0 0 1 0-13.4M18.7 5.3a9.5 9.5 0 0 1 0 13.4"/></svg>
+            <span class="nav-label">Live calls</span><span class="nav-count live-count hidden" id="count-live"></span></button>
+          <button class="nav-item admin-only hidden" data-tab="calllog" title="Call logs">
+            <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h12M8 12h12M8 18h12"/><path d="M4 6h.01M4 12h.01M4 18h.01" stroke-width="2.6"/></svg>
+            <span class="nav-label">Call logs</span></button>
+          <!-- the phone system's own numbers, account-wide -->
+          <button class="nav-item admin-only hidden" data-tab="dash" title="Dashboard">
+            <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="9" rx="1.6"/><rect x="13.5" y="3.5" width="7" height="5" rx="1.6"/><rect x="13.5" y="11.5" width="7" height="9" rx="1.6"/><rect x="3.5" y="15.5" width="7" height="5" rx="1.6"/></svg>
+            <span class="nav-label">Dashboard</span></button>
+        </div>
+      </div>
 
-      <button class="nav-item" data-tab="storm">
-        <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 16.5a4 4 0 0 1 .3-7.98 5.5 5.5 0 0 1 10.65 1.2A3.6 3.6 0 0 1 17.5 16.5H7Z"/><path d="m13 13-3 4.2h3.4L11 21.5"/></svg>
-        Storm watch <span class="nav-count" id="count-storm"></span></button>
+      <div class="nav-group" data-group="insights">
+        <button class="nav-group-h" type="button" aria-expanded="false" title="Insights">
+          <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 18h5M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.6.45 1.1 1.2 1.1 2V16h5v-.2c0-.8.5-1.55 1.1-2A6 6 0 0 0 12 3Z"/></svg>
+          <span class="nav-label">Insights</span>
+          <svg class="nav-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+        <div class="nav-group-b">
+          <!-- Prospect research: also inside each lead, but people look for it here -->
+          <button class="nav-item" data-tab="research" title="Research">
+            <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6M8.5 11h5M11 8.5v5"/></svg>
+            <span class="nav-label">Research</span><span class="nav-count" id="count-research"></span></button>
+          <button class="nav-item" data-tab="storm" title="Storm watch">
+            <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 16.5a4 4 0 0 1 .3-7.98 5.5 5.5 0 0 1 10.65 1.2A3.6 3.6 0 0 1 17.5 16.5H7Z"/><path d="m13 13-3 4.2h3.4L11 21.5"/></svg>
+            <span class="nav-label">Storm watch</span><span class="nav-count" id="count-storm"></span></button>
+        </div>
+      </div>
 
-      <div class="nav-section admin-only hidden">Manage</div>
-      <!-- the manager's view of who is carrying what, and where the unclaimed
-           work is. Assigning from here goes through the same /api/bulk/assign
-           the selection toolbar uses — there is only one way to set an owner. -->
-      <button class="nav-item admin-only hidden" data-tab="assign">
-        <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3.4 19.4a5.8 5.8 0 0 1 11.2 0"/><path d="M17.5 8.5h4M19.5 6.5v4"/></svg>
-        Assignments</button>
-      <!-- today's calls, per person, plus who is working right now. Its own
-           tab rather than a panel on Team activity: one asks what happened
-           over a month, this one asks what is happening this morning. -->
-      <button class="nav-item admin-only hidden" data-tab="calls">
-        <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 4.5h2.2l1.3 3.3-1.7 1.3a10.5 10.5 0 0 0 4.9 4.9l1.3-1.7 3.3 1.3v2.2a1.7 1.7 0 0 1-1.85 1.7C10.8 17.2 6.8 13.2 5.8 6.35A1.7 1.7 0 0 1 7.5 4.5Z"/></svg>
-        Call report</button>
-      <button class="nav-item admin-only hidden" data-tab="stats">
-        <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V4M4 20h16M7.6 20v-5.2M12 20V9.4M16.4 20v-7.8"/></svg>
-        Team activity</button>
-      <!-- DNC (the do-not-call ban list) lives under Manage: members can still
-           remove (with a 5-second undo), but only the manager reviews the bans.
-           Deleting a lead outright is a different thing — see the trash bin in
-           the user menu. -->
-      <button class="nav-item admin-only hidden" data-tab="removed">
-        <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.2"/><path d="m6.2 6.2 11.6 11.6"/></svg>
-        DNC <span class="nav-count" id="count-removed"></span></button>
+      <div class="nav-group admin-only hidden" data-group="manage">
+        <button class="nav-group-h" type="button" aria-expanded="false" title="Manage">
+          <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
+          <span class="nav-label">Manage</span>
+          <svg class="nav-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+        <div class="nav-group-b">
+          <button class="nav-item admin-only hidden" data-tab="team" title="Users">
+            <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3.4 19.4a5.8 5.8 0 0 1 11.2 0"/><circle cx="17" cy="9" r="2.4"/><path d="M15.6 14.2a4.6 4.6 0 0 1 5.4 4.6"/></svg>
+            <span class="nav-label">Users</span></button>
+          <!-- who is carrying what; assigning goes through /api/bulk/assign -->
+          <button class="nav-item admin-only hidden" data-tab="assign" title="Assignments">
+            <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3.4 19.4a5.8 5.8 0 0 1 11.2 0"/><path d="M17.5 8.5h4M19.5 6.5v4"/></svg>
+            <span class="nav-label">Assignments</span></button>
+          <!-- calls per person, from our own log -->
+          <button class="nav-item admin-only hidden" data-tab="calls" title="Call report">
+            <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5zM8.5 9h7M8.5 12.5h7M8.5 16h4"/></svg>
+            <span class="nav-label">Call report</span></button>
+          <button class="nav-item admin-only hidden" data-tab="stats" title="Team activity">
+            <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V4M4 20h16M7.6 20v-5.2M12 20V9.4M16.4 20v-7.8"/></svg>
+            <span class="nav-label">Team activity</span></button>
+          <!-- the do-not-call ban list; deleting a lead is the Trash, in the user menu -->
+          <button class="nav-item admin-only hidden" data-tab="removed" title="DNC (do not call)">
+            <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.2"/><path d="m6.2 6.2 11.6 11.6"/></svg>
+            <span class="nav-label">DNC</span><span class="nav-count" id="count-removed"></span></button>
+        </div>
+      </div>
 
       <div class="sidebar-foot">
-        <div class="job-search-row admin-only hidden">
-          <!-- the board the search will run on is named on the button itself;
-               it lives in localStorage, so nothing else would show it -->
-          <button id="job-search-btn" class="btn-primary">🔎 Find jobs
-            <span id="js-board-tag" class="js-board-tag"></span></button>
-          <button id="job-search-settings" class="btn-ghost btn-gear" title="Job board &amp; search settings">⚙</button>
+        <!-- Quiet, not two yellow slabs: these are occasional admin jobs. -->
+        <div class="nav-actions admin-only hidden">
+          <button id="import-btn" class="nav-act admin-only hidden" title="Import leads from a spreadsheet">
+            <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V4M7.5 8.5 12 4l4.5 4.5M5 15v3.5c0 .8.7 1.5 1.5 1.5h11c.8 0 1.5-.7 1.5-1.5V15"/></svg>
+            <span class="nav-label">Import leads</span></button>
+          <div class="job-search-row admin-only hidden">
+            <!-- the board the search will run on is named on the button itself -->
+            <button id="job-search-btn" class="nav-act" title="Find new job postings">
+              <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.3-4.3"/></svg>
+              <span class="nav-label">Find jobs</span> <span id="js-board-tag" class="js-board-tag"></span></button>
+            <button id="job-search-settings" class="nav-act nav-act-gear" title="Job board and search settings">
+              <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg></button>
+          </div>
+          <div id="credits-line" class="credits-line admin-only hidden" title="Apify credits remaining this billing cycle"></div>
         </div>
-        <div id="credits-line" class="credits-line admin-only hidden" title="Apify credits remaining this billing cycle"></div>
-        <button id="import-btn" class="btn-primary btn-block admin-only hidden">⬆ Import leads</button>
+        <button id="nav-collapse" class="nav-act nav-collapse" type="button" title="Collapse the sidebar">
+          <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>
+          <span class="nav-label">Collapse</span></button>
       </div>
     </nav>
 
@@ -397,6 +441,177 @@
     </section>
 
     <!-- Call report: admin-only, today's calls and who is live. -->
+    <!-- Dashboard: RingCentral's call log, presence and extensions, read live.
+         One filter row scopes every card below it. -->
+    <section class="stats-pane hidden" id="dash-pane">
+      <div class="stats-head dash-head">
+        <div class="list-title-wrap">
+          <div class="seg-eyebrow">Calling · RingCentral</div>
+          <h2>Dashboard</h2>
+          <div class="dash-sub" id="dash-sub"></div>
+        </div>
+        <div class="dash-filters">
+          <div class="dash-seg" role="group" aria-label="Period">
+            <button data-range="today" class="on" aria-pressed="true">Today</button>
+            <button data-range="yesterday" aria-pressed="false">Yesterday</button>
+            <button data-range="week" aria-pressed="false">7 days</button>
+          </div>
+          <label class="ctl" title="Any single day">
+            <span class="ctl-ic">▤</span><input type="date" id="dash-date" aria-label="Day">
+          </label>
+          <label class="ctl hidden" id="dash-dept-wrap"><span class="ctl-ic">◫</span>
+            <select id="dash-dept" aria-label="Department"><option value="">All departments</option></select>
+          </label>
+          <label class="ctl"><span class="ctl-ic">◉</span>
+            <select id="dash-agent" aria-label="Agent"><option value="">All agents</option></select>
+          </label>
+          <label class="ctl"><span class="ctl-ic">#</span>
+            <select id="dash-number" aria-label="Number"><option value="">All numbers</option></select>
+          </label>
+          <button id="dash-live" class="dash-live" role="switch" aria-checked="false"
+            title="Reload every minute"><i></i>Auto refresh</button>
+          <button id="dash-refresh" class="btn-ghost" title="Reload now">Refresh</button>
+        </div>
+      </div>
+      <div id="dash-body" class="stats-body dash-body"></div>
+      <div id="dash-tip" class="dash-tip hidden" role="tooltip"></div>
+    </section>
+
+    <!-- Call logs: every RingCentral call, searchable, with recordings and a
+         download. One search row and one filter row scope the table. -->
+    <section class="stats-pane hidden" id="calllog-pane">
+      <div class="stats-head dash-head">
+        <div class="list-title-wrap">
+          <div class="seg-eyebrow">Calling · RingCentral</div>
+          <h2>Call logs</h2>
+          <div class="dash-sub" id="cl-sub"></div>
+        </div>
+        <div class="cl-actions">
+          <!-- Zoho CRM sync: status at a glance; opens the switch and preview -->
+          <button id="cl-crm" class="cl-crm-chip" type="button" title="Zoho CRM call logging">
+            <i></i><span id="cl-crm-text">Zoho CRM</span></button>
+          <div class="dl-wrap">
+            <button id="cl-dl-open" class="btn-primary" aria-expanded="false" title="Download these call logs">↓ Download</button>
+            <div class="dl-pop hidden" id="cl-dl-pop" role="menu" aria-label="Download call logs">
+              <h5>Download call logs</h5>
+              <p class="dl-scope" id="cl-dl-scope"></p>
+              <button class="cl-dl-item" data-format="xlsx" role="menuitem">Excel (.xlsx)</button>
+              <button class="cl-dl-item" data-format="csv" role="menuitem">CSV (.csv)</button>
+              <p class="dl-note">Exactly what's filtered here — every page, not just this one.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="cl-search">
+        <label class="cl-field cl-date">
+          <span>Date</span>
+          <select id="cl-preset" aria-label="Period">
+            <option value="today">Today</option>
+            <option value="yesterday">Yesterday</option>
+            <option value="7">Last 7 days</option>
+            <option value="30">Last 30 days</option>
+            <option value="month">This month</option>
+            <option value="custom">Custom…</option>
+          </select>
+          <input type="date" id="cl-from" aria-label="From" class="hidden">
+          <i class="cl-arrow hidden" id="cl-arrow">→</i>
+          <input type="date" id="cl-to" aria-label="To" class="hidden">
+        </label>
+        <label class="cl-field cl-q">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM20 20l-3.5-3.5"/></svg>
+          <input type="search" id="cl-q" placeholder="Search a number, lead or agent" autocomplete="off" aria-label="Search">
+        </label>
+      </div>
+      <div class="cl-filters" id="cl-filters">
+        <label class="cl-chip">Agent<select id="cl-agent"><option value="">All</option></select></label>
+        <label class="cl-chip">Call type<select id="cl-mode">
+          <option value="">All</option><option value="outgoing">Outgoing</option>
+          <option value="incoming">Incoming</option><option value="missed">Missed</option></select></label>
+        <label class="cl-chip">Result<select id="cl-result"><option value="">All</option></select></label>
+        <label class="cl-chip">Number<select id="cl-number"><option value="">All</option></select></label>
+        <label class="cl-chip">Disposition<select id="cl-dispo"><option value="">All</option></select></label>
+        <button class="cl-chip cl-toggle" id="cl-rec" aria-pressed="false">Recorded only</button>
+        <button class="cl-clear hidden" id="cl-clear">Clear filters</button>
+        <span class="cl-total" id="cl-total"></span>
+      </div>
+      <div id="cl-body" class="stats-body cl-body"></div>
+    </section>
+
+    <!-- Power dialer: campaigns built from a rep's assigned leads; the
+         manager starts / pauses / ends them, the rep's screen dials. -->
+    <section class="stats-pane hidden" id="power-pane">
+      <div class="stats-head dash-head">
+        <div class="list-title-wrap">
+          <div class="seg-eyebrow">Calling</div>
+          <h2>Power dialer</h2>
+          <div class="dash-sub" id="pd-sub"></div>
+        </div>
+        <div class="cl-actions">
+          <label class="cl-chip">Status<select id="pd-status">
+            <option value="">All</option><option value="ongoing">Ongoing</option><option value="paused">Paused</option>
+            <option value="draft">Ready</option><option value="completed">Completed</option><option value="ended">Ended</option>
+          </select></label>
+          <label class="cl-field cl-q tm-q">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM20 20l-3.5-3.5"/></svg>
+            <input type="search" id="pd-q" placeholder="Search campaigns" autocomplete="off" aria-label="Search campaigns">
+          </label>
+          <button id="pd-new" class="btn-primary">+ New campaign</button>
+        </div>
+      </div>
+      <div id="pd-body" class="stats-body cl-body"></div>
+    </section>
+
+    <!-- Users: the team directory. Read-only for RingCentral; Karma Connect
+         access is managed in the existing users dialog, linked from here. -->
+    <section class="stats-pane hidden" id="team-pane">
+      <div class="stats-head dash-head">
+        <div class="list-title-wrap">
+          <div class="seg-eyebrow">Manage · Team</div>
+          <h2>Users</h2>
+          <div class="dash-sub" id="tm-sub"></div>
+        </div>
+        <div class="cl-actions">
+          <label class="cl-field cl-q tm-q">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM20 20l-3.5-3.5"/></svg>
+            <input type="search" id="tm-q" placeholder="Search name, email, extension" autocomplete="off" aria-label="Search users">
+          </label>
+          <button id="tm-access" class="btn-ghost" title="Invite people, change roles, disable accounts">Manage access</button>
+          <div class="dl-wrap">
+            <button id="tm-dl-open" class="btn-primary" aria-expanded="false">↓ Download</button>
+            <div class="dl-pop hidden" id="tm-dl-pop" role="menu" aria-label="Download users">
+              <h5>Download users</h5>
+              <button class="cl-dl-item" data-format="xlsx" role="menuitem">Excel (.xlsx)</button>
+              <button class="cl-dl-item" data-format="csv" role="menuitem">CSV (.csv)</button>
+              <p class="dl-note">Everyone matching the filters below.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="cl-filters tm-filters">
+        <label class="cl-chip">Users<select id="tm-status">
+          <option value="active">Active users</option><option value="inactive">Inactive users</option>
+          <option value="all">All users</option></select></label>
+        <label class="cl-chip">Role<select id="tm-role"><option value="">All</option></select></label>
+        <label class="cl-chip hidden" id="tm-dept-wrap">Department<select id="tm-dept"><option value="">All</option></select></label>
+        <label class="cl-chip">Agent status<select id="tm-agent"><option value="">All</option></select></label>
+        <span class="cl-total" id="tm-total"></span>
+      </div>
+      <div id="tm-body" class="stats-body cl-body"></div>
+    </section>
+
+    <!-- Live calls: the floor this second. Polled every 5s while open. -->
+    <section class="stats-pane hidden" id="live-pane">
+      <div class="stats-head dash-head">
+        <div class="list-title-wrap">
+          <div class="seg-eyebrow">Calling · Live</div>
+          <h2>Live calls</h2>
+          <div class="dash-sub" id="live-sub"></div>
+        </div>
+        <div class="live-pills" id="live-pills"></div>
+      </div>
+      <div id="live-body" class="stats-body live-body"></div>
+    </section>
+
     <section class="stats-pane hidden" id="calls-pane">
       <div class="stats-head">
         <div class="list-title-wrap">
@@ -511,56 +726,286 @@
      projected and simplified offline by leads/scripts/build-na-geo.mjs.
      Generated — re-run that script rather than editing it. -->
 <script src="na-geo.js?v=3"></script>
-  <!-- The call bar. RingCentral's SDK is headless — it ships the SIP engine
-       and no interface — so without this a rep on a call has audio and no
-       controls. The keypad matters more than it looks: these are B2B numbers
-       and most answer with a menu. -->
-  <!-- The launcher. Hidden until RingCentral registers, because a phone
-       button that cannot phone anybody is worse than no button. -->
+<!-- World geometry for the Dashboard map, built by leads/scripts/build-world-geo.mjs.
+     Also generated — re-run the script rather than editing it. -->
+<script src="world-geo.js?v=1"></script>
+  <!-- ============ THE SOFT DIALLER ============
+
+       RingCentral's web-phone SDK is headless: it ships the SIP engine and no
+       interface at all. Everything a rep touches during a call is here.
+
+       Dark in both themes on purpose. This is a device sitting on top of the
+       workspace, not a panel inside it, and a dialler that repaints itself
+       white at noon reads as part of the page it is floating over.
+
+       Fixed furniture is markup; anything that depends on the call or the lead
+       (the queue, the timeline, the lead sheet) is rendered by app.js into the
+       containers below. The keypad is NOT an afterthought — these are B2B
+       numbers and most answer with a menu, so without DTMF a rep never gets
+       past "press 1 for sales". -->
+
+  <!-- Hidden until RingCentral registers: a phone button that cannot phone
+       anybody is worse than no button. -->
   <button id="rc-launch" class="rc-launch hidden" aria-expanded="false"
     title="Dialler — type a number or use the keypad">
-    <span class="rc-launch-ic">☎</span>
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/></svg>
   </button>
 
-  <div id="rc-call" class="rc-call hidden" role="region" aria-label="Dialler">
-    <!-- Idle: type or tap a number and call it. The lead list can only dial
-         numbers that are ON a lead; a rep returning a missed call or working
-         from a note needs to dial something that is not in front of them. -->
-    <div id="rc-idle" class="rc-idle">
-      <div class="rc-idle-head">
-        <b>Dialler</b>
-        <button id="rc-close" class="rc-close" title="Close">×</button>
+  <div id="rc-call" class="kd hidden" role="region" aria-label="Dialler">
+
+    <header class="kd-head">
+      <div class="kd-presence"><span id="kd-dot-reg" class="kd-live"></span><span id="kd-reg">Connecting…</span></div>
+      <div id="kd-cid" class="kd-cid" title="The number your calls go out as">
+        <span>Caller ID</span><b id="kd-cid-num">—</b>
       </div>
-      <input id="rc-dial-num" class="rc-dial-num" type="tel"
-        placeholder="Type a number" autocomplete="off" aria-label="Number to call">
-      <button id="rc-dial-go" class="btn-primary rc-dial-go">Call</button>
+      <button id="kd-close" class="kd-x" aria-label="Close the dialler">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </header>
+
+    <!-- Shown when a call is live but the rep has wandered to another tab. -->
+    <button id="kd-return" class="kd-return hidden">
+      <span class="kd-live"></span>
+      <span id="kd-return-who" class="kd-return-who"></span>
+      <span id="kd-return-time" class="kd-tnum"></span>
+      <span class="kd-return-go">Return</span>
+    </button>
+
+    <!-- Shown when RingCentral is connected but the line would not register:
+         says why in words a rep can act on, with a way to try again. -->
+    <div id="kd-err" class="kd-err hidden" role="alert">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
+      <div class="kd-err-t"><b id="kd-err-title"></b><span id="kd-err-msg"></span></div>
+      <button id="kd-retry" class="kd-err-btn">Retry</button>
     </div>
 
-    <div class="rc-call-main" id="rc-active">
-      <div class="rc-call-id">
-        <b id="rc-call-who">Calling</b>
-        <span id="rc-call-num"></span>
+    <!-- ---- view: leads ---- -->
+    <section id="kd-view-leads" class="kd-view kd-scroll hidden" aria-label="Leads">
+      <h2 class="kd-h1">Leads</h2>
+      <div class="kd-search">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM20 20l-3.5-3.5"/></svg>
+        <label for="kd-q" class="kd-sr">Search leads</label>
+        <input id="kd-q" type="search" placeholder="Search name or number" autocomplete="off">
       </div>
-      <div class="rc-call-meta">
-        <span id="rc-call-state">calling…</span>
-        <span id="rc-call-time" class="rc-call-time">0:00</span>
+      <div id="kd-queue" class="kd-queue"></div>
+    </section>
+
+    <!-- ---- view: keypad ---- -->
+    <section id="kd-view-keypad" class="kd-view kd-scroll hidden" aria-label="Dial pad">
+      <div class="kd-numbar">
+        <label for="kd-num" class="kd-sr">Phone number</label>
+        <input id="kd-num" type="tel" inputmode="tel" placeholder="(201) 555-0123" autocomplete="off">
+        <button id="kd-del" class="kd-del" aria-label="Delete last digit">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5h11v14H9l-6-7 6-7zM12 9l5 6M17 9l-5 6"/></svg>
+        </button>
+      </div>
+      <div class="kd-keys" id="kd-keys">
+        <button data-k="1"><b>1</b><i></i></button>
+        <button data-k="2"><b>2</b><i>ABC</i></button>
+        <button data-k="3"><b>3</b><i>DEF</i></button>
+        <button data-k="4"><b>4</b><i>GHI</i></button>
+        <button data-k="5"><b>5</b><i>JKL</i></button>
+        <button data-k="6"><b>6</b><i>MNO</i></button>
+        <button data-k="7"><b>7</b><i>PQRS</i></button>
+        <button data-k="8"><b>8</b><i>TUV</i></button>
+        <button data-k="9"><b>9</b><i>WXYZ</i></button>
+        <button data-k="*"><b>*</b><i></i></button>
+        <button data-k="0"><b>0</b><i>+</i></button>
+        <button data-k="#"><b>#</b><i></i></button>
+      </div>
+      <div class="kd-callrow">
+        <button id="kd-go" class="kd-go" aria-label="Call">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/></svg>
+        </button>
+      </div>
+      <p id="kd-dtmf-sent" class="kd-sent" role="status"></p>
+    </section>
+
+    <!-- ---- view: the lead / the call ---- -->
+    <section id="kd-view-lead" class="kd-view kd-lead hidden" aria-label="Call">
+      <div class="kd-leadhead">
+        <div class="kd-who">
+          <div id="kd-avatar" class="kd-avatar">—</div>
+          <div class="kd-whotext">
+            <h2 id="kd-name">No lead selected</h2>
+            <div id="kd-sub" class="kd-sub"></div>
+          </div>
+        </div>
+        <div class="kd-tags">
+          <span id="kd-phone" class="kd-phone"></span>
+          <span id="kd-status" class="kd-chip hidden"></span>
+        </div>
+        <div class="kd-status">
+          <span id="kd-dot" class="kd-sdot"></span>
+          <span id="kd-state">Ready to call</span>
+          <span id="kd-dots" class="kd-dots hidden" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span id="kd-rec" class="kd-recflag hidden"><i></i>Rec</span>
+          <span id="kd-time" class="kd-time">00:00</span>
+        </div>
+
+        <div id="kd-holdbar" class="kd-holdbar hidden">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5v14M15 5v14"/></svg>
+          <div><b>Call on hold</b><span>Timer paused</span></div>
+          <button id="kd-resume" class="kd-resume">Resume</button>
+        </div>
+
+        <div id="kd-ready" class="kd-ready hidden">
+          <button id="kd-call" class="kd-primary">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/></svg>
+            <span>Call</span>
+          </button>
+          <div id="kd-fromline" class="kd-fromline"></div>
+        </div>
+
+        <div id="kd-controls" class="kd-controls hidden">
+          <div class="kd-ctls" id="kd-ctls"></div>
+          <button id="kd-end" class="kd-end">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 13.5c5-5 13-5 18 0l-2.2 2.6-3.8-1.6v-2.6a9 9 0 0 0-6 0v2.6l-3.8 1.6L3 13.5z"/></svg>
+            <span>End call</span>
+          </button>
+        </div>
+
+        <!-- An incoming call: who it is (from Karma Connect's own records) and
+             why they are ringing — usually a lead calling back after a
+             power-dialer campaign that showed this person's number. -->
+        <div id="kd-incoming" class="kd-incoming hidden">
+          <div id="kd-inc-why" class="kd-inc-why"></div>
+          <div class="kd-inc-btns">
+            <button id="kd-decline" class="kd-end kd-decline">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 13.5c5-5 13-5 18 0l-2.2 2.6-3.8-1.6v-2.6a9 9 0 0 0-6 0v2.6l-3.8 1.6L3 13.5z"/></svg>
+              <span>Decline</span>
+            </button>
+            <button id="kd-answer" class="kd-primary kd-answer">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/></svg>
+              <span>Answer</span>
+            </button>
+          </div>
+        </div>
+
+        <div id="kd-over" class="kd-over hidden">
+          <button id="kd-again" class="kd-secondary">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/></svg>
+            <span>Call again</span>
+          </button>
+          <div id="kd-overnote" class="kd-fromline"></div>
+        </div>
+      </div>
+
+      <div class="kd-ptabs" role="group" aria-label="Lead panels">
+        <button data-tab="history" class="on" aria-pressed="true">History</button>
+        <button data-tab="followup" aria-pressed="false">Follow-up</button>
+        <button data-tab="lead" aria-pressed="false">Lead</button>
+      </div>
+
+      <div id="kd-panel" class="kd-panel kd-scroll"></div>
+    </section>
+
+    <!-- ---- view: reminders (rendered by app.js from /api/followups) ---- -->
+    <section id="kd-view-inbox" class="kd-view kd-scroll hidden" aria-label="Reminders">
+      <div class="kd-inbox-head">
+        <h2 class="kd-h1">Reminders</h2>
+        <span id="kd-inbox-sum" class="kd-sub"></span>
+      </div>
+      <div id="kd-inbox" class="kd-inbox"></div>
+    </section>
+
+    <!-- ---- view: settings (rendered by app.js: profile, line, audio) ---- -->
+    <section id="kd-view-settings" class="kd-view kd-lead hidden" aria-label="Settings">
+      <div class="kd-ptabs" role="group" aria-label="Settings sections">
+        <button data-stab="general" class="on" aria-pressed="true">Settings</button>
+        <button data-stab="audio" aria-pressed="false">Audio devices</button>
+      </div>
+      <div id="kd-settings" class="kd-panel kd-scroll"></div>
+    </section>
+
+    <nav class="kd-nav" aria-label="Dialler">
+      <button data-nav="keypad" aria-current="page">
+        <svg viewBox="0 0 24 24" aria-hidden="true" class="kd-thick"><path d="M6 6h.01M12 6h.01M18 6h.01M6 12h.01M12 12h.01M18 12h.01M6 18h.01M12 18h.01M18 18h.01"/></svg>
+        <span>Dialer</span>
+      </button>
+      <button data-nav="leads">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        <span>Leads</span>
+      </button>
+      <button data-nav="history">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5l3 2"/></svg>
+        <span>History</span>
+      </button>
+      <!-- Every follow-up the rep has set, across all their leads — not just the
+           open lead's (that one is still the Follow-up tab on the call screen). -->
+      <button data-nav="inbox">
+        <span class="kd-navic">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+          <b id="kd-badge" class="kd-badge hidden"></b>
+        </span>
+        <span>Reminders</span>
+      </button>
+      <!-- One slot, two buttons: More (lead actions) only means something on a
+           call, so between calls the slot is Settings instead. app.js swaps them. -->
+      <button data-nav="more" id="kd-nav-more" class="hidden">
+        <svg viewBox="0 0 24 24" aria-hidden="true" class="kd-thick"><path d="M6 12h.01M12 12h.01M18 12h.01"/></svg>
+        <span>More</span>
+      </button>
+      <button data-nav="settings" id="kd-nav-settings">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <span>Settings</span>
+      </button>
+    </nav>
+
+    <!-- ---- the More sheet ---- -->
+    <div id="kd-menu" class="kd-scrim hidden">
+      <div class="kd-sheet" role="menu" aria-label="Lead actions">
+        <div class="kd-grab" aria-hidden="true"></div>
+        <div class="kd-sheethead">
+          <span>Lead actions</span>
+          <button class="kd-x" data-close="kd-menu" aria-label="Close menu">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+          </button>
+        </div>
+        <div id="kd-menu-items" class="kd-menuitems"></div>
       </div>
     </div>
-    <div class="rc-call-btns">
-      <button id="rc-mute" class="btn-ghost" aria-pressed="false">Mute</button>
-      <button id="rc-hold" class="btn-ghost" aria-pressed="false">Hold</button>
-      <button id="rc-keypad" class="btn-ghost" title="Send tones for phone menus">Keypad</button>
-      <button id="rc-hangup" class="rc-hangup">Hang up</button>
-    </div>
-    <div id="rc-dtmf" class="rc-dtmf hidden">
-      <div class="rc-dtmf-keys">
-        <button data-dtmf="1">1</button><button data-dtmf="2">2</button><button data-dtmf="3">3</button>
-        <button data-dtmf="4">4</button><button data-dtmf="5">5</button><button data-dtmf="6">6</button>
-        <button data-dtmf="7">7</button><button data-dtmf="8">8</button><button data-dtmf="9">9</button>
-        <button data-dtmf="*">*</button><button data-dtmf="0">0</button><button data-dtmf="#">#</button>
+
+    <!-- ---- the disposition sheet ---- -->
+    <div id="kd-wrap" class="kd-scrim hidden">
+      <div class="kd-sheet kd-scroll" role="dialog" aria-label="Disposition" aria-modal="true">
+        <div class="kd-grab" aria-hidden="true"></div>
+        <div class="kd-sheethead kd-wraphead">
+          <div><h3>Disposition</h3><div id="kd-wrapsub" class="kd-sub"></div></div>
+          <button class="kd-x" data-close="kd-wrap" aria-label="Close disposition">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+          </button>
+        </div>
+        <div id="kd-dispos" class="kd-dispos" role="group" aria-label="Call outcome"></div>
+        <div class="kd-field">
+          <label for="kd-note">Notes <span>(optional)</span></label>
+          <textarea id="kd-note" rows="2" placeholder="Add a short note about this call"></textarea>
+        </div>
+        <!-- Shown after a CONNECTED call while the Zoho CRM sync is on: a name
+             here creates the person as a Lead in the CRM (or links the record
+             that already has this number). Left blank, nothing is created. -->
+        <div id="kd-crm" class="kd-field kd-crm hidden">
+          <label>Add to Zoho CRM <span>(optional)</span></label>
+          <div class="kd-crm-row">
+            <input id="kd-crm-first" placeholder="First name" autocomplete="off" aria-label="First name">
+            <input id="kd-crm-last" placeholder="Last name" autocomplete="off" aria-label="Last name">
+          </div>
+          <input id="kd-crm-email" type="email" placeholder="Email (optional)" autocomplete="off" aria-label="Email">
+          <p class="kd-hint">A last name creates this person as a lead in Zoho CRM. Already there? It's linked, not duplicated.</p>
+        </div>
+        <div id="kd-fu" class="kd-field hidden">
+          <label for="kd-fu-at">Follow-up</label>
+          <input id="kd-fu-at" type="datetime-local">
+          <p class="kd-hint">You'll get an email when it falls due.</p>
+        </div>
+        <div class="kd-saverow">
+          <button id="kd-save" class="kd-primary">Save</button>
+          <button id="kd-skip" class="kd-secondary">Skip</button>
+        </div>
       </div>
-      <div id="rc-dtmf-sent" class="rc-dtmf-sent"></div>
     </div>
+
+    <div id="kd-toast" class="kd-toast hidden" role="status"></div>
   </div>
 <script src="app.js?v=78"></script>
 </body>

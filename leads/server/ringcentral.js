@@ -163,6 +163,7 @@ router.get("/api/voice/rc/callback", async (req, res, next) => {
        String((who.contact && who.contact.businessPhone) || ""),
        tok.refresh_token_expires_in
          ? new Date(Date.now() + tok.refresh_token_expires_in * 1000) : null]);
+    forgetAccess(userId);       // a new seat: drop any cached token for the old one
 
     back(null, true);
   } catch (e) {
@@ -183,8 +184,34 @@ async function identity(userId) {
 
    RingCentral ROTATES the refresh token on every use, so the new one must be
    written back or the next call fails with an error that reads like a
-   configuration problem and is not one. */
+   configuration problem and is not one.
+
+   Which is also why two refreshes must never race. Both would present the same
+   refresh token; RingCentral honours the first, the second gets invalid_grant,
+   and that error is read as "signed out" — one dashboard firing call log,
+   presence and extensions in parallel would disconnect its own viewer. So the
+   access token is kept in memory until a minute before it expires, and while
+   a refresh is in flight every other caller waits on that same promise. */
+const TOKENS = new Map();     // userId -> { tok, until } | { pending: Promise }
+
 async function accessFor(userId) {
+  const hit = TOKENS.get(userId);
+  if (hit?.pending) return hit.pending;
+  if (hit && hit.until > Date.now()) return hit.tok;
+  const pending = refreshAccess(userId).then(
+    (tok) => {
+      TOKENS.set(userId, { tok, until: Date.now() + Math.max(0, (tok.expires_in || 3600) - 60) * 1000 });
+      return tok;
+    },
+    (e) => { TOKENS.delete(userId); throw e; });
+  TOKENS.set(userId, { pending });
+  return pending;
+}
+
+/* A disconnect or a fresh sign-in must not keep serving the old seat's token. */
+const forgetAccess = (userId) => TOKENS.delete(userId);
+
+async function refreshAccess(userId) {
   const id = await identity(userId);
   if (!id) { const e = new Error("not connected"); e.status = 428; throw e; }
   try {
@@ -269,6 +296,7 @@ router.post("/api/voice/rc/session", requireUser, async (req, res, next) => {
 router.delete("/api/voice/rc/connect", requireUser, async (req, res, next) => {
   try {
     await query("DELETE FROM voice_identities WHERE user_id = $1", [req.user.id]);
+    forgetAccess(req.user.id);
     res.json({ ok: true });
   } catch (e) { next(e); }
 });
@@ -289,4 +317,61 @@ router.get("/api/voice/rc/team", requireAdmin, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-module.exports = { router, ENABLED, SANDBOX, accessFor, identity };
+/* GET /api/voice/rc/me — what this rep's own seat is, for the dialler header.
+
+   The status route above answers "are you connected"; this answers "and what
+   do people see when you ring them". They are separate calls because status is
+   read on every page load and this one costs a round trip to RingCentral.
+
+   Caller ID matters more than it looks on a sales floor: a rep who cannot see
+   which number is going out cannot tell a flagged number from a clean one,
+   which is the exact problem that moved us off the single shared Zoho line. */
+router.get("/api/voice/rc/me", requireUser, async (req, res, next) => {
+  try {
+    if (!ENABLED) return res.status(503).json({ error: "RingCentral is not configured" });
+    const tok = await accessFor(req.user.id);
+    const r = await fetch(SERVER + "/restapi/v1.0/account/~/extension/~/phone-number?perPage=100",
+      { headers: { Authorization: "Bearer " + tok.access_token } });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) return res.status(502).json({ error: d.message || `phone-number ${r.status}` });
+
+    const nums = (d.records || [])
+      .filter((n) => n.phoneNumber)
+      .map((n) => ({ number: n.phoneNumber, type: n.type || null,
+        usage: n.usageType || null }));
+    /* Direct number first: that is what an outbound call presents by default.
+       Falling back to the first number at all is better than showing nothing,
+       but it is a guess, so the browser labels it as the seat's number rather
+       than promising it is the caller ID. */
+    const direct = nums.find((n) => n.usage === "DirectNumber") || nums[0] || null;
+    res.json({ callerId: direct ? direct.number : null, exact: !!nums.find((n) => n.usage === "DirectNumber"), numbers: nums });
+  } catch (e) {
+    if (e.status === 428) return res.status(428).json({ error: "Connect your RingCentral account first" });
+    next(e);
+  }
+});
+
+/* GET /api/voice/rc/extensions — who a rep can transfer a live call to.
+
+   Deliberately NOT the /team route above: that one is the manager's screen and
+   carries each person's last error and token expiry, which is nobody else's
+   business. This is the two fields a transfer needs and nothing else, so it
+   can be open to members — a rep who cannot transfer a call has to tell the
+   customer to hang up and ring a different number. */
+router.get("/api/voice/rc/extensions", requireUser, async (req, res, next) => {
+  try {
+    const rows = (await query(
+      `SELECT coalesce(nullif(btrim(u.display_name), ''), u.email) AS name,
+              v.extension
+         FROM voice_identities v
+         JOIN app_users u ON u.id = v.user_id
+        WHERE v.provider = 'ringcentral'
+          AND NOT u.disabled
+          AND v.user_id <> $1
+          AND nullif(btrim(v.extension), '') IS NOT NULL
+        ORDER BY 1`, [req.user.id])).rows;
+    res.json({ people: rows });
+  } catch (e) { next(e); }
+});
+
+module.exports = { router, ENABLED, SANDBOX, SERVER, accessFor, identity };

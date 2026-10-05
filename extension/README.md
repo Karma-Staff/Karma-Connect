@@ -51,4 +51,6 @@ works; results are waiting when you reopen it.
   dashboard (prod) and restart.
 - Results are AI-generated from web search — **verify before outreach**. The model is told
   never to fabricate and to cite a source URL, but always sanity-check.
-- Regenerate icons after editing colors: `node icons/gen-icons.cjs`.
+- The icons are the shared Karma Staff mark, not the extension's own artwork.
+  Regenerate every surface's icons together: `node scripts/gen-icons.mjs`
+  from the repo root.

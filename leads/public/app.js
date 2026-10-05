@@ -46,6 +46,16 @@ const TABS = {
   assign:    { title: "Assignments", assign: true, admin: true },
   // admin-only: today's calls per person, and who is working right now
   calls:     { title: "Call report", calls: true, admin: true },
+  // admin-only: RingCentral's own numbers for the whole account, live
+  dash:      { title: "Dashboard", dash: true, admin: true },
+  // admin-only: who is on the phone right now, and with which lead
+  live:      { title: "Live calls", live: true, admin: true },
+  // admin-only: every RingCentral call — search, filter, recordings, download
+  calllog:   { title: "Call logs", calllog: true, admin: true },
+  // admin-only: the team directory — phone system and Karma Connect, joined
+  team:      { title: "Users", team: true, admin: true },
+  // admin-only: power-dialer campaigns — build, assign, start, pause, end
+  power:     { title: "Power dialer", power: true, admin: true },
   // everyone's own queue — not a filter over the base, so it is a pane of its
   // own like the ones above, and it is where a member lands
   tasks:     { title: "My tasks", tasks: true },
@@ -130,7 +140,12 @@ async function api(path, opts = {}) {
   if (!res.ok) {
     const text = await res.text();
     let msg;                          // the API sends {error: "readable message"}
-    try { msg = JSON.parse(text).error; } catch { /* not JSON */ }
+    try {
+      msg = JSON.parse(text).error;
+      /* the main Karma Connect server shapes it {error: {message}} — read
+         both, or a page ends up printing "[object Object]" */
+      if (msg && typeof msg === "object") msg = msg.message || JSON.stringify(msg);
+    } catch { /* not JSON */ }
     throw new Error(msg || `${path} -> ${res.status}: ${text}`);
   }
   const text = await res.text();
@@ -263,6 +278,11 @@ const PANES = {
   stats:  "stats-pane",
   assign: "assign-pane",
   calls:  "calls-pane",
+  dash:   "dash-pane",
+  live:   "live-pane",
+  calllog: "calllog-pane",
+  team:   "team-pane",
+  power:  "power-pane",
   tasks:  "tasks-pane",
   research: "research-pane",
   storm: "storm-pane",
@@ -472,6 +492,11 @@ async function loadList(resetPage = false) {
   if (cfg.stats) return loadStats();
   if (cfg.assign) return loadAssignments();
   if (cfg.calls) return loadCallReport();
+  if (cfg.dash) return loadDash();
+  if (cfg.live) return loadLive();
+  if (cfg.calllog) return loadCallLog();
+  if (cfg.team) return loadTeam();
+  if (cfg.power) return loadPower();
   if (cfg.tasks) return loadTasks();
   if (cfg.research) return loadResearchCenter();
   if (cfg.storm) return loadStorm();
@@ -2782,7 +2807,10 @@ function reportCall(raw, state) {
     body: JSON.stringify({
       outcome,
       seconds: c.connected ? c.seconds : 0,
-      provider: "zoho",
+      provider: VOICE.provider || "zoho",
+      direction: c.direction || undefined,
+      callback_ext: c.callbackExt || undefined,
+      campaign: c.campaign || undefined,
       call_id: raw?.callId || raw?.call_id || null,
       number: c.number,
     }),
@@ -2802,10 +2830,16 @@ function reportCall(raw, state) {
 function describeErr(err) {
   if (err == null) return "(no detail)";
   if (typeof err === "string") return err;
+  /* A plain message on its own is the normal case and reads as a sentence —
+     label it and the call report shows "message=Connect your RingCentral
+     account first" to an owner who just wanted to know what went wrong. The
+     key=value form stays for the objects that carry several fields, where
+     the labels are the only thing making them legible. */
   const parts = [];
   for (const k of ["code", "status", "message", "description", "reason", "error", "type"]) {
     if (err[k] !== undefined && typeof err[k] !== "object") parts.push(k + "=" + err[k]);
   }
+  if (parts.length === 1 && parts[0].startsWith("message=")) return parts[0].slice(8);
   if (parts.length) return parts.join(" ");
   try {
     const s = JSON.stringify(err);
@@ -2961,8 +2995,13 @@ async function rcStart() {
     /* A stable id per browser, so RingCentral treats a reload as the same
        device rather than accumulating phantom registrations against the seat. */
     instanceId: rcInstanceId(),
+    /* Asked for the mic and speaker at the start of every call, so the choice
+       in Settings → Audio devices applies to the next call without re-registering. */
+    deviceManager: kdDeviceManager(),
   });
   await phone.start();
+  /* calls to this person's own number — see kdIncoming */
+  phone.on("inboundCall", (s) => kdIncoming(s));
 
   VOICE.rc = phone;
   VOICE.sdk = phone;
@@ -2970,7 +3009,10 @@ async function rcStart() {
   VOICE.provider = "ringcentral";
   VOICE.ready = true;
   VOICE.sandbox = !!s.sandbox;
+  VOICE.rcError = "";
+  KD.registered = true;
   rcShowLauncher(true);
+  kdRender();
   if (s.sandbox)
     toast("RingCentral is in SANDBOX — calls reach test numbers only", 12000);
   return phone;
@@ -2987,183 +3029,1598 @@ function rcInstanceId() {
   } catch (e) { return "karma-" + Math.random().toString(36).slice(2, 12); }
 }
 
-/* ---------------- the call bar ----------------
+/* ---------------- the soft dialler ----------------
 
    RingCentral's SDK is HEADLESS. Zoho shipped a draggable widget with a
    dialpad, a timer and a mute button; ringcentral-web-phone ships the SIP
-   engine and nothing else. So a rep on a call had audio and no controls —
-   no way to mute, no way to hang up except waiting for the other side, and
-   no sign on screen that a call was even happening.
+   engine and nothing else. So everything a rep touches on a call is here.
 
-   The keypad is not an afterthought. These are B2B numbers and most of them
-   answer with a menu; without DTMF a rep cannot get past "press 1 for
+   The panel is one state object (KD) and one paint (kdRender). Vanilla, no
+   framework, so the rule is: nothing reads the DOM to decide anything. Every
+   control writes to KD and calls kdRender, and kdRender is the only thing that
+   writes to the DOM. The old bar kept its truth in `aria-pressed` attributes
+   and drifted the first time two of them disagreed.
+
+   Inputs are the exception and are never re-created, only reconciled — the
+   number field and the note are typed into, and replacing an element under a
+   caret eats the keystroke.
+
+   The keypad matters more than it looks. These are B2B numbers and most of
+   them answer with a menu; without DTMF a rep cannot get past "press 1 for
    sales", which is most of the calls that matter. */
 
-let RCBAR = { timer: null, muted: false, held: false, session: null, started: 0 };
+const KD = {
+  view: "keypad",        // leads | keypad | lead
+  ptab: "history",       // history | followup | lead
+  phase: "idle",         // idle | calling | live | ended
+  session: null,
+  lead: null,            // the lead being called, if the call came from one
+  number: "",            // what the keypad has typed
+  started: 0, elapsed: 0,
+  muted: false, held: false, rec: false,
+  filter: "All", timeline: null, followup: null, extensions: null,
+  dispo: "", open: { contact: true, lead: true },
+  callerId: null, registered: false,
+  timer: null, toastT: null, loadingTimeline: false,
+};
 
-function rcBarEl() { return $("rc-call"); }
+const KD_DISPOS = [
+  /* Each chip writes to the ONE place Karma Connect already keeps that fact —
+     see kdSaveDispo. `kind` is what it touches, so nothing is stored twice. */
+  { label: "Interested", kind: "status", value: "Responded" },
+  { label: "Follow-up Required", kind: "followup" },
+  { label: "Not Interested", kind: "status", value: "Not interested" },
+  { label: "No Answer", kind: "outcome", value: "no-answer" },
+  { label: "Voicemail", kind: "log" },
+  { label: "Busy", kind: "outcome", value: "busy" },
+  { label: "Gatekeeper", kind: "log" },
+  { label: "Hung Up", kind: "log" },
+  { label: "Wrong Number", kind: "outcome", value: "failed" },
+  { label: "Not in Service", kind: "log" },
+  { label: "Email Captured", kind: "log" },
+  { label: "Call Back Later", kind: "followup" },
+  { label: "Converted", kind: "status", value: "Qualified" },
+  { label: "Do Not Contact", kind: "dnc" },
+];
+/* Every chip, whatever else it touches, is also written to the disposition
+   log (POST /api/leads/:id/disposition — the list there must match this one).
+   kind "log" chips touch nothing else: they are only a record of the call. */
 
-function rcShowCall(session, name, digits) {
-  const el = rcBarEl();
+const KD_IC = {
+  phone: "M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z",
+  note: "M5 4h10l4 4v12H5V4zM9 12h6M9 16h4",
+  cal: "M5 5h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM3 10h18M8 3v4M16 3v4",
+  flag: "M5 21V4h11l-2 4 2 4H5",
+  eye: "M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z",
+  tag: "M3 12V4h8l10 10-8 8L3 12zM7.5 8h.01",
+  ban: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM5.6 5.6l12.8 12.8",
+  mic: "M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M12 18v3",
+  micOff: "M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M12 18v3M4 4l16 16",
+  pad: "M6 6h.01M12 6h.01M18 6h.01M6 12h.01M12 12h.01M18 12h.01M6 18h.01M12 18h.01M18 18h.01",
+  pause: "M9 5v14M15 5v14",
+  play: "M8 5l11 7-11 7V5z",
+  rec: "M12 20a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM12 14.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z",
+  transfer: "M4 8h14M14 4l4 4-4 4M20 16H6M10 12l-4 4 4 4",
+  more: "M6 12h.01M12 12h.01M18 12h.01",
+};
+
+const kdSvg = (d, cls) =>
+  `<svg viewBox="0 0 24 24" aria-hidden="true"${cls ? ` class="${cls}"` : ""}><path d="${d}"/></svg>`;
+
+function kdEl(id) { return document.getElementById(id); }
+function kdShow(id, on) { kdEl(id)?.classList.toggle("hidden", !on); }
+
+/* 212 → (212), 2125551234 → (212) 555-1234. Anything with a + or an
+   extension is left exactly as typed: reformatting an international number
+   into a US shape is how you dial the wrong country. */
+function kdFmtNum(v) {
+  const raw = String(v || "").trim();
+  /* +1XXXXXXXXXX is what RingCentral hands back for a US seat, and showing it
+     raw in the Caller ID chip is the one number a rep most needs to read at a
+     glance. Anything else international stays exactly as given — reformatting
+     a foreign number into a US shape is how you dial the wrong country. */
+  const us = raw.match(/^\+1(\d{10})$/);
+  if (us) return "+1 " + kdFmtNum(us[1]);
+  if (/[+a-z]/i.test(raw)) return raw;
+  const x = raw.replace(/[^0-9*#]/g, "");
+  if (/[*#]/.test(x) || x.length < 4) return x;
+  if (x.length < 7) return `(${x.slice(0, 3)}) ${x.slice(3)}`;
+  if (x.length <= 10) return `(${x.slice(0, 3)}) ${x.slice(3, 6)}-${x.slice(6)}`;
+  return raw;
+}
+
+function kdInitials(name) {
+  const w = String(name || "").replace(/[^A-Za-z0-9 ]/g, " ").trim().split(/\s+/).filter(Boolean);
+  if (!w.length) return "—";
+  return ((w[0][0] || "") + (w[1] ? w[1][0] : "")).toUpperCase();
+}
+
+function kdClock(s) {
+  const n = Math.max(0, Math.floor(s));
+  return `${String(Math.floor(n / 60)).padStart(2, "0")}:${String(n % 60).padStart(2, "0")}`;
+}
+
+/* Toast inside the panel rather than the page's own. The page toast appears
+   bottom-right, which is exactly where the dialler is — it would land behind
+   it, which is where the first version put every error message. */
+function kdToast(msg) {
+  const el = kdEl("kd-toast");
   if (!el) return;
-  RCBAR.session = session;
-  RCBAR.muted = false; RCBAR.held = false; RCBAR.started = Date.now();
-  $("rc-call-who").textContent = name || digits || "Calling";
-  $("rc-call-num").textContent = digits || "";
-  $("rc-call-state").textContent = "calling…";
+  el.textContent = msg;
   el.classList.remove("hidden");
-  rcSetMode(true);
-  rcTick();
-  clearInterval(RCBAR.timer);
-  RCBAR.timer = setInterval(rcTick, 1000);
-  $("rc-dtmf")?.classList.add("hidden");
-  rcPaintButtons();
+  clearTimeout(KD.toastT);
+  KD.toastT = setTimeout(() => el.classList.add("hidden"), 3600);
 }
 
-function rcTick() {
-  const s = Math.max(0, Math.round((Date.now() - RCBAR.started) / 1000));
-  const el = $("rc-call-time");
-  if (el) el.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-}
-
-function rcHideCall() {
-  clearInterval(RCBAR.timer); RCBAR.timer = null;
-  RCBAR.session = null;
-  /* Back to the dialler rather than disappearing: a rep who has just hung up
-     is often about to ring somebody else, and a panel that vanishes makes
-     them hunt for the launcher again. */
-  rcSetMode(false);
-  const sent = $("rc-dtmf-sent"); if (sent) sent.textContent = "";
-  rcBarEl()?.classList.add("hidden");
-  rcPanelToggle(false);
-}
-
-function rcPaintButtons() {
-  const m = $("rc-mute"), h = $("rc-hold");
-  if (m) { m.textContent = RCBAR.muted ? "Unmute" : "Mute"; m.setAttribute("aria-pressed", String(RCBAR.muted)); }
-  if (h) { h.textContent = RCBAR.held ? "Resume" : "Hold"; h.setAttribute("aria-pressed", String(RCBAR.held)); }
-}
-
-/* Every control is wrapped: the SDK rejects rather than throwing, and an
-   unhandled rejection in a click handler would leave the bar looking frozen
-   with no clue why. */
-function rcGuard(fn, what) {
+/* Every SDK control is wrapped: the SDK rejects rather than throwing, and an
+   unhandled rejection in a click handler leaves the panel looking frozen with
+   no clue why. */
+function kdGuard(fn, what) {
   return Promise.resolve().then(fn).catch((e) => {
     console.warn("[karma] " + what + ":", e);
-    toast("Could not " + what + " — " + (describeErr(e) || "unknown"), 6000);
+    kdToast("Could not " + what + " — " + (describeErr(e) || "unknown"));
+    return Promise.reject(e);
   });
 }
 
-/* Idle (no call) versus active (on a call). The same panel and the same
-   keypad serve both: tapping a key types a digit when idle and sends a tone
-   when on a call, which is the behaviour of every phone anyone has used. */
-function rcSetMode(active) {
-  $("rc-idle")?.classList.toggle("hidden", !!active);
-  $("rc-active")?.classList.toggle("hidden", !active);
-  /* The in-call row is hidden rather than disabled while idle. Four greyed
-     buttons are clutter, and one of them — Keypad — would hide the keypad,
-     which is the entire reason the panel is open. */
-  document.querySelector(".rc-call-btns")?.classList.toggle("hidden", !active);
+const kdActive = () => KD.phase === "calling" || KD.phase === "live";
+
+/* ---------------- paint ---------------- */
+
+function kdRender() {
+  const root = kdEl("rc-call");
+  if (!root || root.classList.contains("hidden")) return;
+  const live = KD.phase === "live", calling = KD.phase === "calling";
+  const ended = KD.phase === "ended", active = kdActive();
+
+  /* header, and the failure banner when the line would not register */
+  const err = VOICE.rcError && !KD.registered;
+  kdEl("kd-reg").textContent = err ? "Not connected"
+    : KD.registered ? "Available" : "Connecting…";
+  kdEl("kd-dot-reg").classList.toggle("off", !KD.registered);
+  kdEl("kd-dot-reg").classList.toggle("err", !!err);
+  kdShow("kd-err", !!err);
+  if (err) {
+    const [title, msg] = rcFriendlyError(VOICE.rcError);
+    kdEl("kd-err-title").textContent = title;
+    kdEl("kd-err-msg").textContent = msg;
+    kdEl("kd-err").title = VOICE.rcError;
+    const retry = kdEl("kd-retry");
+    retry.disabled = !!VOICE.rcRetrying;
+    retry.textContent = VOICE.rcRetrying ? "Retrying…" : "Retry";
+  }
+  /* during a campaign call the number the lead sees is the callback
+     person's, so that is what the header says */
+  kdEl("kd-cid-num").textContent = KD.callAs ? kdFmtNum(KD.callAs)
+    : KD.callerId ? kdFmtNum(KD.callerId) : "—";
+
+  /* the return strip: on a call, looking elsewhere */
+  const showReturn = active && KD.view !== "lead";
+  kdShow("kd-return", showReturn);
+  if (showReturn) {
+    kdEl("kd-return-who").textContent = KD.lead?.name || kdFmtNum(KD.number) || "On a call";
+    kdEl("kd-return-time").textContent = kdClock(KD.elapsed);
+  }
+
+  /* which view */
+  kdShow("kd-view-leads", KD.view === "leads");
+  kdShow("kd-view-keypad", KD.view === "keypad");
+  kdShow("kd-view-lead", KD.view === "lead");
+  kdShow("kd-view-settings", KD.view === "settings");
+  kdShow("kd-view-inbox", KD.view === "inbox");
+  if (KD.view === "inbox") kdRenderInbox();
+  /* The call clock repaints every second; rebuilding Settings under an open
+     <select> would snap the dropdown shut, so leave it alone while focused. */
+  if (KD.view === "settings" && !kdEl("kd-settings")?.contains(document.activeElement))
+    kdRenderSettings();
+  /* More is lead actions, which only mean something on a call; between calls
+     the same slot is Settings. */
+  kdShow("kd-nav-more", active);
+  kdShow("kd-nav-settings", !active);
+  document.querySelectorAll(".kd-nav button").forEach((b) => {
+    const on = (b.dataset.nav === "keypad" && KD.view === "keypad")
+      || (b.dataset.nav === "settings" && KD.view === "settings")
+      || (b.dataset.nav === "leads" && KD.view === "leads")
+      || (b.dataset.nav === "history" && KD.view === "lead" && KD.ptab === "history")
+      || (b.dataset.nav === "inbox" && KD.view === "inbox");
+    if (on) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
+  });
+
+  /* keypad */
+  /* Reconcile rather than overwrite, and compare DIGITS not the formatted
+     string. When the rep is typing, the input handler has already put those
+     digits in KD.number, so they match and nothing is written — the caret is
+     safe. When a keypad button changed KD.number they differ, so it is
+     written even though the field has focus. Guarding on activeElement alone
+     (the obvious version) meant the keypad silently did nothing whenever the
+     field was focused, which is every time the panel opens. */
+  const numInput = kdEl("kd-num");
+  if (numInput && numInput.value.replace(/[^0-9*#+]/g, "") !== KD.number)
+    numInput.value = kdFmtNum(KD.number);
+  const go = kdEl("kd-go");
+  if (go) go.disabled = active || !KD.number || !!err;
+
+  /* the lead / call view */
+  if (KD.view === "lead") kdRenderLead(live, calling, ended, active);
+
+  /* the launcher doubles as the only sign of a call when the panel is shut */
+  kdEl("rc-launch")?.classList.toggle("oncall", active || KD.phase === "incoming");
 }
 
-/* Show the launcher only once a phone is actually registered. A phone button
-   that cannot phone anybody is worse than no button. */
-function rcShowLauncher(on) {
-  $("rc-launch")?.classList.toggle("hidden", !on);
+function kdRenderLead(live, calling, ended, active) {
+  const L = KD.lead;
+  const incoming = KD.phase === "incoming";
+  const name = L?.name || (KD.number ? kdFmtNum(KD.number) : "No lead selected");
+  kdEl("kd-avatar").textContent = L ? kdInitials(L.name) : "☎";
+  kdEl("kd-avatar").classList.toggle("ring", calling || incoming);
+  kdEl("kd-name").textContent = name;
+  kdEl("kd-sub").textContent = L
+    ? [L.industry, [L.city, L.state].filter(Boolean).join(", ")].filter(Boolean).join(" · ")
+    : incoming ? (KD.incoming?.info ? (KD.incoming.info.known ? "A lead in Karma Connect" : "Not in Karma Connect") : "Looking them up…")
+      : "Not in the lead list";
+  kdShow("kd-incoming", incoming);
+  if (incoming) {
+    const last = KD.incoming?.info?.last;
+    kdEl("kd-inc-why").innerHTML = last
+      ? `<b>Calling back</b> — ${esc(last.by)} called them ${esc(relTime(last.at))}${
+          last.campaign ? ` in <b>${esc(last.campaign)}</b>` : ""}${
+          last.disposition ? ` · logged “${esc(last.disposition)}”` : ""}`
+      : `<b>Incoming call</b>${KD.incoming?.info ? " — no earlier call from here to this number" : ""}`;
+  }
+  kdEl("kd-phone").textContent = kdFmtNum(L?.phone || KD.number);
+
+  const st = kdEl("kd-status-chip") || kdEl("kd-status");
+  const chip = document.getElementById("kd-status");
+  if (chip) {
+    chip.textContent = L?.status || "";
+    chip.classList.toggle("hidden", !L?.status);
+  }
+
+  /* status line */
+  const label = KD.phase === "idle" ? "Ready to call"
+    : incoming ? "Incoming call"
+    : calling ? "Calling"
+      : ended ? "Call ended"
+        : KD.held ? "On hold" : "Connected";
+  const stateEl = kdEl("kd-state");
+  stateEl.textContent = label;
+  stateEl.className = live && KD.held ? "hold" : live ? "live" : "";
+  const dot = kdEl("kd-dot");
+  dot.className = "kd-sdot" + (live && KD.held ? " hold" : live ? " live" : "");
+  kdShow("kd-dots", calling);
+  kdShow("kd-rec", live && KD.rec);
+  kdEl("kd-time").textContent = kdClock(KD.elapsed);
+  kdEl("kd-time").style.visibility = KD.phase === "idle" || incoming ? "hidden" : "";
+
+  kdShow("kd-holdbar", live && KD.held);
+  kdShow("kd-ready", KD.phase === "idle");
+  kdShow("kd-controls", active);
+  kdShow("kd-over", ended);
+  const callBtn = kdEl("kd-call");
+  if (callBtn) callBtn.disabled = !(L?.phone || KD.number);
+  kdEl("kd-fromline").textContent = KD.callerId
+    ? "Calling from " + kdFmtNum(KD.callerId) : "";
+  kdEl("kd-overnote").textContent = "Duration " + kdClock(KD.elapsed);
+
+  if (active) kdRenderControls(live);
+
+  document.querySelectorAll(".kd-ptabs button").forEach((b) => {
+    const on = b.dataset.tab === KD.ptab;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-pressed", String(on));
+  });
+  kdRenderPanel();
 }
 
-function rcPanelToggle(show) {
-  const el = rcBarEl();
-  if (!el) return;
-  const open = show === undefined ? el.classList.contains("hidden") : show;
-  el.classList.toggle("hidden", !open);
-  $("rc-launch")?.setAttribute("aria-expanded", String(open));
-  if (open && !RCBAR.session) {
-    rcSetMode(false);
-    $("rc-dtmf")?.classList.remove("hidden");   // idle: the keypad IS the point
-    $("rc-dial-num")?.focus();
+function kdRenderControls(live) {
+  /* Six, not the seven the mock-up drew. "Voice drop" was the seventh and
+     there is no such primitive in ringcentral-web-phone — toVoicemail() sends
+     an INCOMING call to voicemail, which is a different thing — so rather than
+     ship a button that apologises, it is not here. */
+  const ctl = (key, label, icon, on, tone) =>
+    `<div class="kd-ctl">
+       <button data-ctl="${key}" class="${tone || ""}" aria-pressed="${on ? "true" : "false"}"
+         aria-label="${label}" ${live ? "" : "disabled"}>${kdSvg(icon, key === "keypad" || key === "more" ? "kd-thick" : "")}</button>
+       <span>${label}</span>
+     </div>`;
+  kdEl("kd-ctls").innerHTML = [
+    ctl("mute", KD.muted ? "Unmute" : "Mute", KD.muted ? KD_IC.micOff : KD_IC.mic, KD.muted),
+    ctl("keypad", "Keypad", KD_IC.pad, false),
+    ctl("hold", KD.held ? "Resume" : "Hold", KD.held ? KD_IC.play : KD_IC.pause, KD.held, "gold"),
+    ctl("rec", KD.rec ? "Stop rec" : "Record", KD_IC.rec, KD.rec, "red"),
+    ctl("transfer", "Transfer", KD_IC.transfer, false),
+    ctl("more", "More", KD_IC.more, false),
+  ].join("");
+}
+
+/* ---------------- the three panels ---------------- */
+
+function kdRenderPanel() {
+  const box = kdEl("kd-panel");
+  if (!box) return;
+  if (KD.ptab === "history") return kdRenderHistory(box);
+  if (KD.ptab === "followup") return kdRenderFollowup(box);
+  return kdRenderLeadSheet(box);
+}
+
+const KD_FILTERS = ["All", "Calls", "Notes", "Follow-ups"];
+
+function kdRenderHistory(box) {
+  if (!KD.lead) { box.innerHTML = `<div class="kd-empty">Pick a lead to see its history.</div>`; return; }
+  if (KD.loadingTimeline) { box.innerHTML = `<div class="kd-empty">Loading…</div>`; return; }
+
+  const items = (KD.timeline || []).filter((i) =>
+    KD.filter === "All"
+    || (KD.filter === "Calls" && i.kind === "call")
+    || (KD.filter === "Notes" && i.kind === "note")
+    || (KD.filter === "Follow-ups" && i.kind === "followup"));
+
+  const filters = KD_FILTERS.map((f) =>
+    `<button data-filter="${f}" class="${KD.filter === f ? "on" : ""}">${f}</button>`).join("");
+
+  if (!items.length) {
+    box.innerHTML = `<div class="kd-filters">${filters}</div>
+      <div class="kd-empty">No ${KD.filter === "All" ? "activity" : KD.filter.toLowerCase()} for this lead yet.</div>`;
+    return;
+  }
+
+  let lastDay = "";
+  const rows = items.map((i, n) => {
+    const day = kdDay(i.at);
+    const show = day === lastDay ? "" : day;
+    lastDay = day;
+    const icon = i.kind === "call" ? KD_IC.phone : i.kind === "followup" ? KD_IC.cal : KD_IC.note;
+    return `<li class="${n === 0 && kdActive() ? "hot" : ""}">
+      <div class="kd-tl-rail"><div class="kd-tl-ic">${kdSvg(icon)}</div><div class="kd-tl-line"></div></div>
+      <div class="kd-tl-body">
+        ${show ? `<div class="kd-tl-day">${esc(show)}</div>` : ""}
+        <div class="kd-tl-t">${esc(kdTitle(i))}</div>
+        <div class="kd-tl-s">${esc(kdSubtitle(i))}</div>
+      </div></li>`;
+  }).join("");
+  box.innerHTML = `<div class="kd-filters">${filters}</div><ul class="kd-tl">${rows}</ul>`;
+}
+
+function kdDay(at) {
+  const d = new Date(at), now = new Date();
+  const dayOf = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((dayOf(now) - dayOf(d)) / 86400000);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Yesterday";
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function kdTitle(i) {
+  if (i.kind === "call")
+    return "Outbound call" + (i.seconds ? " — " + kdClock(i.seconds) : "");
+  if (i.action === "status") return "Status changed";
+  if (i.action === "owner") return "Reassigned";
+  if (i.action === "enrich") return "Enriched";
+  if (i.action === "remove") return "Added to Do Not Contact";
+  if (i.action === "restore") return "Restored";
+  return "Note added";
+}
+
+function kdSubtitle(i) {
+  if (i.kind === "call") {
+    const o = { connected: "Connected", "no-answer": "No answer", busy: "Busy",
+      failed: "Failed", cancelled: "Cancelled", placed: "Placed" }[i.outcome] || i.outcome || "";
+    return [o, i.disposition, i.actor].filter(Boolean).join(" · ");
+  }
+  if (i.action === "status") return [i.from, i.to].filter(Boolean).join(" → ") || i.actor;
+  return i.note || i.to || i.actor || "";
+}
+
+function kdRenderFollowup(box) {
+  if (!KD.lead) { box.innerHTML = `<div class="kd-empty">Pick a lead to set a follow-up.</div>`; return; }
+  const f = KD.followup;
+  if (!f) {
+    box.innerHTML = `
+      <div class="kd-empty" style="margin-bottom:12px">Nothing scheduled for this lead yet.</div>
+      <button class="kd-dashed" data-open-wrap="1">${kdSvg(KD_IC.cal)}<span>Schedule follow-up</span></button>`;
+    return;
+  }
+  const d = new Date(f.due_at);
+  box.innerHTML = `
+    <div class="kd-tl-day" style="margin-bottom:10px">Next follow-up</div>
+    <div class="kd-fucard">
+      <div class="kd-fudate">
+        <b>${d.toLocaleDateString(undefined, { month: "short" }).toUpperCase()}</b>
+        <span>${d.getDate()}</span>
+      </div>
+      <div class="kd-fumeta">
+        <b>${esc(d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }))}</b>
+        <div class="t">${esc(d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }))}</div>
+        ${f.note ? `<div class="n">${esc(f.note)}</div>` : ""}
+      </div>
+    </div>
+    <div class="kd-row2" style="margin-top:12px">
+      <button class="kd-mini" data-open-wrap="1">Edit</button>
+      <button class="kd-mini ghost" data-cancel-fu="1">Cancel</button>
+    </div>`;
+}
+
+function kdRenderLeadSheet(box) {
+  const L = KD.lead;
+  if (!L) { box.innerHTML = `<div class="kd-empty">Pick a lead to see its details.</div>`; return; }
+  const secs = [
+    ["company", "Company", [["Company", L.company || L.name], ["Industry", L.industry],
+      ["Location", [L.city, L.state].filter(Boolean).join(", ")]]],
+    ["contact", "Contact", [["Phone", kdFmtNum(L.phone)], ["Email", L.email], ["Website", L.website]]],
+    ["lead", "Lead", [["Code", L.code], ["Status", L.status], ["Owner", L.owner]]],
+  ];
+  box.innerHTML = secs.map(([id, title, rows]) => {
+    const open = !!KD.open[id];
+    const body = rows.filter(([, v]) => v).map(([k, v]) =>
+      `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("");
+    return `<div class="kd-sec">
+      <button data-sec="${id}" aria-expanded="${open}">
+        <span>${esc(title)}</span>${kdSvg("M6 9l6 6 6-6")}
+      </button>
+      ${open ? `<dl class="kd-dl">${body || `<div><dt>—</dt><dd>Nothing recorded</dd></div>`}</dl>` : ""}
+    </div>`;
+  }).join("");
+}
+
+/* ---------------- the lead queue ---------------- */
+
+function kdRenderQueue(rows, q) {
+  const box = kdEl("kd-queue");
+  if (!box) return;
+  const term = (q || "").trim().toLowerCase();
+  const list = (rows || []).filter((r) => !term
+    || String(r.Name || "").toLowerCase().includes(term)
+    || String(r.Phone || "").replace(/\D/g, "").includes(term.replace(/\D/g, "")));
+  if (!list.length) {
+    box.innerHTML = `<div class="kd-empty">${term ? "Nothing matches that." : "No leads with a phone number assigned to you."}</div>`;
+    return;
+  }
+  box.innerHTML = list.slice(0, 60).map((r) => {
+    const on = KD.lead && KD.lead.id === r.Id;
+    return `<button class="kd-lrow ${on ? "on" : ""}" data-lead="${r.Id}">
+      <span class="kd-ini">${esc(kdInitials(r.Name))}</span>
+      <span class="kd-lrow-t"><b>${esc(r.Name || "—")}</b><span>${esc(kdFmtNum(r.Phone))}</span></span>
+      <span class="kd-lrow-tag">${on && kdActive() ? "On call" : esc(r.Status || "")}</span>
+    </button>`;
+  }).join("");
+}
+
+/* The rep's own working list, newest first — the same leads the main table
+   shows them, filtered to the ones that can actually be rung. */
+async function kdLoadQueue() {
+  try {
+    const d = await api("/api/leads?limit=60");
+    /* No has_phone filter exists server-side, and adding one would mean a
+       fourth place that defines "callable". Filtered here instead: the page
+       is 60 rows, so the cost is nothing. */
+    KD.queue = (d.list || []).map(fromApi).filter((r) => String(r.Phone || "").trim());
+    kdRenderQueue(KD.queue, kdEl("kd-q")?.value);
+  } catch (e) {
+    kdEl("kd-queue").innerHTML = `<div class="kd-empty">Could not load leads — ${esc(describeErr(e) || "unknown")}</div>`;
   }
 }
 
-/* Dial whatever is typed. Goes through dialInPage so the call is logged and
-   attributed exactly as one started from a lead — it simply has no lead. */
-function rcDialTyped() {
-  const input = $("rc-dial-num");
-  const raw = (input?.value || "").trim();
-  if (!raw) return toast("Type a number first");
-  $("rc-dtmf-sent") && ($("rc-dtmf-sent").textContent = "");
-  dialInPage(raw, raw, null);
-  if (input) input.value = "";
+async function kdLoadLead(leadId) {
+  KD.timeline = null; KD.followup = null; KD.loadingTimeline = true;
+  kdRender();
+  const [tl, fu] = await Promise.allSettled([
+    api("/api/leads/" + leadId + "/timeline?limit=40"),
+    api("/api/leads/" + leadId + "/followup"),
+  ]);
+  KD.loadingTimeline = false;
+  KD.timeline = tl.status === "fulfilled" ? (tl.value.items || []) : [];
+  /* A lead with no reminder answers 404 here, which is not an error worth
+     showing — it is the normal case for most leads. */
+  KD.followup = fu.status === "fulfilled" ? (fu.value.followup || fu.value || null) : null;
+  if (KD.followup && !KD.followup.due_at) KD.followup = null;
+  kdRender();
 }
+
+/* ---------------- the clock ---------------- */
+
+function kdTick() {
+  if (KD.phase === "live" && !KD.held) KD.elapsed = (Date.now() - KD.started) / 1000;
+  const t = kdEl("kd-time"); if (t) t.textContent = kdClock(KD.elapsed);
+  const r = kdEl("kd-return-time"); if (r) r.textContent = kdClock(KD.elapsed);
+}
+
+function kdStartClock() {
+  clearInterval(KD.timer);
+  KD.timer = setInterval(kdTick, 1000);
+}
+function kdStopClock() { clearInterval(KD.timer); KD.timer = null; }
+
+/* ---------------- opening and closing ---------------- */
+
+function rcShowLauncher(on) {
+  const b = kdEl("rc-launch");
+  if (!b) return;
+  b.classList.toggle("hidden", !on);
+  /* A red dot on the button itself, so a failed line is visible with the
+     panel shut — otherwise a rep only finds out by trying to dial. */
+  const err = !!VOICE.rcError && !KD.registered;
+  b.classList.toggle("err", err);
+  b.title = err ? "Phone not connected — click for details" : "Dialler — type a number or use the keypad";
+}
+
+/* The SDK's errors are SIP and OAuth codes. A rep needs to know what to DO,
+   so each known failure maps to a title and an action; the raw text stays in
+   the banner's tooltip and the console for whoever debugs it. */
+function rcFriendlyError(raw) {
+  const s = String(raw || "");
+  if (/603|too many contacts/i.test(s))
+    return ["Too many phones signed in",
+      "Your line is open in too many tabs. Close the extras, wait a minute, then retry."];
+  if (/invalid_grant|expired|401|403|unauthori[sz]ed/i.test(s))
+    return ["RingCentral sign-in expired", "Reconnect RingCentral from the Calls tab, then retry."];
+  if (/could not load|network|websocket|socket|timed? ?out/i.test(s))
+    return ["Can't reach RingCentral", "Check your internet connection, then retry."];
+  return ["Phone not connected", "RingCentral didn't accept the line. Retry, or reconnect from the Calls tab."];
+}
+
+async function rcRetry() {
+  if (VOICE.rcRetrying) return;
+  VOICE.rcRetrying = true;
+  kdRender();
+  try {
+    await rcStart();
+    toast("Phone connected");
+  } catch (e) {
+    VOICE.rcError = describeErr(e) || "unknown error";
+    console.warn("[karma] RingCentral retry failed:", VOICE.rcError, e);
+  } finally {
+    VOICE.rcRetrying = false;
+    rcShowLauncher(true);
+    kdRender();
+  }
+}
+
+function rcPanelToggle(show) {
+  const el = kdEl("rc-call");
+  if (!el) return;
+  const open = show === undefined ? el.classList.contains("hidden") : show;
+  el.classList.toggle("hidden", !open);
+  kdEl("rc-launch")?.setAttribute("aria-expanded", String(open));
+  if (!open) return;
+  kdPlace();
+  /* nothing to show on the call screen → the keypad; but a ringing incoming
+     call IS the call screen, even before the lookup has named the caller */
+  if (!kdActive() && KD.phase !== "incoming" && KD.view === "lead" && !KD.lead) KD.view = "keypad";
+  kdRender();
+  if (KD.view === "leads") kdLoadQueue();
+  if (KD.view === "keypad") kdEl("kd-num")?.focus();
+  kdLoadMe();
+}
+
+/* Caller ID is fetched once per page, not per open: it is a round trip to
+   RingCentral and the number does not change between calls. */
+let kdMeDone = false;
+async function kdLoadMe() {
+  if (kdMeDone) return;
+  kdMeDone = true;
+  try {
+    const d = await api("/api/voice/rc/me");
+    KD.callerId = d.callerId || null;
+    kdRender();
+  } catch (e) { /* the header falls back to "—"; not worth a toast */ }
+}
+
+/* ---------------- moving the panel ----------------
+
+   The header is a drag handle. A rep parks the dialler wherever it covers the
+   least of what they are working on, and it stays there: the spot is kept per
+   browser, and re-clamped on every open and resize so a smaller window can
+   never strand it off-screen with no way to grab it back. Double-click the
+   header to send it home to the corner. Phones get the full-bleed panel and
+   no dragging — there is nowhere to drag it to. */
+const KD_POS_KEY = "kl_kd_pos";
+const kdPhone = () => window.matchMedia("(max-width: 520px)").matches;
+
+function kdPlace(pos) {
+  const el = kdEl("rc-call");
+  if (!el || el.classList.contains("hidden")) return;
+  if (pos === undefined) {
+    try { pos = JSON.parse(localStorage.getItem(KD_POS_KEY) || "null"); } catch (e) { pos = null; }
+  }
+  if (!pos || kdPhone()) {
+    el.style.left = el.style.top = el.style.right = el.style.bottom = "";
+    return;
+  }
+  const r = el.getBoundingClientRect();
+  const x = Math.max(8, Math.min(pos.x, innerWidth - r.width - 8));
+  const y = Math.max(8, Math.min(pos.y, innerHeight - r.height - 8));
+  Object.assign(el.style, { left: x + "px", top: y + "px", right: "auto", bottom: "auto" });
+  return { x, y };
+}
+
+function kdWireDrag(root) {
+  const head = root.querySelector(".kd-head");
+  if (!head) return;
+  let drag = null;
+
+  head.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0 || kdPhone() || e.target.closest("button, input, a")) return;
+    const r = root.getBoundingClientRect();
+    drag = { dx: e.clientX - r.left, dy: e.clientY - r.top, at: null };
+    head.setPointerCapture(e.pointerId);
+    root.classList.add("dragging");
+    e.preventDefault();
+  });
+  head.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    drag.at = kdPlace({ x: e.clientX - drag.dx, y: e.clientY - drag.dy });
+  });
+  const drop = () => {
+    if (!drag) return;
+    if (drag.at) try { localStorage.setItem(KD_POS_KEY, JSON.stringify(drag.at)); } catch (e) { /* session only */ }
+    drag = null;
+    root.classList.remove("dragging");
+  };
+  head.addEventListener("pointerup", drop);
+  head.addEventListener("pointercancel", drop);
+
+  head.addEventListener("dblclick", (e) => {
+    if (e.target.closest("button")) return;
+    try { localStorage.removeItem(KD_POS_KEY); } catch (err) { /* fine */ }
+    kdPlace(null);
+  });
+  window.addEventListener("resize", () => kdPlace());
+}
+
+/* ---------------- reminders ----------------
+
+   Every follow-up this rep has set, across all their leads, in one place.
+   Before this a follow-up was only visible from inside its own lead, so to
+   find out what was due a rep had to remember which lead they had set it on —
+   which is the thing a reminder exists to save them from.
+
+   Polled once a minute (the server's own sweeper runs on the same beat). A
+   follow-up that falls due while the page is open raises a toast and the
+   badge, so it does not depend on the reminder email being noticed.
+
+   /api/followups gives an admin the whole floor's; this list is filtered to
+   the caller's own, because "my reminders" with forty strangers' in it is
+   not a reminder list. */
+const KD_FU_POLL_MS = 60 * 1000;
+
+/* Started from boot(), not from wiring: wire() runs before sign-in resolves,
+   and "mine" filtered against a user who is not known yet is an empty list —
+   which the first-load summary would then record as "nothing was due". */
+let kdRemindersOn = false;
+function kdStartReminders() {
+  if (kdRemindersOn) return;
+  kdRemindersOn = true;
+  kdLoadFollowups();
+  setInterval(kdLoadFollowups, KD_FU_POLL_MS);
+}
+
+async function kdLoadFollowups() {
+  if (!S.me?.email) return;
+  try {
+    const d = await api("/api/followups");
+    const me = String(S.me?.email || "").trim().toLowerCase();
+    KD.fus = (d.list || []).filter((f) => String(f.owner || "").trim().toLowerCase() === me);
+  } catch (e) {
+    KD.fus = KD.fus || [];
+  }
+  kdNotifyDue();
+  kdBadge();
+  if (KD.view === "inbox") kdRenderInbox();
+}
+
+const kdDue = (f) => new Date(f.due_at).getTime() <= Date.now();
+
+function kdBadge() {
+  const n = (KD.fus || []).filter(kdDue).length;
+  const txt = n > 99 ? "99+" : String(n);
+  const nav = kdEl("kd-badge");
+  if (nav) { nav.textContent = txt; nav.classList.toggle("hidden", !n); }
+  const launch = kdEl("rc-launch");
+  if (launch) {
+    if (n) launch.dataset.count = txt; else delete launch.dataset.count;
+  }
+}
+
+/* The first load only summarises — ten overdue items arriving as ten toasts
+   on page open is noise. After that, each one that crosses its due time while
+   the page is open gets its own. */
+function kdNotifyDue() {
+  const due = (KD.fus || []).filter(kdDue);
+  if (!KD.fuSeen) {
+    KD.fuSeen = new Set(due.map((f) => f.id));
+    if (due.length) toast(`You have ${due.length} follow-up${due.length === 1 ? "" : "s"} due`, 6000);
+    return;
+  }
+  for (const f of due) {
+    if (KD.fuSeen.has(f.id)) continue;
+    KD.fuSeen.add(f.id);
+    toast(`Follow-up due: ${f.name || f.company || "a lead"}${f.note ? " — " + f.note : ""}`, 10000);
+  }
+}
+
+function kdFuWhen(iso) {
+  const d = new Date(iso), now = new Date();
+  const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diffDays = Math.round((day(d) - day(now)) / 86400000);
+  if (d <= now) {
+    const mins = Math.round((now - d) / 60000);
+    if (mins < 60) return mins <= 1 ? "Due now" : `${mins} min overdue`;
+    if (mins < 24 * 60) return `${Math.round(mins / 60)}h overdue`;
+    return `${Math.round(mins / 1440)}d overdue`;
+  }
+  if (diffDays === 0) return "Today · " + time;
+  if (diffDays === 1) return "Tomorrow · " + time;
+  return d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }) + " · " + time;
+}
+
+function kdRenderInbox() {
+  const box = kdEl("kd-inbox");
+  if (!box) return;
+  if (!KD.fus) { box.innerHTML = `<div class="kd-empty">Loading…</div>`; return; }
+
+  const today = new Date(); today.setHours(23, 59, 59, 999);
+  const groups = [
+    ["Due now", KD.fus.filter(kdDue), "due"],
+    ["Later today", KD.fus.filter((f) => !kdDue(f) && new Date(f.due_at) <= today), ""],
+    ["Upcoming", KD.fus.filter((f) => new Date(f.due_at) > today), ""],
+  ].filter(([, rows]) => rows.length);
+
+  const due = groups.find(([, , k]) => k === "due")?.[1].length || 0;
+  const sum = kdEl("kd-inbox-sum");
+  if (sum) sum.textContent = KD.fus.length
+    ? `${due ? due + " due · " : ""}${KD.fus.length} open` : "";
+
+  if (!KD.fus.length) {
+    box.innerHTML = `
+      <div class="kd-allclear">
+        <i>${kdSvg("M20 6L9 17l-5-5")}</i>
+        <b>You're all caught up</b>
+        <span>Follow-ups you set on a call land here, and you get a heads-up when one is due.</span>
+      </div>`;
+    return;
+  }
+
+  box.innerHTML = groups.map(([label, rows, kind]) => `
+    <div class="kd-fu-group">
+      <div class="kd-fu-label${kind ? " " + kind : ""}">${esc(label)} <span>${rows.length}</span></div>
+      ${rows.map((f) => {
+        const name = f.name || f.company || "Unnamed lead";
+        return `
+        <div class="kd-fu-row${kind ? " " + kind : ""}">
+          <button class="kd-fu-main" data-fulead="${f.id}" title="Open ${esc(name)}">
+            <div class="kd-ini">${esc(kdInitials(name))}</div>
+            <div class="kd-lrow-t">
+              <b>${esc(name)}</b>
+              <span class="kd-fu-when">${esc(kdFuWhen(f.due_at))}</span>
+              ${f.note ? `<span class="kd-fu-note">${esc(f.note)}</span>` : ""}
+            </div>
+          </button>
+          <button class="kd-fu-done" data-fudone="${f.id}" title="Mark done" aria-label="Mark ${esc(name)} done">
+            ${kdSvg("M20 6L9 17l-5-5")}</button>
+        </div>`;
+      }).join("")}
+    </div>`).join("");
+}
+
+/* Open the follow-up's lead on the call screen, ready to dial, with its
+   follow-up tab showing what the rep wrote to themselves. */
+function kdOpenFollowLead(id) {
+  const f = (KD.fus || []).find((x) => x.id === id);
+  if (!f) return;
+  KD.lead = {
+    id: f.lead_id, name: f.name || f.company, company: f.company, phone: f.phone,
+    status: f.status, city: f.city, state: f.state, code: f.lead_code,
+  };
+  KD.view = "lead"; KD.ptab = "followup";
+  kdRender();
+  kdLoadLead(f.lead_id);
+}
+
+async function kdFollowDone(id) {
+  const keep = KD.fus;
+  KD.fus = (KD.fus || []).filter((f) => f.id !== id);   // optimistic: it feels instant
+  kdBadge(); kdRenderInbox();
+  try {
+    await api("/api/followups/" + id + "/done", { method: "POST" });
+    kdToast("Marked done");
+  } catch (e) {
+    KD.fus = keep; kdBadge(); kdRenderInbox();
+    kdToast("Could not update — " + (describeErr(e) || "unknown"));
+  }
+}
+
+/* ---------------- settings ----------------
+
+   Modelled on Zoho's dialler settings, but only the parts that do something
+   here. Silent mode, Do Not Disturb and ringtone routing are absent on
+   purpose: this phone places calls and does not take inbound ones yet, so
+   those switches would be decoration. Chrome already applies noise
+   suppression to getUserMedia audio by default, so that one is absent too.
+
+   Audio choice is per browser (localStorage), because device ids are per
+   machine — a headset id from one laptop means nothing on another. */
+const KD_AUDIO_KEY = "kl_kd_audio";
+
+function kdAudioPrefs() {
+  const base = { system: true, input: "", output: "" };
+  try { return { ...base, ...JSON.parse(localStorage.getItem(KD_AUDIO_KEY) || "{}") }; }
+  catch (e) { return base; }
+}
+function kdSaveAudio(p) {
+  try { localStorage.setItem(KD_AUDIO_KEY, JSON.stringify(p)); } catch (e) { /* session only */ }
+}
+
+/* The chosen device if it is still plugged in, otherwise the system default.
+   A headset unplugged since it was picked must not leave a call silent. */
+async function kdPickDevice(kind) {
+  const list = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === kind);
+  const p = kdAudioPrefs();
+  const want = p.system ? "" : (kind === "audioinput" ? p.input : p.output);
+  const hit = want && list.find((d) => d.deviceId === want);
+  if (hit) return hit.deviceId;
+  return (list.find((d) => d.deviceId === "default") || list[0])?.deviceId;
+}
+
+/* The SDK's own manager always takes the first device in the list; this one
+   answers from Settings instead. A function, not a const, so rcStart can
+   reach it however early voice init runs. */
+function kdDeviceManager() {
+  return {
+    getInputDeviceId: () => kdPickDevice("audioinput"),
+    getOutputDeviceId: () => kdPickDevice("audiooutput"),
+  };
+}
+
+/* Mid-call switch: the rep plugs in a headset and picks it without hanging up. */
+async function kdApplyAudio() {
+  const s = KD.session;
+  if (!s) return;
+  try {
+    const inId = await kdPickDevice("audioinput");
+    if (inId && s.changeInputDevice) await s.changeInputDevice(inId);
+    const outId = await kdPickDevice("audiooutput");
+    if (outId && s.audioElement?.setSinkId && s.changeOutputDevice) await s.changeOutputDevice(outId);
+  } catch (e) { kdToast("Couldn't switch the audio device"); }
+}
+
+/* Labels come back blank until the page has had microphone permission once,
+   so the lists would read "Microphone 1, Microphone 2". `labeled` drives the
+   "Allow access" prompt. */
+let kdDevWatch = false;
+async function kdLoadDevices() {
+  try {
+    const all = await navigator.mediaDevices.enumerateDevices();
+    KD.devices = {
+      inputs: all.filter((d) => d.kind === "audioinput"),
+      outputs: all.filter((d) => d.kind === "audiooutput"),
+      labeled: all.some((d) => d.label),
+    };
+  } catch (e) { KD.devices = { inputs: [], outputs: [], labeled: false }; }
+  if (!kdDevWatch && navigator.mediaDevices?.addEventListener) {
+    kdDevWatch = true;
+    navigator.mediaDevices.addEventListener("devicechange", kdLoadDevices);
+  }
+  if (KD.view === "settings") kdRenderSettings();
+}
+
+async function kdAskMic() {
+  try {
+    const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+    s.getTracks().forEach((t) => t.stop());
+  } catch (e) { kdToast("Microphone access was blocked — allow it in the address bar"); }
+  kdLoadDevices();
+}
+
+/* Test: a short tone through the chosen speaker, then five seconds of live
+   mic level, so "can they hear me" is answered before the call, not on it. */
+async function kdAudioTest() {
+  if (KD.testing) return;
+  KD.testing = true;
+  kdRenderSettings();
+  let stream, ctx;
+  try {
+    const inId = await kdPickDevice("audioinput");
+    const outId = await kdPickDevice("audiooutput");
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: inId ? { deviceId: { exact: inId } } : true });
+    ctx = new AudioContext();
+    if (outId && ctx.setSinkId) await ctx.setSinkId(outId).catch(() => {});
+
+    const t0 = ctx.currentTime;
+    const osc = ctx.createOscillator(), gain = ctx.createGain();
+    osc.frequency.value = 660;
+    gain.gain.setValueAtTime(0, t0);
+    gain.gain.linearRampToValueAtTime(0.15, t0 + 0.05);
+    gain.gain.setValueAtTime(0.15, t0 + 0.6);
+    gain.gain.linearRampToValueAtTime(0, t0 + 0.7);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(t0); osc.stop(t0 + 0.75);
+
+    const an = ctx.createAnalyser();
+    an.fftSize = 512;
+    ctx.createMediaStreamSource(stream).connect(an);
+    const buf = new Uint8Array(an.fftSize);
+    const until = performance.now() + 5000;
+    await new Promise((done) => {
+      const tick = () => {
+        an.getByteTimeDomainData(buf);
+        let peak = 0;
+        for (const v of buf) peak = Math.max(peak, Math.abs(v - 128));
+        const bar = kdEl("kd-meter-bar");
+        if (bar) bar.style.width = Math.min(100, (peak / 64) * 100) + "%";
+        if (performance.now() < until) requestAnimationFrame(tick); else done();
+      };
+      tick();
+    });
+  } catch (e) {
+    kdToast("Couldn't test audio — " + (e.message || "check the microphone permission"));
+  } finally {
+    stream?.getTracks().forEach((t) => t.stop());
+    ctx?.close();
+    KD.testing = false;
+    kdLoadDevices();          // permission may have just been granted: labels appear
+  }
+}
+
+function kdSwitch(id, on, label) {
+  return `<button class="kd-switch" data-set="${id}" role="switch" aria-checked="${on}"
+    aria-label="${esc(label)}"><i></i></button>`;
+}
+
+function kdRenderSettings() {
+  const box = kdEl("kd-settings");
+  if (!box) return;
+  const tab = KD.stab || "general";
+  document.querySelectorAll("[data-stab]").forEach((b) => {
+    b.classList.toggle("on", b.dataset.stab === tab);
+    b.setAttribute("aria-pressed", String(b.dataset.stab === tab));
+  });
+
+  if (tab === "general") {
+    const name = S.me?.display_name || (S.me?.email || "").split("@")[0] || "You";
+    const err = VOICE.rcError && !KD.registered;
+    const dark = document.documentElement.dataset.theme !== "light";
+    box.innerHTML = `
+      <div class="kd-prof">
+        <div class="kd-avatar">${esc(kdInitials(name))}</div>
+        <div class="kd-prof-t"><b>${esc(name)}</b><span>${esc(S.me?.email || "")}</span></div>
+      </div>
+      <div class="kd-group">
+        <div class="kd-row">
+          <div class="kd-row-t"><b>Phone line</b>
+            <span>${err ? esc(rcFriendlyError(VOICE.rcError)[0])
+              : KD.registered ? "Connected to RingCentral" : "Connecting…"}</span></div>
+          ${err ? `<button class="kd-pill" data-set="retry"${VOICE.rcRetrying ? " disabled" : ""}>
+                     ${VOICE.rcRetrying ? "Retrying…" : "Retry"}</button>`
+            : `<span class="kd-state-pill${KD.registered ? " ok" : ""}">
+                 <i></i>${KD.registered ? "Available" : "Offline"}</span>`}
+        </div>
+        <div class="kd-row"><div class="kd-row-t"><b>Extension</b></div>
+          <span class="kd-row-v">${VOICE.rcExtension ? "x" + esc(VOICE.rcExtension) : "—"}</span></div>
+        <div class="kd-row"><div class="kd-row-t"><b>Caller ID</b>
+          <span>The number your calls go out as</span></div>
+          <span class="kd-row-v">${KD.callerId ? esc(kdFmtNum(KD.callerId)) : "—"}</span></div>
+      </div>
+      <div class="kd-group">
+        <div class="kd-row">
+          <div class="kd-row-t"><b>Dark mode</b><span>Same switch as the theme button up top</span></div>
+          ${kdSwitch("theme", dark, "Dark mode")}
+        </div>
+      </div>
+      <a class="kd-linkbtn" href="/api/voice/rc/connect">Reconnect RingCentral account</a>`;
+    return;
+  }
+
+  const p = kdAudioPrefs();
+  const dv = KD.devices || { inputs: [], outputs: [], labeled: false };
+  const sinkOk = typeof HTMLMediaElement !== "undefined" && "setSinkId" in HTMLMediaElement.prototype;
+  const opts = (list, cur, word) => list.map((d, i) =>
+    `<option value="${esc(d.deviceId)}"${d.deviceId === cur ? " selected" : ""}>${
+      esc(d.label || `${word} ${i + 1}`)}</option>`).join("")
+    || `<option value="">No ${word.toLowerCase()} found</option>`;
+  box.innerHTML = `
+    <div class="kd-group">
+      <div class="kd-row">
+        <div class="kd-row-t"><b>Use system settings</b>
+          <span>Follow the computer's default speaker and microphone. Turn off to pick your own.</span></div>
+        ${kdSwitch("system", p.system, "Use system settings")}
+      </div>
+    </div>
+    ${dv.labeled ? "" : `<button class="kd-linkbtn" data-set="perm">Allow microphone access to list devices</button>`}
+    <div class="kd-field${p.system ? " off" : ""}">
+      <label for="kd-out">Speaker <span>(audio output)</span></label>
+      <select id="kd-out" class="kd-select"${p.system || !sinkOk ? " disabled" : ""}>
+        ${opts(dv.outputs, p.output || "default", "Speaker")}</select>
+      ${sinkOk ? "" : `<p class="kd-hint">This browser can't choose a speaker — calls use the system one.</p>`}
+    </div>
+    <div class="kd-field${p.system ? " off" : ""}">
+      <label for="kd-in">Microphone <span>(audio input)</span></label>
+      <select id="kd-in" class="kd-select"${p.system ? " disabled" : ""}>
+        ${opts(dv.inputs, p.input || "default", "Microphone")}</select>
+    </div>
+    <div class="kd-meter" aria-hidden="true"><i id="kd-meter-bar"></i></div>
+    <button class="kd-primary kd-test" data-set="test"${KD.testing ? " disabled" : ""}>
+      ${KD.testing ? "Testing — speak now…" : "Test speaker & microphone"}</button>
+    <p class="kd-hint">${KD.session ? "Changes apply to this call straight away."
+      : "Changes apply from your next call."}</p>`;
+}
+
+function kdSetting(which) {
+  if (which === "theme") { kdEl("theme-toggle")?.click(); return kdRenderSettings(); }
+  if (which === "retry") return rcRetry().then(kdRenderSettings);
+  if (which === "perm") return kdAskMic();
+  if (which === "test") return kdAudioTest();
+  if (which === "system") {
+    const p = kdAudioPrefs();
+    p.system = !p.system;
+    kdSaveAudio(p);
+    kdRenderSettings();
+    kdApplyAudio();
+  }
+}
+
+/* ---------------- wiring ---------------- */
 
 function rcWireBar() {
+  const root = kdEl("rc-call");
+  if (!root) return;
+
   on("rc-launch", "click", () => rcPanelToggle());
-  on("rc-close", "click", () => rcPanelToggle(false));
-  on("rc-dial-go", "click", rcDialTyped);
-  on("rc-dial-num", "keydown", (e) => { if (e.key === "Enter") rcDialTyped(); });
-  on("rc-hangup", "click", () => RCBAR.session
-    && rcGuard(() => RCBAR.session.hangup(), "hang up"));
-  on("rc-mute", "click", () => {
-    if (!RCBAR.session) return;
-    RCBAR.muted = !RCBAR.muted;
-    rcGuard(() => (RCBAR.muted ? RCBAR.session.mute() : RCBAR.session.unmute()),
-      RCBAR.muted ? "mute" : "unmute");
-    rcPaintButtons();
+  on("kd-close", "click", () => rcPanelToggle(false));
+  on("kd-retry", "click", () => rcRetry());
+  kdWireDrag(root);
+
+  /* One delegated listener. The panel re-renders its lists constantly, and
+     per-element handlers would be re-bound (or leak) on every paint. */
+  root.addEventListener("click", (e) => {
+    const t = (sel) => e.target.closest(sel);
+    let b;
+
+    if ((b = t("[data-nav]"))) return kdNav(b.dataset.nav);
+    if ((b = t("[data-stab]"))) { KD.stab = b.dataset.stab; if (KD.stab === "audio") kdLoadDevices(); return kdRenderSettings(); }
+    if ((b = t("[data-set]"))) return kdSetting(b.dataset.set);
+    if ((b = t("[data-fudone]"))) return kdFollowDone(+b.dataset.fudone);
+    if ((b = t("[data-fulead]"))) return kdOpenFollowLead(+b.dataset.fulead);
+    if ((b = t("[data-tab]"))) { KD.ptab = b.dataset.tab; return kdRender(); }
+    if ((b = t("[data-filter]"))) { KD.filter = b.dataset.filter; return kdRender(); }
+    if ((b = t("[data-sec]"))) { KD.open[b.dataset.sec] = !KD.open[b.dataset.sec]; return kdRender(); }
+    if ((b = t("[data-close]"))) return kdShow(b.dataset.close, false);
+    if ((b = t("[data-k]"))) return kdKey(b.dataset.k);
+    if ((b = t("[data-lead]"))) return kdPickLead(+b.dataset.lead);
+    if ((b = t("[data-ctl]"))) return kdControl(b.dataset.ctl);
+    if ((b = t("[data-dispo]"))) { KD.dispo = KD.dispo === b.dataset.dispo ? "" : b.dataset.dispo; return kdRenderDispos(); }
+    if ((b = t("[data-menu]"))) return kdMenuPick(b.dataset.menu);
+    if ((b = t("[data-ext]"))) return kdDoTransfer(b.dataset.ext);
+    if (t("[data-open-wrap]")) return kdOpenWrap();
+    if (t("[data-cancel-fu]")) return kdCancelFollowup();
+
+    if (e.target.closest("#kd-return")) { KD.view = "lead"; return kdRender(); }
+    if (e.target.closest("#kd-del")) { KD.number = KD.number.slice(0, -1); return kdRender(); }
+    if (e.target.closest("#kd-go") || e.target.closest("#kd-call")) return kdDial();
+    if (e.target.closest("#kd-again")) return kdDial();
+    if (e.target.closest("#kd-end")) return kdHangup();
+    if (e.target.closest("#kd-answer")) return kdAnswer();
+    if (e.target.closest("#kd-decline")) return kdDecline();
+    if (e.target.closest("#kd-resume")) return kdControl("hold");
+    if (e.target.closest("#kd-save")) return kdSaveDispo();
+    if (e.target.closest("#kd-skip")) return kdShow("kd-wrap", false);
+    /* Tapping the dimmed area behind a sheet closes it, as every sheet does. */
+    if (e.target.classList.contains("kd-scrim")) return e.target.classList.add("hidden");
   });
-  on("rc-hold", "click", () => {
-    if (!RCBAR.session) return;
-    RCBAR.held = !RCBAR.held;
-    rcGuard(() => (RCBAR.held ? RCBAR.session.hold() : RCBAR.session.unhold()),
-      RCBAR.held ? "hold" : "resume");
-    rcPaintButtons();
+
+  kdEl("kd-num")?.addEventListener("input", (e) => {
+    KD.number = e.target.value.replace(/[^0-9*#+]/g, "").slice(0, 18);
   });
-  on("rc-keypad", "click", () => $("rc-dtmf")?.classList.toggle("hidden"));
-  $("rc-dtmf")?.addEventListener("click", (e) => {
-    const k = e.target.closest("button[data-dtmf]");
-    if (!k) return;
-    if (!RCBAR.session) {
-      /* Idle: the keypad types, like a phone. */
-      const input = $("rc-dial-num");
-      if (input) { input.value += k.dataset.dtmf; input.focus(); }
-      return;
+  kdEl("kd-num")?.addEventListener("keydown", (e) => { if (e.key === "Enter") kdDial(); });
+  kdEl("kd-q")?.addEventListener("input", (e) => kdRenderQueue(KD.queue, e.target.value));
+  root.addEventListener("change", (e) => {
+    if (e.target.id !== "kd-in" && e.target.id !== "kd-out") return;
+    const p = kdAudioPrefs();
+    p[e.target.id === "kd-in" ? "input" : "output"] = e.target.value;
+    kdSaveAudio(p);
+    kdApplyAudio();
+  });
+
+  /* Esc closes the top sheet, then the panel. */
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || kdEl("rc-call")?.classList.contains("hidden")) return;
+    for (const id of ["kd-wrap", "kd-menu"]) {
+      if (!kdEl(id)?.classList.contains("hidden")) return kdShow(id, false);
     }
-    rcGuard(() => RCBAR.session.sendDtmf(k.dataset.dtmf), "send " + k.dataset.dtmf);
-    const t = $("rc-dtmf-sent");
-    if (t) t.textContent = (t.textContent + k.dataset.dtmf).slice(-18);
+    rcPanelToggle(false);
   });
 }
 
-/* Place a call and wire its four states onto the same reportCall() the Zoho
-   path uses, so a call is logged identically whichever vendor carried it. */
+function kdNav(which) {
+  if (which === "more") return kdOpenMenu();
+  if (which === "settings") { KD.view = "settings"; kdLoadDevices(); return kdRender(); }
+  if (which === "inbox") { KD.view = "inbox"; kdRender(); return kdLoadFollowups(); }
+  if (which === "keypad") { KD.view = kdActive() ? "lead" : "keypad"; }
+  else if (which === "leads") { KD.view = "leads"; kdLoadQueue(); }
+  else { KD.view = "lead"; KD.ptab = which; }
+  kdRender();
+  if (KD.view === "keypad") kdEl("kd-num")?.focus();
+}
+
+/* A key types when idle and sends a tone when on a call — the behaviour of
+   every phone anyone has used. */
+function kdKey(k) {
+  if (KD.phase === "live" && KD.session) {
+    kdGuard(() => KD.session.sendDtmf(k), "send " + k).catch(() => {});
+    const sent = kdEl("kd-dtmf-sent");
+    if (sent) sent.textContent = (sent.textContent + k).slice(-18);
+    return;
+  }
+  if (KD.number.length < 18) { KD.number += k; kdRender(); }
+}
+
+function kdPickLead(id) {
+  const r = (KD.queue || []).find((x) => x.Id === id);
+  if (!r) return;
+  KD.lead = {
+    id, name: r.Name, company: r.Company, phone: r.Phone, status: r.Status,
+    city: r.City, state: r.State, email: r.Email, website: r.Website,
+    industry: r.Industry, owner: r.Owner, code: r["Lead Code"],
+  };
+  KD.view = "lead"; KD.ptab = "history";
+  kdRender();
+  kdLoadLead(id);
+}
+
+function kdDial() {
+  const num = KD.lead?.phone || KD.number;
+  if (!num) return kdToast("Type a number first");
+  if (kdActive()) return;
+  const sent = kdEl("kd-dtmf-sent"); if (sent) sent.textContent = "";
+  KD.view = "lead";
+  /* dialInPage is the same path the lead table's Call button uses, so the
+     call is logged and attributed identically whichever way it was started. */
+  if (!dialInPage(num, KD.lead?.name || num, KD.lead?.id || null))
+    kdToast("Calling is not set up on this account");
+}
+
+function kdHangup() {
+  if (!KD.session) return;
+  kdGuard(() => KD.session.hangup(), "hang up").catch(() => {});
+}
+
+function kdControl(which) {
+  const s = KD.session;
+  if (!s || KD.phase !== "live") return;
+  if (which === "mute") {
+    KD.muted = !KD.muted;
+    kdGuard(() => (KD.muted ? s.mute() : s.unmute()), KD.muted ? "mute" : "unmute")
+      .catch(() => { KD.muted = !KD.muted; kdRender(); });
+    return kdRender();
+  }
+  if (which === "hold") {
+    KD.held = !KD.held;
+    /* The clock is wall-clock from answer, so a hold has to bank the elapsed
+       time and re-base on resume or the paused seconds reappear. */
+    if (KD.held) KD.elapsed = (Date.now() - KD.started) / 1000;
+    else KD.started = Date.now() - KD.elapsed * 1000;
+    kdGuard(() => (KD.held ? s.hold() : s.unhold()), KD.held ? "hold" : "resume")
+      .then(() => kdLive(KD.held ? "hold" : "live"))
+      .catch(() => { KD.held = !KD.held; kdRender(); });
+    return kdRender();
+  }
+  if (which === "rec") {
+    const want = !KD.rec;
+    /* On-demand recording is an account setting in RingCentral, not something
+       the SDK can turn on. If it is off this rejects, and the message says so
+       rather than leaving a button that silently does nothing. */
+    kdGuard(() => (want ? s.startRecording() : s.stopRecording()),
+      want ? "start recording" : "stop recording")
+      .then(() => { KD.rec = want; kdRender(); })
+      .catch(() => kdToast("Call recording is off for this RingCentral account"));
+    return;
+  }
+  if (which === "keypad") { KD.view = "keypad"; return kdRender(); }
+  if (which === "transfer") return kdOpenTransfer();
+  if (which === "more") return kdOpenMenu();
+}
+
+/* ---------------- transfer ---------------- */
+
+async function kdOpenTransfer() {
+  if (!KD.extensions) {
+    try { KD.extensions = (await api("/api/voice/rc/extensions")).people || []; }
+    catch (e) { KD.extensions = []; }
+  }
+  const box = kdEl("kd-menu-items");
+  if (!KD.extensions.length) {
+    box.innerHTML = `<div class="kd-empty">Nobody else on the team has connected a RingCentral seat yet.</div>`;
+  } else {
+    box.innerHTML = KD.extensions.map((p) =>
+      `<button data-ext="${esc(p.extension)}"><i>${kdSvg(KD_IC.transfer)}</i>
+        <span>${esc(p.name)}</span><span class="kd-lrow-tag">x${esc(p.extension)}</span></button>`).join("");
+  }
+  kdShow("kd-menu", true);
+}
+
+function kdDoTransfer(ext) {
+  kdShow("kd-menu", false);
+  if (!KD.session) return;
+  kdGuard(() => KD.session.transfer(ext), "transfer the call")
+    .then(() => kdToast("Transferred to x" + ext))
+    .catch(() => {});
+}
+
+/* ---------------- the More sheet ---------------- */
+
+function kdOpenMenu() {
+  const items = [
+    ["dispo", "Disposition", KD_IC.flag],
+    ["note", "Add note", KD_IC.note],
+    ["followup", "Schedule follow-up", KD_IC.cal],
+    ["lead", "View lead", KD_IC.eye],
+    ["audio", "Audio devices", KD_IC.mic],
+    ["dnc", "Do not contact", KD_IC.ban, "danger"],
+  ];
+  kdEl("kd-menu-items").innerHTML = items.map(([k, label, icon, cls]) =>
+    `<button data-menu="${k}" class="${cls || ""}"><i>${kdSvg(icon)}</i><span>${esc(label)}</span></button>`).join("");
+  kdShow("kd-menu", true);
+}
+
+function kdMenuPick(k) {
+  kdShow("kd-menu", false);
+  if (k === "audio") { KD.view = "settings"; KD.stab = "audio"; kdLoadDevices(); return kdRender(); }
+  if (!KD.lead && k !== "dispo") return kdToast("Pick a lead first");
+  if (k === "dispo" || k === "note") return kdOpenWrap();
+  if (k === "followup") { KD.dispo = "Follow-up Required"; return kdOpenWrap(); }
+  if (k === "lead") { KD.view = "lead"; KD.ptab = "lead"; return kdRender(); }
+  if (k === "dnc") { KD.dispo = "Do Not Contact"; return kdOpenWrap(); }
+}
+
+/* ---------------- the disposition sheet ---------------- */
+
+function kdOpenWrap() {
+  if (!KD.lead) return kdToast("This call has no lead to log against");
+  kdEl("kd-wrapsub").textContent = KD.phase === "live"
+    ? "The call stays connected."
+    : KD.phase === "ended" ? "Call ended · " + kdClock(KD.elapsed)
+      : "Log an outcome for this lead.";
+  /* Pre-select what the line already told us, so a rep who just wants to add a
+     note is not also forced to re-state a fact the softphone recorded. */
+  if (!KD.dispo && KD.phase === "ended" && KD.lastOutcome) {
+    const m = KD_DISPOS.find((d) => d.kind === "outcome" && d.value === KD.lastOutcome);
+    if (m) KD.dispo = m.label;
+  }
+  if (KD.followup) {
+    const el = kdEl("kd-fu-at");
+    if (el) el.value = new Date(KD.followup.due_at).toISOString().slice(0, 16);
+  }
+  kdRenderDispos();
+  /* "Add to Zoho CRM" only after the person actually picked up, and only
+     while the CRM sync is on — otherwise there is no name to take and
+     nowhere for it to go. */
+  kdShow("kd-crm", !!VOICE.crmOn && (KD.lastOutcome === "connected" || KD.phase === "live"));
+  kdShow("kd-wrap", true);
+}
+
+/* ---------------- Zoho CRM: is it on, and creating a lead ----------------
+   Checked at sign-in and every five minutes; the owner's switch lives in
+   Call logs. Creating a lead is one request — the server checks the CRM for
+   the number first and links instead of duplicating. */
+async function crmCheck() {
+  try { VOICE.crmOn = !!(await api("/api/crm/sync/on")).on; } catch (e) { VOICE.crmOn = false; }
+}
+function crmStart() {
+  crmCheck();
+  setInterval(crmCheck, 5 * 60 * 1000);
+}
+async function crmCreateLead(leadId, first, last, email) {
+  const r = await api(`/api/leads/${leadId}/crm-lead`, { method: "POST",
+    body: JSON.stringify({ first_name: first, last_name: last, email }) });
+  return r.created ? `Created in Zoho CRM: ${[first, last].filter(Boolean).join(" ")}`
+    : `Already in Zoho CRM (${r.module}${r.name ? ": " + r.name : ""}) — linked, not duplicated`;
+}
+
+function kdRenderDispos() {
+  kdEl("kd-dispos").innerHTML = KD_DISPOS.map((d) =>
+    `<button data-dispo="${esc(d.label)}" aria-pressed="${KD.dispo === d.label}">${esc(d.label)}</button>`).join("");
+  const picked = KD_DISPOS.find((d) => d.label === KD.dispo);
+  kdShow("kd-fu", picked?.kind === "followup");
+  if (picked?.kind === "followup" && !kdEl("kd-fu-at").value) {
+    /* A sensible default beats an empty field: tomorrow, same hour, on the
+       hour. A rep picking "call back later" means soon, not never. */
+    const d = new Date(Date.now() + 864e5);
+    d.setMinutes(0, 0, 0);
+    kdEl("kd-fu-at").value = new Date(d.getTime() - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 16);
+  }
+}
+
+/* Each chip writes to the ONE place that already holds that fact. Nothing is
+   duplicated: the outcome chips describe the call, which reportCall has
+   already logged, so they only write when the rep CONTRADICTS what the line
+   reported — that correction is the new information. */
+async function kdSaveDispo() {
+  const L = KD.lead;
+  if (!L) return kdShow("kd-wrap", false);
+  const note = (kdEl("kd-note")?.value || "").trim();
+  const picked = KD_DISPOS.find((d) => d.label === KD.dispo);
+  const jobs = [];
+
+  if (note) jobs.push(api("/api/leads/" + L.id + "/comments",
+    { method: "POST", body: JSON.stringify({ body: note }) }));
+
+  if (picked?.kind === "status" && picked.value !== L.status)
+    jobs.push(patchLead(L.id, { status: picked.value }).then(() => { L.status = picked.value; }));
+
+  if (picked?.kind === "followup") {
+    const at = kdEl("kd-fu-at")?.value;
+    if (!at) return kdToast("Pick a date and time for the follow-up");
+    jobs.push(api("/api/leads/" + L.id + "/followup", {
+      method: "POST",
+      body: JSON.stringify({ due_at: new Date(at).toISOString(), note: note || KD.dispo }),
+    }).then((r) => { KD.followup = r.followup || { due_at: new Date(at).toISOString(), note }; }));
+  }
+
+  if (picked?.kind === "dnc") {
+    if (!confirm(`Add ${L.name} to Do Not Contact?\n\nThis blocks ${kdFmtNum(L.phone)} and sweeps every lead sharing that number.`))
+      return;
+    jobs.push(api("/api/leads/" + L.id + "/remove",
+      { method: "POST", body: JSON.stringify({ reason: "Marked Do Not Contact on a call" }) }));
+  }
+
+  /* The disposition itself, for the log and the Dashboard. Stamped onto
+     this call server-side; see calls.js. */
+  if (picked) jobs.push(api("/api/leads/" + L.id + "/disposition", {
+    method: "POST", body: JSON.stringify({ disposition: picked.label, note }) }));
+
+  /* A name from a connected call → a Lead in Zoho CRM. Only when the box is
+     showing and a last name was typed; blank means "not this time". */
+  const crmBox = kdEl("kd-crm");
+  const crmLast = (kdEl("kd-crm-last")?.value || "").trim();
+  if (crmBox && !crmBox.classList.contains("hidden") && crmLast) {
+    jobs.push(crmCreateLead(L.id, (kdEl("kd-crm-first")?.value || "").trim(), crmLast,
+      (kdEl("kd-crm-email")?.value || "").trim())
+      .then((msg) => { toast(msg, 6000); for (const i of ["kd-crm-first", "kd-crm-last", "kd-crm-email"]) kdEl(i).value = ""; }));
+  }
+
+  if (picked?.kind === "outcome" && KD.lastOutcome && picked.value !== KD.lastOutcome)
+    jobs.push(api("/api/leads/" + L.id + "/comments", {
+      method: "POST",
+      body: JSON.stringify({ body: `Call marked "${KD.dispo}" by the rep (the line reported ${KD.lastOutcome}).` }),
+    }));
+
+  if (!jobs.length) { kdShow("kd-wrap", false); return kdToast("Nothing to save"); }
+
+  try {
+    await Promise.all(jobs);
+    kdShow("kd-wrap", false);
+    kdEl("kd-note").value = "";
+    KD.dispo = "";
+    kdToast("Saved");
+    kdLoadLead(L.id);
+    if (picked?.kind === "followup") kdLoadFollowups();
+  } catch (e) {
+    kdToast("Could not save — " + (describeErr(e) || "unknown"));
+  }
+}
+
+async function kdCancelFollowup() {
+  if (!KD.lead) return;
+  try {
+    await api("/api/leads/" + KD.lead.id + "/followup", { method: "DELETE" });
+    KD.followup = null;
+    kdToast("Follow-up cancelled");
+    kdRender();
+    kdLoadFollowups();
+  } catch (e) { kdToast("Could not cancel — " + (describeErr(e) || "unknown")); }
+}
+
+/* ---------------- the call itself ----------------
+
+   Place a call and wire its states onto the same reportCall() the Zoho path
+   uses, so a call is logged identically whichever vendor carried it. */
+/* Tell the manager's Live calls board what this phone is doing. Best effort:
+   a board that misses a beat is fine, a call that fails because the board
+   was unreachable is not — so errors are swallowed. While a call is up it
+   re-reports every 20s; the server drops a caller after ~65s of silence, so
+   a closed tab clears itself. */
+let kdLiveBeat = null;
+function kdLive(state) {
+  clearInterval(kdLiveBeat);
+  kdLiveBeat = null;
+  const send = (s) => api("/api/calls/live", { method: "POST", body: JSON.stringify({
+    state: s, lead_id: KD.lead?.id || null, number: KD.number || "",
+    dial_at: KD.dialAt ? new Date(KD.dialAt).toISOString() : null,
+    answer_at: KD.answerAt ? new Date(KD.answerAt).toISOString() : null,
+  }) }).catch(() => {});
+  send(state);
+  if (state !== "ended")
+    kdLiveBeat = setInterval(() => send(KD.held ? "hold" : KD.phase === "live" ? "live" : "ringing"), 20000);
+}
+
+/* ---------------- incoming calls ----------------
+   The phone rings for calls to this person's own number — in practice, a
+   lead ringing back after a power-dialer campaign that showed it. The panel
+   opens on who it is and why they are calling before anyone answers.
+
+   Busy on another call, it does nothing: RingCentral keeps ringing the
+   person's other phones and then voicemail, exactly as before. Declining
+   sends it to voicemail rather than hanging up on a returning lead. */
+
+let kdRinger = null;
+function kdRing(on) {
+  if (kdRinger) { clearInterval(kdRinger.t); kdRinger.ctx.close().catch(() => {}); kdRinger = null; }
+  if (!on) return;
+  try {
+    const ctx = new AudioContext();
+    const burst = () => {
+      const t0 = ctx.currentTime;
+      for (const [start, f] of [[0, 440], [0, 480], [0.5, 440], [0.5, 480]]) {
+        const o = ctx.createOscillator(), g = ctx.createGain();
+        o.frequency.value = f;
+        g.gain.setValueAtTime(0.05, t0 + start);
+        g.gain.setValueAtTime(0, t0 + start + 0.4);
+        o.connect(g).connect(ctx.destination);
+        o.start(t0 + start); o.stop(t0 + start + 0.4);
+      }
+    };
+    burst();
+    kdRinger = { ctx, t: setInterval(burst, 3000) };
+  } catch (e) { /* no audio — the panel and the toast still say it */ }
+}
+
+function kdIncoming(session) {
+  if (kdActive() || KD.incoming) return;
+  const number = String(session.remoteNumber || "");
+  KD.incoming = { session, number, info: null, at: Date.now() };
+  KD.phase = "incoming";
+  KD.number = number;
+  KD.lead = null;
+  KD.view = "lead"; KD.ptab = "history";
+  rcPanelToggle(true);
+  kdRing(true);
+  kdRender();
+  api("/api/calls/whois?number=" + encodeURIComponent(number)).then((d) => {
+    if (KD.incoming?.session !== session && KD.session !== session) return;
+    if (KD.incoming) KD.incoming.info = d;
+    if (d.lead) {
+      const l = d.lead;
+      KD.lead = { id: l.id, name: l.name || l.company, company: l.company, phone: number,
+        status: l.status, city: l.city, state: l.state, industry: l.industry, owner: l.owner };
+      kdLoadLead(l.id);
+    }
+    kdRender();
+  }).catch(() => { if (KD.incoming) { KD.incoming.info = { known: false, last: null }; kdRender(); } });
+
+  /* the caller gave up, or another phone answered it */
+  session.on("disposed", () => {
+    if (KD.incoming?.session !== session) return;
+    kdRing(false);
+    const who = KD.lead?.name || kdFmtNum(number);
+    KD.incoming = null;
+    KD.phase = "idle";
+    kdRender();
+    toast(`Missed call from ${who}`, 8000);
+  });
+}
+
+async function kdAnswer() {
+  const inc = KD.incoming;
+  if (!inc) return;
+  kdRing(false);
+  const s = inc.session;
+  try { await s.answer(); }
+  catch (e) { kdToast("Couldn't answer — " + (describeErr(e) || "unknown")); return; }
+  KD.incoming = null;
+  VOICE.call = { leadId: KD.lead?.id || null, number: inc.number, connected: true,
+    seconds: 0, reported: false, direction: "inbound" };
+  VOICE.rcSession = s;
+  KD.session = s;
+  KD.phase = "live";
+  KD.muted = KD.held = KD.rec = false;
+  KD.started = Date.now(); KD.elapsed = 0;
+  KD.dialAt = inc.at; KD.answerAt = KD.started;
+  kdStartClock();
+  kdLive("live");
+  kdRender();
+  const answeredAt = Date.now();
+  s.on("disposed", () => {
+    VOICE.call.seconds = Math.max(0, Math.round((Date.now() - answeredAt) / 1000));
+    reportCall(null, "connected");
+    kdLive("ended");
+    KD.dialAt = KD.answerAt = null;
+    kdStopClock();
+    KD.lastOutcome = "connected";
+    KD.phase = "ended";
+    KD.session = null;
+    KD.muted = KD.held = KD.rec = false;
+    kdRender();
+    if (KD.lead) { kdOpenWrap(); kdLoadLead(KD.lead.id); }
+    if (VOICE.rcSession === s) VOICE.rcSession = null;
+  });
+}
+
+async function kdDecline() {
+  const inc = KD.incoming;
+  if (!inc) return;
+  kdRing(false);
+  KD.incoming = null;
+  KD.phase = "idle";
+  kdRender();
+  try { await inc.session.toVoicemail(); }
+  catch (e) { try { await inc.session.decline(); } catch (err) { /* already gone */ } }
+}
+
 async function rcCall(digits, name, leadId) {
   reportCall(null, "cancelled");          // close out anything left open
+  /* A power-dialer campaign can name who callbacks go to: its calls then
+     show THAT person's direct number, so a lead who rings back reaches them
+     — RingCentral routes the number to its owner, nothing to configure. */
+  const camp = CAMP.s?.campaign && leadId && String(CAMP.s.current?.lead?.id) === String(leadId) ? CAMP.s.campaign : null;
+  const callAs = camp?.callback?.number ? camp.callback.number.replace(/\D/g, "") : undefined;
   VOICE.call = { leadId: leadId || null, number: digits,
-    connected: false, seconds: 0, reported: false };
+    connected: false, seconds: 0, reported: false,
+    callbackExt: camp?.callback?.ext || null, campaign: camp?.name || null };
+  KD.callAs = camp?.callback?.number || null;
 
-  const session = await VOICE.rc.call(digits);
+  const session = await VOICE.rc.call(digits, callAs);
   VOICE.rcSession = session;
   const started = Date.now();
-  rcShowCall(session, name, digits);
 
-  session.on("ringing", () => {
-    const el = $("rc-call-state"); if (el) el.textContent = "ringing…";
-  });
+  KD.session = session;
+  KD.phase = "calling";
+  KD.number = digits;
+  KD.muted = false; KD.held = false; KD.rec = false;
+  KD.elapsed = 0; KD.started = started;
+  KD.lastOutcome = null;
+  KD.view = "lead";
+  /* Called from the lead table rather than from the panel: adopt that lead so
+     the panel is not showing a different company from the one that is ringing. */
+  if (leadId && KD.lead?.id !== leadId) {
+    KD.lead = { id: leadId, name, phone: digits };
+    KD.ptab = "history";
+    kdLoadLead(leadId);
+  } else if (!leadId) {
+    KD.lead = null;
+  }
+  rcPanelToggle(true);
+  kdStartClock();
+  KD.dialAt = started; KD.answerAt = null;
+  kdLive("ringing");
+
+  session.on("ringing", () => { KD.phase = "calling"; kdRender(); });
   session.on("answered", () => {
     VOICE.call.connected = true;
-    const el = $("rc-call-state"); if (el) el.textContent = "connected";
-    /* The timer restarts on answer so it reads talk time rather than time
-       since dialling — the number a rep glances at mid-call is "how long
-       have I had this person", not "how long ago did I press the button". */
-    RCBAR.started = Date.now();
-    toast("Connected to " + (name || digits));
+    KD.phase = "live";
+    /* The clock restarts on answer so it reads talk time rather than time
+       since dialling — the number a rep glances at mid-call is "how long have
+       I had this person", not "how long ago did I press the button". */
+    KD.started = Date.now(); KD.elapsed = 0;
+    KD.answerAt = KD.started;
+    kdLive("live");
+    kdRender();
+    kdToast("Connected to " + (name || kdFmtNum(digits)));
   });
+
   /* RingCentral has no timer event, so the duration is measured here. It is
      wall-clock from dial to hang-up, which includes ringing — the honest
      label for it is "call length", not "talk time". */
   const finish = (state) => {
     VOICE.call.seconds = Math.max(0, Math.round((Date.now() - started) / 1000));
     reportCall(null, state);
-    rcHideCall();
+    kdLive("ended");
+    KD.dialAt = KD.answerAt = null;
+    KD.callAs = null;
+    kdStopClock();
+    KD.lastOutcome = VOICE.call.connected ? "connected" : state;
+    KD.phase = "ended";
+    KD.session = null;
+    KD.muted = KD.held = KD.rec = false;
+    kdRender();
+    /* Straight into the wrap-up. A disposition asked for a minute later is a
+       disposition nobody fills in, and this is the one moment the rep still
+       remembers what was said. Only when there is a lead to log it against. */
+    /* A Call session (and a power-dialer campaign) has its own wrap-up —
+       outcome buttons and an automatic one after a few seconds. Opening the
+       panel's sheet as well would ask the rep the same question twice. */
+    const inSession = S.tab === "camp" && CAMP.s?.current;
+    if (KD.lead && !inSession) { kdOpenWrap(); kdLoadLead(KD.lead.id); }
     if (VOICE.rcSession === session) VOICE.rcSession = null;
   };
   session.on("disposed", () => finish(VOICE.call.connected ? "connected" : "no-answer"));
@@ -3197,6 +4654,10 @@ async function voiceInit() {
        describeErr serialises whatever it is given. */
     VOICE.rcError = describeErr(e) || "unknown error";
     console.warn("[karma] RingCentral unavailable:", VOICE.rcError, e);
+    /* Connected but not registered: keep the launcher. Hiding it was the
+       original behaviour, and to a rep the phone simply vanished — the reason
+       sat in the console. The panel now opens onto the reason and a Retry. */
+    if (VOICE.rcConnected) rcShowLauncher(true);
   }
 
   try {
@@ -3864,9 +5325,19 @@ function cancelWrap(reason) {
 
 const AUTO_GAP_DEFAULT = 6;          // seconds between hanging up and the next ring
 
-const autoOn = () => { try { return !!localStorage.getItem("kl_camp_auto"); } catch (e) { return false; } };
+/* In a manager's power-dialer campaign the manager decides: auto-dial is on
+   exactly while the campaign is "ongoing", at the gap they set, whatever the
+   rep's own switch says. Outside a campaign it is the rep's switch. */
+const campOf = () => CAMP.s?.campaign || null;
+const autoOn = () => {
+  const c = campOf();
+  if (c) return c.status === "ongoing";
+  try { return !!localStorage.getItem("kl_camp_auto"); } catch (e) { return false; }
+};
 const setAutoOn = (v) => { try { localStorage.setItem("kl_camp_auto", v ? "1" : ""); } catch (e) { /* fine */ } };
 const autoGap = () => {
+  const c = campOf();
+  if (c?.gap) return Math.max(2, Math.min(60, c.gap));
   const n = +(localStorage.getItem("kl_camp_gap") || AUTO_GAP_DEFAULT);
   return Number.isFinite(n) ? Math.max(2, Math.min(60, n)) : AUTO_GAP_DEFAULT;
 };
@@ -3919,9 +5390,28 @@ function armAutoDial(r, name) {
   }, 1000);
 }
 
-/* The switch, and the countdown, in one strip above the lead. */
+/* The switch, and the countdown, in one strip above the lead. In a manager's
+   campaign there is no switch — the campaign's state is shown instead, with
+   the rep's one-click Join before the first call. */
 function autoDialBar() {
   const ready = autoReady();
+  const c = campOf();
+  if (c) {
+    const live = c.status === "ongoing";
+    const joinable = live && ready.ok && !CAMP.joined && !kdActive();
+    return `
+      <div class="camp-auto pd-strip ${live ? "on" : c.status}">
+        <span class="pd-strip-tag"><i></i>Power dialer · ${esc(PD_STATUS[c.status]?.[0] || c.status)}</span>
+        <span id="camp-auto-state" class="camp-auto-state">${
+          !ready.ok ? esc(ready.why)
+            : c.status === "paused" ? "paused by your manager — finish this call; nothing else will ring"
+              : c.status === "draft" ? "ready — waiting for your manager to start it"
+                : joinable ? "press Start calling — after that each lead rings by itself"
+                  : `on — hang up and it logs the call and rings the next in ${autoGap()}s`}</span>
+        ${joinable ? `<button type="button" class="btn-primary pd-join" id="pd-join">▶ Start calling</button>` : ""}
+        ${live && CAMP.joined ? `<button type="button" class="btn-ghost camp-auto-pause" id="camp-auto-pause">Pause me</button>` : ""}
+      </div>`;
+  }
   const on = autoOn() && ready.ok;
   return `
     <div class="camp-auto${on ? " on" : ""}">
@@ -3944,6 +5434,14 @@ function autoDialBar() {
 }
 
 function wireAutoDial(r, name) {
+  /* The rep's one real click: it rings the first lead, and that gesture is
+     what lets every later call in the campaign start on its own. */
+  $("pd-join")?.addEventListener("click", () => {
+    CAMP.joined = true;
+    const placed = dialInPage(r.Phone, name, r.Id);
+    if (!placed) { CAMP.joined = false; toast("Couldn't place the call — check the phone connection", 6000); }
+    renderCampaign(CAMP.s);
+  });
   $("camp-auto")?.addEventListener("change", (e) => {
     setAutoOn(e.target.checked);
     cancelAutoDial();
@@ -3967,7 +5465,7 @@ function wireAutoDial(r, name) {
    name, a number and one line of context, then talking. */
 
 let CAMP = { s: null, busy: false, timer: null, countdown: 0, advanced: false,
-  wrapTimer: null, wrap: 0 };
+  wrapTimer: null, wrap: 0, joined: false };
 
 const CAMP_OUTCOMES = [
   { key: "connected", label: "Connected", status: "Contacted", tone: "good" },
@@ -4058,14 +5556,21 @@ function renderCampaign(d) {
   const hook = b && b.congratulations && b.congratulations[0];
   const pct = Math.round((d.pos / d.total) * 100);
 
+  const c = d.campaign;
+  /* A rep cannot end a campaign their manager assigned — they can leave the
+     screen, and it is waiting where they left it. */
+  const canEnd = !c || isAdmin();
   el.innerHTML = `
+    ${c ? `<div class="pd-camphead"><span class="pd-campname">${esc(c.name)}</span>
+      <span class="dash-mute">assigned by ${esc(c.createdBy || "your manager")}${c.callback
+        ? ` · calls show ${esc(c.callback.name)}'s number — callbacks ring ${esc(c.callback.name.split(" ")[0])}` : ""}</span></div>` : ""}
     <div class="camp-bar">
       <div class="camp-prog"><span style="width:${pct}%"></span></div>
       <div class="camp-meta">
         <b>${d.pos + 1}</b> of ${d.total}
         · ${d.called} called · ${d.connected} connected${d.skipped ? ` · ${d.skipped} skipped` : ""}
-        ${d.owner !== S.me?.email ? ` · ${esc(d.owner)}'s list` : ""}
-        <button class="btn-ghost camp-stop" id="camp-end">Stop</button>
+        ${!c && d.owner !== S.me?.email ? ` · ${esc(d.owner)}'s list` : ""}
+        <button class="btn-ghost camp-stop" id="camp-end">${canEnd ? "Stop" : "Leave"}</button>
       </div>
     </div>
 
@@ -4101,6 +5606,16 @@ function renderCampaign(d) {
         <input type="datetime-local" id="camp-fu-when" disabled>
       </label>
 
+      ${VOICE.crmOn ? `<details class="camp-crm">
+        <summary>＋ Add to Zoho CRM as a lead</summary>
+        <div class="camp-crm-row">
+          <input id="camp-crm-first" placeholder="First name" autocomplete="off" aria-label="First name">
+          <input id="camp-crm-last" placeholder="Last name" autocomplete="off" aria-label="Last name">
+          <input id="camp-crm-email" type="email" placeholder="Email (optional)" autocomplete="off" aria-label="Email">
+        </div>
+        <p class="rc-how">After a connected call: a last name creates this person as a lead in Zoho CRM when you record the outcome. Already there? It's linked, not duplicated.</p>
+      </details>` : ""}
+
       <div class="camp-actions">
         ${CAMP_OUTCOMES.map((o) => `<button class="btn-secondary camp-out${o.tone ? " " + o.tone : ""}"
           data-out="${o.key}" data-status="${o.status}">${o.label}</button>`).join("")}
@@ -4121,7 +5636,12 @@ function renderCampaign(d) {
       status: btn.dataset.status,
     })));
   $("camp-skip").addEventListener("click", () => submitOutcome({ skip: true }));
-  $("camp-end").addEventListener("click", endCampaign);
+  $("camp-end").addEventListener("click", () => {
+    if (canEnd) return endCampaign();
+    cancelAutoDial(); cancelWrap();
+    CAMP.joined = false;
+    setTab("tasks");
+  });
   wireAutoDial(r, name);
   /* Only after an outcome, never on the first paint of a session — the
      opening call has to be a real click so the browser grants the
@@ -4138,6 +5658,15 @@ async function submitOutcome(extra) {
   try {
     cancelAutoDial();                      // whatever was counting is stale now
     cancelWrap();                          // a pressed button beats the timer
+    /* a name typed into "Add to Zoho CRM" goes in before the card moves on —
+       a CRM hiccup is reported but never blocks the outcome */
+    const crmLast = ($("camp-crm-last")?.value || "").trim();
+    if (crmLast && !extra.skip && CAMP.s?.current?.lead?.id) {
+      try {
+        toast(await crmCreateLead(CAMP.s.current.lead.id, ($("camp-crm-first")?.value || "").trim(), crmLast,
+          ($("camp-crm-email")?.value || "").trim()), 6000);
+      } catch (e) { toast("Zoho CRM: " + e.message, 8000); }
+    }
     CAMP.advanced = true;
     CAMP.s = await api("/api/campaign/outcome", {
       method: "POST",
@@ -4761,19 +6290,53 @@ function renderCallReport(d) {
     : `<button class="btn-ghost rc-zoho" id="zoho-off"
          title="Reps without RingCentral will copy numbers instead of opening Zoho">Turn off Zoho</button>`;
 
-  const rcBar = !VOICE.rcEnabled ? "" : VOICE.rcConnected
-    ? `<div class="rc-bar on">
-         <span class="rc-dot"></span>
-         RingCentral connected${VOICE.rcExtension ? " · extension " + esc(VOICE.rcExtension) : ""}${
-           VOICE.sandbox ? ` <span class="asg-tag">sandbox — test numbers only</span>` : ""}
-         ${zohoSwitch}
-         <button class="btn-ghost rc-off" id="rc-disconnect">Disconnect</button>
+  /* THREE states, not two, and the switch is NOT nested inside them.
+
+     It used to be: `!VOICE.rcEnabled ? "" : connected ? <bar + switch> : <connect>`.
+     Two traps came out of that one line.
+
+     First, the Zoho switch lived inside the connected branch, so the moment
+     RingCentral was unconfigured or a seat dropped, the owner lost the only
+     control for turning Zoho back ON — exactly when they most need it. It is
+     its own row now and renders for an owner whatever the phone is doing.
+
+     Second, registering can FAIL after connecting (an expired grant, a CSP
+     blocking the SIP socket, no VoIP permission on the app). The bar said
+     "connected", no launcher appeared, and nothing anywhere said why. The
+     failure is now a state of its own, carrying the reason. */
+  const rcFailed = VOICE.rcEnabled && VOICE.rcConnected && VOICE.rcError;
+  const rcBar = !VOICE.rcEnabled
+    ? `<div class="rc-bar">
+         <b>RingCentral is not set up on this server.</b>
+         Set RINGCENTRAL_CLIENT_ID and RINGCENTRAL_CLIENT_SECRET in the
+         environment — until then every rep falls back to ${VOICE.zohoOff ? "copying numbers" : "Zoho"}.
        </div>`
-    : `<div class="rc-bar">
-         <b>Dial from your own RingCentral extension.</b>
-         Sign in once and calls go out as you — your caller ID, your call log.
-         <a class="btn-primary rc-go" href="/api/voice/rc/connect">Connect RingCentral</a>
-       </div>`;
+    : rcFailed
+      ? `<div class="rc-bar">
+           <span class="rc-dot"></span>
+           <b>RingCentral did not register — the dialler is off.</b>
+           ${esc(VOICE.rcError)}
+           <a class="btn-primary rc-go" href="/api/voice/rc/connect">Reconnect</a>
+           <button class="btn-ghost rc-off" id="rc-disconnect">Disconnect</button>
+         </div>`
+      : VOICE.rcConnected
+        ? `<div class="rc-bar on">
+             <span class="rc-dot"></span>
+             RingCentral connected${VOICE.rcExtension ? " · extension " + esc(VOICE.rcExtension) : ""}${
+               VOICE.sandbox ? ` <span class="asg-tag">sandbox — test numbers only</span>` : ""}
+             <button class="btn-ghost rc-off" id="rc-disconnect">Disconnect</button>
+           </div>`
+        : `<div class="rc-bar">
+             <b>Dial from your own RingCentral extension.</b>
+             Sign in once and calls go out as you — your caller ID, your call log.
+             <a class="btn-primary rc-go" href="/api/voice/rc/connect">Connect RingCentral</a>
+           </div>`;
+
+  const zohoBar = !zohoSwitch ? "" : `<div class="rc-bar">
+      <span>Fallback for reps without RingCentral:
+        <b>${VOICE.zohoOff ? "off — they copy the number" : "Zoho"}</b></span>
+      ${zohoSwitch}
+    </div>`;
 
   /* The 30-day strip. This is the whole point of storing days: the shape of
      the last month, rather than one number that resets every midnight. */
@@ -4799,6 +6362,7 @@ function renderCallReport(d) {
 
   el.innerHTML = `
     ${rcBar}
+    ${zohoBar}
     <div class="kpi-strip">
       ${kpiTile(d.isToday ? "Calls today" : "Calls", t.calls.toLocaleString(),
         t.callers === 1 ? "by 1 person" : `by ${t.callers} people`)}
@@ -5362,6 +6926,196 @@ function showUndo(msg, anchorId, ids) {
 }
 
 /* ---------------- boot + events ---------------- */
+/* ---------------- world clocks ----------------
+   Three clocks in the top bar, each with its own time zone. The floor sits
+   in India and rings the US, so "is it a decent hour in Texas?" is asked all
+   day. Click a clock to change its zone; choices live in this browser.
+
+   Everything comes from Intl — the abbreviation (EDT/EST, BST/GMT, IST)
+   and the offset follow daylight saving by themselves. */
+const CLOCK_KEY = "kl_clocks";
+const CLOCK_DEFAULT = ["Asia/Kolkata", "America/New_York", "Europe/London"];
+const CLOCK_COMMON = [
+  ["Asia/Kolkata", "India"], ["America/New_York", "US Eastern"], ["America/Chicago", "US Central"],
+  ["America/Denver", "US Mountain"], ["America/Phoenix", "Arizona"], ["America/Los_Angeles", "US Pacific"],
+  ["America/Anchorage", "Alaska"], ["Pacific/Honolulu", "Hawaii"], ["America/Toronto", "Toronto"],
+  ["America/Vancouver", "Vancouver"], ["Europe/London", "London"], ["Europe/Dublin", "Dublin"],
+  ["Europe/Paris", "Paris"], ["Europe/Berlin", "Berlin"], ["Asia/Dubai", "Dubai"],
+  ["Asia/Kathmandu", "Nepal"], ["Asia/Thimphu", "Bhutan"], ["Asia/Dhaka", "Bangladesh"],
+  ["Asia/Manila", "Manila"], ["Asia/Singapore", "Singapore"], ["Asia/Tokyo", "Tokyo"],
+  ["Australia/Sydney", "Sydney"], ["Pacific/Auckland", "Auckland"], ["UTC", "UTC"],
+];
+
+function clockZones() {
+  try {
+    const z = JSON.parse(localStorage.getItem(CLOCK_KEY) || "null");
+    if (Array.isArray(z) && z.length === 3 && z.every(clockValid)) return z;
+  } catch (e) { /* defaults */ }
+  return CLOCK_DEFAULT.slice();
+}
+function clockValid(tz) {
+  try { new Intl.DateTimeFormat("en-US", { timeZone: tz }); return true; } catch (e) { return false; }
+}
+/* "EDT", "BST", "IST" where a locale has a real abbreviation; otherwise the
+   city — never a bare "GMT+5:30", which reads as a formula. */
+function clockAbbr(tz, d = new Date()) {
+  for (const loc of ["en-US", "en-GB", "en-IN", "en-AU", "en-NZ"]) {
+    try {
+      const n = new Intl.DateTimeFormat(loc, { timeZone: tz, timeZoneName: "short" })
+        .formatToParts(d).find((p) => p.type === "timeZoneName")?.value || "";
+      if (/^[A-Z]{2,5}$/.test(n) && !/^(GMT|UTC)$/.test(n) || (tz === "UTC" && n)) return n;
+      /* London and Dublin in winter really are "GMT" — only a zero offset earns it */
+      if (n === "GMT" && clockOffset(tz, d) === "+0:00") return n;
+    } catch (e) { /* next */ }
+  }
+  return (CLOCK_COMMON.find(([z]) => z === tz)?.[1] || tz.split("/").pop().replace(/_/g, " "));
+}
+function clockOffset(tz, d = new Date()) {
+  try {
+    const n = new Intl.DateTimeFormat("en-US", { timeZone: tz, timeZoneName: "longOffset" })
+      .formatToParts(d).find((p) => p.type === "timeZoneName")?.value || "";
+    const m = n.match(/GMT([+-])(\d{2}):(\d{2})/);
+    if (!m) return "+0:00";
+    return `${m[1]}${+m[2]}:${m[3]}`;
+  } catch (e) { return ""; }
+}
+function clockName(tz) {
+  return CLOCK_COMMON.find(([z]) => z === tz)?.[1] || tz.split("/").pop().replace(/_/g, " ");
+}
+
+function clocksPaint() {
+  const box = $("clocks");
+  if (!box) return;
+  const now = new Date();
+  const zones = clockZones();
+  if (box.children.length !== zones.length) {
+    box.innerHTML = zones.map((_, i) => `<button type="button" class="clock" data-clock="${i}"
+      aria-haspopup="listbox"><span class="clock-l"></span><b class="clock-t"></b></button>`).join("");
+  }
+  zones.forEach((tz, i) => {
+    const btn = box.children[i];
+    const time = new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false }).format(now);
+    const day = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short" }).format(now);
+    const label = `${clockAbbr(tz, now)} (${clockOffset(tz, now)})`;
+    btn.querySelector(".clock-l").textContent = label;
+    btn.querySelector(".clock-t").textContent = time;
+    btn.title = `${clockName(tz)} · ${day} ${time} — click to change`;
+  });
+}
+
+function clockPicker(i, anchor) {
+  document.getElementById("clock-pop")?.remove();
+  const zones = clockZones();
+  let all = [];
+  try { all = Intl.supportedValuesOf("timeZone"); } catch (e) { all = CLOCK_COMMON.map(([z]) => z); }
+  const pop = document.createElement("div");
+  pop.id = "clock-pop";
+  pop.className = "clock-pop";
+  pop.setAttribute("role", "dialog");
+  pop.setAttribute("aria-label", "Choose a time zone");
+  pop.innerHTML = `<input type="search" class="clock-q" placeholder="Search a city or zone" aria-label="Search time zones">
+    <div class="clock-list" role="listbox"></div>`;
+  document.body.appendChild(pop);
+  const r = anchor.getBoundingClientRect();
+  pop.style.top = r.bottom + 8 + "px";
+  pop.style.left = Math.max(8, Math.min(r.left, innerWidth - 300)) + "px";
+  const list = pop.querySelector(".clock-list"), q = pop.querySelector(".clock-q");
+  const row = (tz, label) => `<button type="button" role="option" data-tz="${esc(tz)}" aria-selected="${tz === zones[i]}">
+    <span>${esc(label)}</span><em>${esc(clockAbbr(tz))} ${esc(clockOffset(tz))}</em></button>`;
+  const paint = () => {
+    const t = q.value.trim().toLowerCase();
+    const common = CLOCK_COMMON.filter(([z, n]) => !t || n.toLowerCase().includes(t) || z.toLowerCase().includes(t));
+    const rest = t ? all.filter((z) => z.toLowerCase().replace(/_/g, " ").includes(t) && !CLOCK_COMMON.some(([c]) => c === z)).slice(0, 40) : [];
+    list.innerHTML = (common.length ? `<div class="clock-sec">Common</div>${common.map(([z, n]) => row(z, n)).join("")}` : "")
+      + (rest.length ? `<div class="clock-sec">All time zones</div>${rest.map((z) => row(z, z.replace(/_/g, " "))).join("")}` : "")
+      || `<p class="clock-none">No time zone matches “${esc(q.value)}”.</p>`;
+  };
+  paint();
+  q.focus();
+  q.addEventListener("input", paint);
+  list.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-tz]");
+    if (!b) return;
+    const next = clockZones();
+    next[i] = b.dataset.tz;
+    try { localStorage.setItem(CLOCK_KEY, JSON.stringify(next)); } catch (err) { /* this session only */ }
+    pop.remove();
+    clocksPaint();
+  });
+  const close = (e) => {
+    if (e.type === "keydown" && e.key !== "Escape") return;
+    if (e.type === "mousedown" && (pop.contains(e.target) || anchor.contains(e.target))) return;
+    pop.remove();
+    document.removeEventListener("mousedown", close, true);
+    document.removeEventListener("keydown", close, true);
+  };
+  document.addEventListener("mousedown", close, true);
+  document.addEventListener("keydown", close, true);
+}
+
+function clocksWire() {
+  clocksPaint();
+  $("clocks")?.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-clock]");
+    if (b) clockPicker(+b.dataset.clock, b);
+  });
+  /* tick on the minute boundary, then every minute — a clock that shows
+     minutes need not repaint every second */
+  setTimeout(() => { clocksPaint(); setInterval(clocksPaint, 60000); }, 60000 - (Date.now() % 60000) + 50);
+}
+
+/* ---------------- the sidebar: groups and the icon rail ----------------
+   Sections fold. Which are open is remembered per browser; the section that
+   holds the current page is always opened, so you can see where you are.
+   The rail (sidebar collapsed to icons) is remembered too. */
+const NAV_KEY = "kl_nav_open", RAIL_KEY = "kl_nav_rail";
+function navOpenSet() {
+  try { return new Set(JSON.parse(localStorage.getItem(NAV_KEY) || '["leads"]')); }
+  catch (e) { return new Set(["leads"]); }
+}
+function navSetOpen(group, open, remember = true) {
+  const g = document.querySelector(`.nav-group[data-group="${group}"]`);
+  if (!g) return;
+  g.classList.toggle("open", open);
+  g.querySelector(".nav-group-h")?.setAttribute("aria-expanded", String(open));
+  if (!remember) return;
+  const s = navOpenSet();
+  if (open) s.add(group); else s.delete(group);
+  try { localStorage.setItem(NAV_KEY, JSON.stringify([...s])); } catch (e) { /* session only */ }
+}
+function navReveal(tab) {
+  const item = document.querySelector(`.nav-item[data-tab="${tab}"]`);
+  const g = item?.closest(".nav-group");
+  if (g) navSetOpen(g.dataset.group, true, false);
+  document.querySelectorAll(".nav-group").forEach((x) =>
+    x.classList.toggle("has-active", !!x.querySelector(".nav-item.active")));
+}
+function navWire() {
+  const open = navOpenSet();
+  document.querySelectorAll(".nav-group").forEach((g) => navSetOpen(g.dataset.group, open.has(g.dataset.group), false));
+  document.querySelectorAll(".nav-group-h").forEach((h) => h.addEventListener("click", () => {
+    const g = h.closest(".nav-group");
+    /* in the rail a section header has nowhere to unfold into: go to its
+       first page instead */
+    if ($("app-main")?.classList.contains("rail")) {
+      const first = [...g.querySelectorAll(".nav-item")].find((b) => !b.classList.contains("hidden"));
+      if (first) setTab(first.dataset.tab);
+      return;
+    }
+    navSetOpen(g.dataset.group, !g.classList.contains("open"));
+  }));
+  const setRail = (on) => {
+    $("app-main")?.classList.toggle("rail", on);
+    const b = $("nav-collapse");
+    if (b) { b.title = on ? "Expand the sidebar" : "Collapse the sidebar"; b.setAttribute("aria-pressed", String(on)); }
+    try { localStorage.setItem(RAIL_KEY, on ? "1" : ""); } catch (e) { /* fine */ }
+  };
+  let rail = false;
+  try { rail = !!localStorage.getItem(RAIL_KEY); } catch (e) { /* default open */ }
+  setRail(rail);
+  on("nav-collapse", "click", () => setRail(!$("app-main").classList.contains("rail")));
+}
+
 function setTab(tab) {
   // an admin tab reached without the role — a stale deep link, say — lands on
   // Companies instead of an empty pane. The endpoint 403s regardless.
@@ -5373,6 +7127,11 @@ function setTab(tab) {
   $("list-head")?.classList.remove("in-segment");
   document.querySelectorAll(".nav-item").forEach((b) =>
     b.classList.toggle("active", b.dataset.tab === tab));
+  navReveal(tab);
+  /* The four lead tiles count and filter LEADS. On a page that is not a
+     lead list (Dashboard, Call logs, Users…) they are someone else's
+     numbers taking the top of the screen, so they step aside. */
+  $("stats")?.classList.toggle("hidden", !!paneOf(tab));
   $("clear-recents")?.classList.toggle("hidden", !TABS[tab].activity);
   // the board filter is a job-board thing; S.board is kept, so flipping to
   // People and back does not lose the pick
@@ -5386,6 +7145,9 @@ function setTab(tab) {
   /* Leaving the call report stops its polling — a hidden pane refreshing in
      the background is a query every 30 seconds for nobody to read. */
   if (pane !== "calls") stopCallPolling();
+  if (pane !== "dash") dashStopLive();
+  if (pane !== "live") liveStop();
+  if (pane !== "power") pdStop();
   // a countdown running behind another screen would ring somebody unseen
   if (pane !== "camp") { cancelAutoDial(); cancelWrap(); }
   document.querySelector(".list-pane")?.classList.toggle("hidden", wide);
@@ -5671,6 +7433,10 @@ function endTour() {
 
 function startTour() {
   if (tour) return;
+  /* the tour points into every section of the sidebar: unfold them all
+     (and leave the icon rail) so no step is skipped for being folded away */
+  $("app-main")?.classList.remove("rail");
+  document.querySelectorAll(".nav-group").forEach((g) => navSetOpen(g.dataset.group, true, false));
   // open steps stay in: their targets only exist once a lead is clicked
   const steps = TOUR_STEPS.filter((s) => !s.sel || s.open || tourTargets(s));
   const root = document.createElement("div");
@@ -5717,6 +7483,8 @@ function on(id, ev, fn) {
 function wire() {
   document.querySelectorAll(".nav-item").forEach((b) =>
     b.addEventListener("click", () => setTab(b.dataset.tab)));
+  navWire();
+  clocksWire();
   document.querySelectorAll("[data-density]").forEach((b) =>
     b.addEventListener("click", () => setDensity(b.dataset.density)));
   // the KPI tiles are the filter control for the queues they count
@@ -5894,6 +7662,1533 @@ function wire() {
   });
 }
 
+/* ================= Dashboard — RingCentral, read live =================
+
+   The manager's wall: every call on the RingCentral account (inbound too,
+   and calls made from desk phones and the RingCentral app, which our own log
+   never sees), who is on a call right now, and where the calls go.
+
+   Drawn by hand in SVG and HTML like Team activity and Storm watch: no chart
+   library, nothing new for the CSP. Charts are measured at their real width
+   and redrawn on resize, so text stays the size it says it is.
+
+   Colour: incoming / outgoing / missed are --cat-3 / --cat-1 / --cat-8, in
+   that stacking order. Validated (dataviz validator, both themes): green
+   beside red failed colour-blind separation, so missed always sits next to
+   outgoing, never next to incoming. Every chart has a legend and a table
+   view, which the light theme's green needs (2.8:1 on white). */
+
+const DASH = {
+  range: "today", date: "", dept: "", agent: "", number: "",
+  live: false, timer: null, data: null, error: null,
+  tables: new Set(), tips: [], wired: false,
+};
+const DASH_SERIES = [
+  ["incoming", "Incoming", "var(--cat-3)"],
+  ["outgoing", "Outgoing", "var(--cat-1)"],
+  ["missed", "Missed", "var(--cat-8)"],
+];
+/* Call results keep one colour each however the list is filtered — colour
+   follows the result, never its rank. Anything unlisted folds to grey. */
+const DASH_RESULT_SLOT = {
+  "Call connected": 1, "Accepted": 3, "Hang Up": 2, "No Answer": 4, "Busy": 5,
+  "Rejected": 6, "Voicemail": 7, "Missed": 8,
+};
+
+const dashYmd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+function dashSpan() {
+  const now = new Date();
+  if (DASH.date) return { from: DASH.date, to: DASH.date };
+  if (DASH.range === "yesterday") {
+    const y = new Date(now); y.setDate(y.getDate() - 1);
+    return { from: dashYmd(y), to: dashYmd(y) };
+  }
+  if (DASH.range === "week") {
+    const f = new Date(now); f.setDate(f.getDate() - 6);
+    return { from: dashYmd(f), to: dashYmd(now) };
+  }
+  return { from: dashYmd(now), to: dashYmd(now) };
+}
+function dashTz() {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (e) { return ""; }
+}
+
+function dashDur(secs) {
+  if (!secs) return "0m";
+  const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60), s = secs % 60;
+  if (h) return `${h}h ${String(m).padStart(2, "0")}m`;
+  if (m) return `${m}m ${String(s).padStart(2, "0")}s`;
+  return `${s}s`;
+}
+const dashPct = (v) => v == null ? "—" : Math.round(v * 100) + "%";
+const dashN = (n) => (n || 0).toLocaleString();
+function dashPhone(n) {
+  const d = String(n || "").replace(/\D/g, "");
+  const t = d.length === 11 && d[0] === "1" ? d.slice(1) : d;
+  return t.length === 10 ? `(${t.slice(0, 3)}) ${t.slice(3, 6)}-${t.slice(6)}` : String(n || "");
+}
+const dashTotal = (r) => r.incoming + r.outgoing + r.missed;
+/* Clean y-axis ticks: a whole-number step from 1/2/5 × 10ⁿ (2.5 only once the
+   step is ≥ 25), about four of them — so 0/2/4/6/8/10, never 0/3/5/8/10. */
+function dashTicks(v) {
+  const raw = Math.max(1, v) / 4;
+  const p = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * p)
+    .find((s) => s >= raw && Number.isInteger(s)) || 10 * p;
+  const max = Math.max(step, Math.ceil(v / step) * step);
+  const ticks = [];
+  for (let t = 0; t <= max + 1e-9; t += step) ticks.push(t);
+  return { max, ticks };
+}
+const dashTip = (html) => { DASH.tips.push(html); return DASH.tips.length - 1; };
+const dashTipRows = (r) => DASH_SERIES.map(([k, label, c]) =>
+  `<div class="dash-tip-row"><i style="background:${c}"></i>${label}<b>${dashN(r[k])}</b></div>`).join("");
+
+/* ---------- loading ---------- */
+
+async function loadDash(quiet = false) {
+  dashWire();
+  const body = $("dash-body");
+  if (!DASH.data) body.innerHTML = `<div class="dash-empty"><div class="dash-spin"></div>Reading RingCentral…</div>`;
+  else body.classList.add("dash-stale");          // hold the last render, no skeleton flash
+  const { from, to } = dashSpan();
+  const q = new URLSearchParams({ from, to, tz: dashTz(),
+    dept: DASH.dept, agent: DASH.agent, number: DASH.number });
+  /* Dispositions are ours, not RingCentral's: the same local days, turned
+     into instants here, and the agent filter as their extension number. */
+  const start = new Date(from + "T00:00"), end = new Date(to + "T00:00");
+  end.setDate(end.getDate() + 1);
+  const ext = (DASH.data?.filters?.agents || []).find((a) => a.id === DASH.agent)?.ext || "";
+  const dq = new URLSearchParams({ from: start.toISOString(), to: end.toISOString(), ext });
+  const [rcRes, dRes] = await Promise.allSettled([
+    api("/api/voice/rc/dashboard?" + q),
+    api("/api/calls/dispositions?" + dq),
+  ]);
+  if (rcRes.status === "fulfilled") { DASH.data = rcRes.value; DASH.error = null; }
+  else DASH.error = rcRes.reason?.message || String(rcRes.reason);   // keep the last good data on screen
+  if (dRes.status === "fulfilled") { DASH.dispo = dRes.value; DASH.dispoError = null; }
+  else DASH.dispoError = dRes.reason?.message || String(dRes.reason);
+  body.classList.remove("dash-stale");
+  renderDash();
+}
+
+function dashStartLive() {
+  dashStopLive();
+  DASH.timer = setInterval(() => {
+    if (S.tab === "dash" && !document.hidden) loadDash(true);
+  }, 60 * 1000);
+}
+function dashStopLive() {
+  if (DASH.timer) clearInterval(DASH.timer);
+  DASH.timer = null;
+}
+
+function dashWire() {
+  if (DASH.wired) return;
+  DASH.wired = true;
+  try { DASH.live = localStorage.getItem("kl_dash_live") === "1"; } catch (e) { /* default off */ }
+
+  document.querySelectorAll("#dash-pane [data-range]").forEach((b) =>
+    b.addEventListener("click", () => {
+      DASH.range = b.dataset.range; DASH.date = "";
+      $("dash-date").value = "";
+      loadDash();
+    }));
+  on("dash-date", "change", (e) => { DASH.date = e.target.value; loadDash(); });
+  for (const [id, key] of [["dash-dept", "dept"], ["dash-agent", "agent"], ["dash-number", "number"]])
+    on(id, "change", (e) => { DASH[key] = e.target.value; loadDash(); });
+  on("dash-refresh", "click", () => loadDash());
+  on("dash-live", "click", () => {
+    DASH.live = !DASH.live;
+    try { localStorage.setItem("kl_dash_live", DASH.live ? "1" : ""); } catch (e) { /* fine */ }
+    paintDashFilters();
+    if (DASH.live) { dashStartLive(); loadDash(true); } else dashStopLive();
+  });
+
+  const body = $("dash-body"), tip = $("dash-tip");
+  const show = (e) => {
+    const t = e.target.closest?.("[data-tip]");
+    if (!t || !body.contains(t)) return tip.classList.add("hidden");
+    tip.innerHTML = DASH.tips[+t.dataset.tip] || "";
+    tip.classList.remove("hidden");
+    const pane = $("dash-pane").getBoundingClientRect();
+    const r = t.getBoundingClientRect();
+    const x = (e.clientX ?? (r.left + r.width / 2)) - pane.left;
+    const y = (e.clientY ?? r.top) - pane.top;
+    const w = tip.offsetWidth, h = tip.offsetHeight;
+    tip.style.left = Math.min(Math.max(8, x + 14), pane.width - w - 8) + "px";
+    tip.style.top = (y - h - 12 < 8 ? y + 18 : y - h - 12) + "px";
+  };
+  body.addEventListener("mousemove", show);
+  body.addEventListener("focusin", show);
+  body.addEventListener("mouseleave", () => tip.classList.add("hidden"));
+  body.addEventListener("focusout", () => tip.classList.add("hidden"));
+  body.addEventListener("click", (e) => {
+    const mv = e.target.closest("[data-mapview]");
+    if (mv) { DASH.mapView = mv.dataset.mapview; return renderDash(); }
+    const b = e.target.closest("[data-tbl]");
+    if (!b) return;
+    const k = b.dataset.tbl;
+    if (DASH.tables.has(k)) DASH.tables.delete(k); else DASH.tables.add(k);
+    renderDash();
+  });
+  let t;
+  window.addEventListener("resize", () => {
+    clearTimeout(t);
+    t = setTimeout(() => { if (S.tab === "dash" && DASH.data) renderDash(); }, 150);
+  });
+  if (DASH.live) dashStartLive();
+}
+
+function paintDashFilters() {
+  document.querySelectorAll("#dash-pane [data-range]").forEach((b) => {
+    const on_ = !DASH.date && b.dataset.range === DASH.range;
+    b.classList.toggle("on", on_);
+    b.setAttribute("aria-pressed", String(on_));
+  });
+  const di = $("dash-date");
+  if (di) { di.max = dashYmd(new Date()); if (DASH.date) di.value = DASH.date; }
+  const f = DASH.data?.filters;
+  const fill = (id, rows, all, cur) => {
+    const el = $(id);
+    if (!el || !rows) return;
+    el.innerHTML = `<option value="">${all}</option>` + rows.map(([v, l]) =>
+      `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${esc(l)}</option>`).join("");
+    el.closest(".ctl")?.classList.toggle("on", !!cur);
+  };
+  if (f) {
+    fill("dash-dept", f.departments.map((d) => [d, d]), "All departments", DASH.dept);
+    $("dash-dept-wrap")?.classList.toggle("hidden", !f.departments.length);
+    fill("dash-agent", f.agents.map((a) => [a.id, a.ext ? `${a.name} · x${a.ext}` : a.name]), "All agents", DASH.agent);
+    fill("dash-number", f.numbers.map((n) => [n, dashPhone(n)]), "All numbers", DASH.number);
+  }
+  const live = $("dash-live");
+  if (live) live.setAttribute("aria-checked", String(DASH.live));
+}
+
+/* ---------- the page ---------- */
+
+function renderDash() {
+  paintDashFilters();
+  const body = $("dash-body"), d = DASH.data;
+  DASH.tips = [];
+  const sub = $("dash-sub");
+
+  if (!d) {
+    const connect = /connect your ringcentral/i.test(DASH.error || "");
+    if (sub) sub.textContent = "";
+    body.innerHTML = `<div class="dash-empty">
+      <b>${connect ? "Connect RingCentral to see the dashboard" : "The dashboard couldn't load"}</b>
+      <span>${esc(DASH.error || "")}</span>
+      ${connect ? `<a class="btn-primary" href="/api/voice/rc/connect">Connect RingCentral</a>`
+        : `<button class="btn-ghost" onclick="loadDash()">Try again</button>`}</div>`;
+    return;
+  }
+
+  const upd = new Date(d.updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const rangeTxt = d.range.from === d.range.to
+    ? (d.range.from === d.range.today ? "Today"
+      : new Date(d.range.from + "T12:00").toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" }))
+    : `${new Date(d.range.from + "T12:00").toLocaleDateString([], { month: "short", day: "numeric" })} – ${
+        new Date(d.range.to + "T12:00").toLocaleDateString([], { month: "short", day: "numeric" })}`;
+  if (sub) sub.innerHTML = `${esc(rangeTxt)} · updated ${esc(upd)}${DASH.live ? ` <span class="dash-livetag"><i></i>Live</span>` : ""}`
+    + (DASH.error ? ` · <span class="dash-errtag" title="${esc(DASH.error)}">last refresh failed</span>` : "");
+
+  const warn = (d.warnings || []).map((w) => `<div class="dash-warn">${esc(w)}</div>`).join("");
+  body.innerHTML = `${warn}
+    <div class="dash-tiles">${dashTiles(d)}</div>
+    <div class="dash-grid">
+      ${dashCard("hourly", "Hourly call load", "Calls started in each hour", "dash-a-hourly")}
+      ${dashCard("week", "Last 7 days", "Ending " + (d.range.to === d.range.today ? "today" : d.range.to), "dash-a-week")}
+      ${dashCard("agents", "Agent stats", "Calls, connects and talk time per person", "dash-a-agents")}
+      ${dashCard("results", "Call results", "How calls ended", "dash-a-results")}
+      ${dashCard("numbers", "Number stats", "Calls per company number", "dash-a-numbers")}
+      ${dashCard("dispo", "Dispositions", "What reps logged after their calls", "dash-a-dispo")}
+      ${dashCard("dlog", "Disposition log", dashDlogSub(), "dash-a-dlog", "", false)}
+      ${dashCard("map", "Where we're calling", "By the other party's phone number", "dash-a-map", dashMapSeg())}
+    </div>`;
+
+  const plots = {
+    hourly: dashHourly, week: dashWeek, results: dashResults,
+    agents: dashAgents, numbers: dashNumbers, map: dashMap,
+    dispo: dashDispo, dlog: dashDlog,
+  };
+  for (const [k, fn] of Object.entries(plots)) {
+    const el = body.querySelector(`[data-plot="${k}"]`);
+    if (el) el.innerHTML = fn(d, el.clientWidth || 600, DASH.tables.has(k));
+  }
+}
+
+function dashCard(key, title, sub, cls = "", extra = "", tableToggle = true) {
+  const t = DASH.tables.has(key);
+  return `<section class="dash-card ${cls}">
+    <header><div><h3>${esc(title)}</h3><span>${esc(sub)}</span></div>
+      <div class="dash-card-tools">${extra}${tableToggle ? `<button class="dash-tbl" data-tbl="${key}" aria-pressed="${t}"
+        title="${t ? "Show the chart" : "Show the numbers as a table"}">${t ? "Chart" : "Table"}</button>` : ""}</div></header>
+    <div class="dash-plot" data-plot="${key}"></div></section>`;
+}
+
+function dashLegend() {
+  return `<div class="dash-legend">${DASH_SERIES.map(([, label, c]) =>
+    `<span><i style="background:${c}"></i>${label}</span>`).join("")}</div>`;
+}
+
+/* ---------- tiles ---------- */
+
+const DASH_IC = {
+  in: "M16 3h5v5M21 3l-6 6M5 4h3.5l1.7 4.3-2.1 1.3a9.5 9.5 0 0 0 4.3 4.3l1.3-2.1 4.3 1.7V17a2 2 0 0 1-2 2A14 14 0 0 1 3 6a2 2 0 0 1 2-2z",
+  out: "M21 8V3h-5M15 9l6-6M5 4h3.5l1.7 4.3-2.1 1.3a9.5 9.5 0 0 0 4.3 4.3l1.3-2.1 4.3 1.7V17a2 2 0 0 1-2 2A14 14 0 0 1 3 6a2 2 0 0 1 2-2z",
+  miss: "M16 3l5 5M21 3l-5 5M5 4h3.5l1.7 4.3-2.1 1.3a9.5 9.5 0 0 0 4.3 4.3l1.3-2.1 4.3 1.7V17a2 2 0 0 1-2 2A14 14 0 0 1 3 6a2 2 0 0 1 2-2z",
+  all: "M5 4h3.5l1.7 4.3-2.1 1.3a9.5 9.5 0 0 0 4.3 4.3l1.3-2.1 4.3 1.7V17a2 2 0 0 1-2 2A14 14 0 0 1 3 6a2 2 0 0 1 2-2z",
+  people: "M16 20v-1.5a3.5 3.5 0 0 0-3.5-3.5h-5A3.5 3.5 0 0 0 4 18.5V20M10 11.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM20 20v-1.5a3.5 3.5 0 0 0-2.6-3.4M15.5 4.6a3.5 3.5 0 0 1 0 6.8",
+};
+const dashIc = (d) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`;
+
+function dashTiles(d) {
+  const k = d.kpi, tot = k.total.calls || 0;
+  const share = (n) => tot ? Math.max(n ? 2 : 0, Math.round((n / tot) * 100)) : 0;
+  const tile = (cls, ic, label, value, unit, stats, meter) => `
+    <div class="dash-tile ${cls}">
+      <div class="dash-tile-top"><span class="dash-tile-l">${label}</span><span class="dash-tile-ic">${dashIc(ic)}</span></div>
+      <div class="dash-tile-v">${value}<small>${unit}</small></div>
+      <div class="dash-tile-s">${stats}</div>
+      ${meter}
+    </div>`;
+  const meter = (pct, color, title) =>
+    `<div class="dash-meter" title="${esc(title)}"><i style="width:${pct}%;background:${color}"></i></div>`;
+
+  const a = d.agents;
+  const agentMeter = a && a.total
+    ? `<div class="dash-meter dash-meter-split" title="${a.onCall} on a call · ${a.online - a.onCall} available · ${a.offline} offline">
+         <i style="width:${(a.onCall / a.total) * 100}%;background:var(--cat-1)"></i>
+         <i style="width:${((a.online - a.onCall) / a.total) * 100}%;background:var(--good)"></i>
+         <i style="width:${(a.offline / a.total) * 100}%;background:var(--ink-3);opacity:.45"></i></div>`
+    : `<div class="dash-meter"></div>`;
+
+  return [
+    tile("in", DASH_IC.in, "Incoming", dashN(k.incoming.calls), "calls",
+      `<span><b>${dashDur(k.incoming.secs)}</b> talk</span><span><b>${dashPct(k.answerRate)}</b> answered</span>`,
+      meter(share(k.incoming.calls), "var(--cat-3)", `${share(k.incoming.calls)}% of all calls`)),
+    tile("out", DASH_IC.out, "Outgoing", dashN(k.outgoing.calls), "calls",
+      `<span><b>${dashDur(k.outgoing.secs)}</b> talk</span><span><b>${dashPct(k.connectRate)}</b> connected</span>`,
+      meter(share(k.outgoing.calls), "var(--cat-1)", `${share(k.outgoing.calls)}% of all calls`)),
+    tile("miss", DASH_IC.miss, "Missed", dashN(k.missed.calls), "calls",
+      `<span>inbound calls nobody picked up</span>`,
+      meter(share(k.missed.calls), "var(--cat-8)", `${share(k.missed.calls)}% of all calls`)),
+    tile("all", DASH_IC.all, "Total calls", dashN(tot), "calls",
+      `<span><b>${dashDur(k.total.secs)}</b> total</span><span><b>${k.avgTalk ? dashDur(k.avgTalk) : "—"}</b> avg talk</span>`,
+      meter(tot ? 100 : 0, "var(--accent)", "")),
+    a ? tile("agents", DASH_IC.people, "Agents", dashN(a.online), `of ${a.total} online`,
+      `<span><b>${a.onCall}</b> on a call</span><span><b>${a.offline}</b> offline</span>`, agentMeter)
+      : tile("agents", DASH_IC.people, "Agents", "—", "", `<span>presence unavailable</span>`, `<div class="dash-meter"></div>`),
+  ].join("");
+}
+
+/* ---------- charts ---------- */
+
+const dashNone = (msg = "No calls in this period") => `<div class="dash-none">${msg}</div>`;
+function dashTable(head, rows) {
+  return `<div class="dash-tablewrap"><table class="dash-table"><thead><tr>${head.map((h, i) =>
+    `<th${i ? ' class="n"' : ""}>${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows.map((r) =>
+    `<tr>${r.map((c, i) => `<td${i ? ' class="n"' : ""}>${c}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+}
+
+/* Hourly: three 2px lines over the working day, a crosshair band per hour. */
+function dashHourly(d, W, table) {
+  const rows = d.hourly;
+  const any = rows.filter((r) => dashTotal(r));
+  if (!any.length) return dashNone();
+  const lo = Math.min(8, any[0].h), hi = Math.max(18, any[any.length - 1].h);
+  const pts = rows.filter((r) => r.h >= lo && r.h <= hi);
+  const hl = (h) => new Date(2000, 0, 1, h).toLocaleTimeString([], { hour: "numeric" });
+  if (table) return dashTable(["Hour", "Incoming", "Outgoing", "Missed", "Total"],
+    pts.map((r) => [hl(r.h), dashN(r.incoming), dashN(r.outgoing), dashN(r.missed), `<b>${dashN(dashTotal(r))}</b>`]));
+
+  const H = 230, L = 34, R = 14, T = 12, B = 26;
+  const { max, ticks } = dashTicks(Math.max(...pts.map((r) => Math.max(r.incoming, r.outgoing, r.missed))));
+  const x = (i) => L + (pts.length === 1 ? (W - L - R) / 2 : (i * (W - L - R)) / (pts.length - 1));
+  const y = (v) => T + (H - T - B) * (1 - v / max);
+  const grid = ticks.map((v) =>
+    `<line class="dash-grid-l" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/>
+      <text class="dash-ax" x="${L - 8}" y="${y(v) + 3.5}" text-anchor="end">${dashN(v)}</text>`).join("");
+  /* Today, the lines stop at the current hour: an afternoon that has not
+     happened yet is not an afternoon with no calls. The axis keeps the whole
+     working day so the morning reads in context. */
+  const nowH = d.range.from === d.range.today && d.range.to === d.range.today
+    ? new Date().getHours() : 99;
+  const drawn = pts.filter((r) => r.h <= nowH);
+  const step = Math.ceil(pts.length / Math.max(2, Math.floor((W - L - R) / 56)));
+  const xlab = pts.map((r, i) => i % step ? "" :
+    `<text class="dash-ax" x="${x(i)}" y="${H - 6}" text-anchor="middle">${esc(hl(r.h))}</text>`).join("");
+  const line = (k) => drawn.map((r, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(r[k]).toFixed(1)}`).join("");
+  const lines = DASH_SERIES.map(([k, , c]) =>
+    `<path class="dash-line" d="${line(k)}" stroke="${c}"/>`).join("");
+  /* the newest point of each line gets its end-dot, ringed in the surface */
+  const ends = drawn.length ? DASH_SERIES.map(([k, , c]) =>
+    `<circle class="dash-end" cx="${x(drawn.length - 1)}" cy="${y(drawn[drawn.length - 1][k])}" r="4" fill="${c}"/>`).join("") : "";
+  const band = (W - L - R) / Math.max(1, pts.length - 1);
+  const hits = drawn.map((r, i) => {
+    const tip = dashTip(`<div class="dash-tip-h">${esc(hl(r.h))} – ${esc(hl(r.h + 1))}</div>${dashTipRows(r)}`);
+    return `<g class="dash-hit" data-tip="${tip}" tabindex="0">
+      <rect x="${x(i) - band / 2}" y="${T}" width="${band}" height="${H - T - B}" fill="transparent"/>
+      <line class="dash-cross" x1="${x(i)}" x2="${x(i)}" y1="${T}" y2="${H - B}"/>
+      ${DASH_SERIES.map(([k, , c]) => `<circle class="dash-dot" cx="${x(i)}" cy="${y(r[k])}" r="4" fill="${c}"/>`).join("")}
+    </g>`;
+  }).join("");
+  return `${dashLegend()}<svg class="dash-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img"
+    aria-label="Calls per hour: incoming, outgoing and missed">${grid}${xlab}${lines}${ends}${hits}</svg>`;
+}
+
+/* 7 days: stacked columns, incoming at the base, a 2px gap between segments,
+   the total on the cap. Today's label is the one in bold. */
+function dashWeek(d, W, table) {
+  const rows = d.week;
+  const dl = (r) => new Date(r.date + "T12:00").toLocaleDateString([], { weekday: "short", day: "numeric" });
+  if (table) return dashTable(["Day", "Incoming", "Outgoing", "Missed", "Total"],
+    rows.map((r) => [esc(dl(r)), dashN(r.incoming), dashN(r.outgoing), dashN(r.missed), `<b>${dashN(dashTotal(r))}</b>`]));
+  if (!rows.some(dashTotal)) return dashNone("No calls in the last 7 days");
+
+  const H = 230, L = 34, R = 8, T = 18, B = 26, GAP = 2;
+  const { max, ticks } = dashTicks(Math.max(...rows.map(dashTotal)));
+  const slot = (W - L - R) / rows.length;
+  const bw = Math.min(24, slot * 0.56);
+  const y = (v) => T + (H - T - B) * (1 - v / max);
+  const grid = ticks.map((v) =>
+    `<line class="dash-grid-l" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/>
+      <text class="dash-ax" x="${L - 8}" y="${y(v) + 3.5}" text-anchor="end">${dashN(v)}</text>`).join("");
+  const cols = rows.map((r, i) => {
+    const cx = L + slot * i + slot / 2, x0 = cx - bw / 2;
+    let base = H - B;
+    const segs = DASH_SERIES.filter(([k]) => r[k]).map(([k, , c], j, arr) => {
+      const h = Math.max(1, (H - T - B) * (r[k] / max) - (j ? GAP : 0));
+      const top = base - (j ? GAP : 0) - h;
+      const last = j === arr.length - 1;
+      base = top;
+      /* only the cap is rounded: square at the baseline, 4px at the data end */
+      return last
+        ? `<path d="M${x0} ${top + h}V${top + 4}q0 -4 4 -4h${bw - 8}q4 0 4 4V${top + h}z" fill="${c}"/>`
+        : `<rect x="${x0}" y="${top}" width="${bw}" height="${h}" fill="${c}"/>`;
+    }).join("");
+    const tot = dashTotal(r);
+    const isToday = r.date === d.range.today;
+    const tip = dashTip(`<div class="dash-tip-h">${esc(new Date(r.date + "T12:00").toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" }))}</div>${dashTipRows(r)}`);
+    return `<g class="dash-hit" data-tip="${tip}" tabindex="0">
+      <rect x="${L + slot * i}" y="${T - 14}" width="${slot}" height="${H - T - B + 14}" fill="transparent"/>
+      ${segs}
+      ${tot ? `<text class="dash-cap" x="${cx}" y="${y(tot) - 6}" text-anchor="middle">${dashN(tot)}</text>` : ""}
+      <text class="dash-ax${isToday ? " today" : ""}" x="${cx}" y="${H - 6}" text-anchor="middle">${esc(dl(r))}</text>
+    </g>`;
+  }).join("");
+  return `${dashLegend()}<svg class="dash-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img"
+    aria-label="Calls per day for the last seven days">${grid}${cols}</svg>`;
+}
+
+/* Results: a donut, ≤6 slices with a 2px surface gap, the total in the hole,
+   and a legend carrying count and share so nothing depends on the colour. */
+function dashResults(d, W, table) {
+  const rows = d.results || [];
+  const tot = rows.reduce((s, r) => s + r.count, 0);
+  if (!tot) return dashNone();
+  const color = (r) => r.other || !DASH_RESULT_SLOT[r.label] ? "var(--ink-3)" : `var(--cat-${DASH_RESULT_SLOT[r.label]})`;
+  if (table) return dashTable(["Result", "Calls", "Share"],
+    rows.map((r) => [esc(r.label), dashN(r.count), dashPct(r.count / tot)]));
+
+  const S_ = 168, C = S_ / 2, RO = 76, RI = 52;
+  let a0 = -Math.PI / 2;
+  const gap = rows.length > 1 ? 0.018 : 0;
+  const arcs = rows.map((r) => {
+    const a = (r.count / tot) * Math.PI * 2;
+    const s = a0 + gap / 2, e = a0 + a - gap / 2;
+    a0 += a;
+    const big = e - s > Math.PI ? 1 : 0;
+    const p = (rad, ang) => `${(C + rad * Math.cos(ang)).toFixed(2)} ${(C + rad * Math.sin(ang)).toFixed(2)}`;
+    const path = rows.length === 1
+      ? `M${C} ${C - RO}a${RO} ${RO} 0 1 1 -0.01 0zM${C} ${C - RI}a${RI} ${RI} 0 1 0 0.01 0z`
+      : `M${p(RO, s)}A${RO} ${RO} 0 ${big} 1 ${p(RO, e)}L${p(RI, e)}A${RI} ${RI} 0 ${big} 0 ${p(RI, s)}z`;
+    const tip = dashTip(`<div class="dash-tip-h">${esc(r.label)}</div><div class="dash-tip-row"><i style="background:${color(r)}"></i>${dashN(r.count)} calls<b>${dashPct(r.count / tot)}</b></div>`);
+    return `<path class="dash-arc" d="${path}" fill="${color(r)}" fill-rule="evenodd" data-tip="${tip}" tabindex="0"/>`;
+  }).join("");
+  const legend = rows.map((r) => `<li><i style="background:${color(r)}"></i><span>${esc(r.label)}</span>
+    <b>${dashN(r.count)}</b><em>${dashPct(r.count / tot)}</em></li>`).join("");
+  return `<div class="dash-donut">
+    <svg width="${S_}" height="${S_}" viewBox="0 0 ${S_} ${S_}" role="img" aria-label="Calls by result">${arcs}
+      <text class="dash-donut-v" x="${C}" y="${C + 2}" text-anchor="middle">${dashN(tot)}</text>
+      <text class="dash-donut-l" x="${C}" y="${C + 18}" text-anchor="middle">calls</text></svg>
+    <ul class="dash-rlegend">${legend}</ul></div>`;
+}
+
+/* Dispositions: one series, so one colour — a bar per disposition, longest
+   first, count and share at the end. Logged by reps in the dialler's wrap-up
+   (POST /api/leads/:id/disposition), so this is OUR data, not RingCentral's;
+   it only knows calls wrapped up in Karma Connect. */
+function dashDispo(d, W, table) {
+  if (DASH.dispoError) return dashNone("Couldn't load dispositions — " + esc(DASH.dispoError));
+  const rows = DASH.dispo?.counts || [];
+  const tot = rows.reduce((s, r) => s + r.count, 0);
+  if (!tot) return `<div class="dash-none dash-none-tall">No dispositions logged in this period.<br>
+    <span class="dash-mute">They're recorded when a rep picks one after a call in the dialler.</span></div>`;
+  if (table) return dashTable(["Disposition", "Calls", "Share"],
+    rows.map((r) => [esc(r.disposition), dashN(r.count), dashPct(r.count / tot)]));
+  const max = rows[0].count;
+  return `<div class="dash-rows dash-dispos">${rows.map((r) => {
+    const tip = dashTip(`<div class="dash-tip-h">${esc(r.disposition)}</div>
+      <div class="dash-tip-row">${dashN(r.count)} call${r.count === 1 ? "" : "s"}<b>${dashPct(r.count / tot)}</b></div>`);
+    return `<div class="dash-row" data-tip="${tip}" tabindex="0">
+      <span class="dash-who"><b>${esc(r.disposition)}</b></span>
+      <span class="dash-track"><div class="dash-bar"><i style="flex:0 0 ${Math.max(1.5, (r.count / max) * 100)}%;background:var(--accent)"></i></div></span>
+      <span class="n"><b>${dashN(r.count)}</b></span>
+      <span class="n dash-mute">${dashPct(r.count / tot)}</span></div>`;
+  }).join("")}</div>`;
+}
+
+function dashDlogSub() {
+  const t = DASH.dispo?.total || 0;
+  if (!t) return "Every disposition, newest first";
+  return t > 200 ? `Latest 200 of ${dashN(t)}` : `${dashN(t)} logged, newest first`;
+}
+
+/* The log itself: a table is the chart here — who, which lead, what, when. */
+function dashDlog() {
+  if (DASH.dispoError) return dashNone("Couldn't load the disposition log — " + esc(DASH.dispoError));
+  const rows = DASH.dispo?.log || [];
+  if (!rows.length) return `<div class="dash-none dash-none-tall">Nothing logged yet for this period.</div>`;
+  const oneDay = DASH.data && DASH.data.range.from === DASH.data.range.to;
+  const when = (at) => {
+    const t = new Date(at);
+    const time = t.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    return oneDay ? time : t.toLocaleDateString([], { weekday: "short", day: "numeric" }) + " · " + time;
+  };
+  const line = (r) => !r.onCall ? `<span class="dash-mute">no call</span>`
+    : [({ connected: "Connected", "no-answer": "No answer", busy: "Busy", failed: "Failed",
+      cancelled: "Cancelled", placed: "Placed" })[r.outcome] || r.outcome || "",
+    r.seconds ? dashDur(r.seconds) : ""].filter(Boolean).map(esc).join(" · ");
+  return `<div class="dash-tablewrap dash-dlog"><table class="dash-table">
+    <thead><tr><th>When</th><th>Agent</th><th>Lead</th><th>Disposition</th><th>Line</th><th>Note</th></tr></thead>
+    <tbody>${rows.map((r) => `<tr>
+      <td class="dash-nowrap">${esc(when(r.at))}</td>
+      <td class="dash-nowrap">${esc(r.name)}</td>
+      <td>${esc(r.lead_name || "—")}</td>
+      <td><span class="dash-chip">${esc(r.disposition)}</span></td>
+      <td class="dash-nowrap">${line(r)}</td>
+      <td class="dash-note">${esc(r.note || "")}</td></tr>`).join("")}</tbody></table></div>`;
+}
+
+/* A horizontal stacked bar per row, as HTML: names stay horizontal and
+   readable however many people there are — the rotated labels in the
+   screenshot this replaces are the first thing people complain about. */
+function dashBars(rows, max) {
+  return rows.map((r) => {
+    const tot = dashTotal(r);
+    const segs = DASH_SERIES.filter(([k]) => r[k]).map(([k, , c]) =>
+      `<i style="flex:${r[k]} 0 0;background:${c}"></i>`).join("");
+    return { tot, html: `<div class="dash-bar" style="width:${max ? Math.max(tot ? 1.5 : 0, (tot / max) * 100) : 0}%">${segs}</div>` };
+  });
+}
+
+function dashAgents(d, W, table) {
+  const live = new Map((d.agents?.list || []).map((a) => [a.id, a]));
+  const rows = d.byAgent.map((r) => ({ ...r, live: live.get(r.id) }));
+  /* People who are signed in but have made no calls belong on this board:
+     an empty row is the most useful thing on it. */
+  const seen = new Set(rows.map((r) => r.id));
+  for (const a of d.agents?.list || [])
+    if (!seen.has(a.id)) rows.push({ id: a.id, name: a.name, ext: a.ext, incoming: 0, outgoing: 0,
+      missed: 0, connected: 0, talkSecs: 0, live: a });
+  if (!rows.length) return dashNone("No agents yet");
+  const status = (a) => !a ? ["", "Unknown"] : a.onCall ? ["oncall", "On a call"]
+    : a.status === "Offline" ? ["off", "Offline"] : ["avail", a.status === "Busy" ? "Busy" : "Available"];
+  if (table) return dashTable(["Agent", "Status", "Incoming", "Outgoing", "Missed", "Connected", "Talk time"],
+    rows.map((r) => [esc(r.name) + (r.ext ? ` <span class="dash-mute">x${esc(r.ext)}</span>` : ""), esc(status(r.live)[1]),
+      dashN(r.incoming), dashN(r.outgoing), dashN(r.missed), dashN(r.connected), dashDur(r.talkSecs)]));
+
+  const max = Math.max(...rows.map(dashTotal), 1);
+  const bars = dashBars(rows, max);
+  return `${dashLegend()}<div class="dash-rows dash-agents">
+    <div class="dash-rowh"><span>Agent</span><span></span><span class="n">Calls</span><span class="n">Connected</span><span class="n">Talk</span></div>
+    ${rows.map((r, i) => {
+      const [cls, label] = status(r.live);
+      const tip = dashTip(`<div class="dash-tip-h">${esc(r.name)}${r.ext ? " · x" + esc(r.ext) : ""}</div>${dashTipRows(r)}
+        <div class="dash-tip-row dash-tip-sep">Talk time<b>${dashDur(r.talkSecs)}</b></div>`);
+      return `<div class="dash-row${bars[i].tot ? "" : " idle"}" data-tip="${tip}" tabindex="0">
+        <span class="dash-who"><i class="dash-pres ${cls}" title="${esc(label)}"></i><b>${esc(r.name)}</b>${r.ext ? `<em>x${esc(r.ext)}</em>` : ""}</span>
+        <span class="dash-track">${bars[i].html}</span>
+        <span class="n"><b>${dashN(bars[i].tot)}</b></span>
+        <span class="n">${dashN(r.connected)}</span>
+        <span class="n">${dashDur(r.talkSecs)}</span>
+      </div>`;
+    }).join("")}</div>`;
+}
+
+function dashNumbers(d, W, table) {
+  const rows = d.byNumber || [];
+  if (!rows.length) return dashNone();
+  const label = (r) => r.other ? "Other numbers" : dashPhone(r.number);
+  if (table) return dashTable(["Number", "Incoming", "Outgoing", "Missed", "Total"],
+    rows.map((r) => [esc(label(r)), dashN(r.incoming), dashN(r.outgoing), dashN(r.missed), `<b>${dashN(dashTotal(r))}</b>`]));
+  const max = Math.max(...rows.map(dashTotal), 1);
+  const bars = dashBars(rows, max);
+  return `${dashLegend()}<div class="dash-rows dash-nums">${rows.map((r, i) => {
+    const tip = dashTip(`<div class="dash-tip-h">${esc(label(r))}</div>${dashTipRows(r)}`);
+    return `<div class="dash-row" data-tip="${tip}" tabindex="0">
+      <span class="dash-who"><b class="dash-num">${esc(label(r))}</b></span>
+      <span class="dash-track">${bars[i].html}</span>
+      <span class="n"><b>${dashN(bars[i].tot)}</b></span></div>`;
+  }).join("")}</div>`;
+}
+
+/* The map card: the world by default, with US & Canada by state/province a
+   click away. Both are shaded on one sequential hue — more calls, deeper
+   blue — in five classes, with the scale shown; a place with no calls stays
+   a quiet outline. */
+const DASH_STEPS = [22, 40, 58, 78, 100];
+/* Land with no calls: a faint ink tint rather than --surface-2, which on the
+   light theme is one shade off white and makes the continents disappear. */
+const DASH_LAND = "color-mix(in srgb, var(--ink) 8%, var(--surface))";
+const dashShade = (c) => c < 0 ? DASH_LAND
+  : `color-mix(in srgb, var(--cat-1) ${DASH_STEPS[c]}%, var(--surface-2))`;
+const dashClass = (n, max) => !n ? -1 : Math.min(4, Math.floor(((n - 1) / Math.max(1, max)) * 5));
+
+function dashMap(d, W, table) {
+  return (DASH.mapView || "world") === "na" ? dashNaMap(d, W, table) : dashWorldMap(d, W, table);
+}
+function dashMapSeg() {
+  const view = DASH.mapView || "world";
+  const b = (v, label) => `<button data-mapview="${v}" class="${view === v ? "on" : ""}" aria-pressed="${view === v}">${label}</button>`;
+  return `<div class="dash-seg dash-mapseg" role="group" aria-label="Map">${b("world", "World")}${b("na", "US &amp; Canada")}</div>`;
+}
+
+/* The world: Natural Earth countries, Equal Earth projection (world-geo.js).
+   Tibet is its own region, drawn over China with its own outline, tint and
+   a "Tibet" label that is always on — see build-world-geo.mjs. */
+function dashWorldMap(d, W, table) {
+  const g = window.WORLD_GEO;
+  const rows = (d.byCountry || []).slice().sort((a, b) => b.count - a.count);
+  const nameOf = (c) => g?.meta?.[c]?.name || c;
+  if (table || !g) {
+    if (!rows.length) return dashNone("No calls with a recognisable country in this period");
+    return dashTable(["Country", "Calls"], rows.map((r) => [esc(nameOf(r.code)), dashN(r.count)]));
+  }
+  const max = rows[0]?.count || 0;
+  const by = new Map(rows.map((r) => [r.code, r.count]));
+  const shapes = (g.order || Object.keys(g.shapes)).map((code) => {
+    const n = by.get(code) || 0, c = dashClass(n, max);
+    const tibet = code === "TIB";
+    const fill = tibet && !n ? "color-mix(in srgb, var(--gold) 30%, var(--surface))" : dashShade(c);
+    const tip = dashTip(`<div class="dash-tip-h">${esc(nameOf(code))}</div>${
+      tibet ? `<div class="dash-tip-row dash-mute">Ü-Tsang · Kham · Amdo</div>` : ""}<div class="dash-tip-row">${
+      n ? dashN(n) + " call" + (n === 1 ? "" : "s") : "No calls"}</div>`);
+    /* Tibet arrives as overlapping pieces (see build-world-geo.mjs). Two
+       passes make it one region: every piece stroked gold first, then every
+       piece filled on top — the fill buries the inner edges, so only the
+       outer border shows. The fill pass carries a hairline stroke in its own
+       colour to close the sub-pixel seams where pieces meet. */
+    if (tibet && g.parts?.TIB) {
+      const p = g.parts.TIB;
+      return `<g class="dash-tibet-g" data-tip="${tip}" tabindex="0">
+        ${p.map((d) => `<path class="dash-tib-o" d="${d}" fill="${fill}"/>`).join("")}
+        ${p.map((d) => `<path class="dash-tib-f" d="${d}" fill="${fill}" stroke="${fill}"/>`).join("")}</g>`;
+    }
+    return `<path class="dash-reg${n ? " lit" : ""}${tibet ? " dash-tibet" : ""}" d="${g.shapes[code]}"
+      fill="${fill}" data-tip="${tip}"${n || tibet ? ' tabindex="0"' : ""}/>`;
+  }).join("");
+  const lab = (code, text, sub, cls = "") => {
+    const p = g.labels[code];
+    if (!p) return "";
+    return `<text class="dash-wlab ${cls}" x="${p[0]}" y="${p[1]}" text-anchor="middle">${esc(text)}${
+      sub ? `<tspan class="n" x="${p[0]}" dy="9">${esc(sub)}</tspan>` : ""}</text>`;
+  };
+  const labels = rows.filter((r) => r.code !== "TIB").slice(0, 8)
+    .map((r) => lab(r.code, r.code, dashN(r.count), dashClass(r.count, max) >= 3 ? "on-dark" : "")).join("")
+    + lab("TIB", "TIBET", by.get("TIB") ? dashN(by.get("TIB")) : "", "dash-tiblab");
+  const top = rows.slice(0, 6).map((r) => `<li><span>${esc(nameOf(r.code))}</span>
+    <i style="width:${(r.count / max) * 100}%"></i><b>${dashN(r.count)}</b></li>`).join("");
+  const scale = max ? `<div class="dash-scale"><span>Fewer</span>${DASH_STEPS.map((s) =>
+    `<i style="background:color-mix(in srgb, var(--cat-1) ${s}%, var(--surface-2))"></i>`).join("")}<span>More</span></div>` : "";
+  return `<div class="dash-mapwrap">
+    <svg class="dash-map dash-world" viewBox="0 0 ${g.width} ${g.height}" preserveAspectRatio="xMidYMid meet"
+      role="img" aria-label="Calls by country">${shapes}${labels}</svg>
+    <aside class="dash-maplist">
+      <h4>Top countries</h4>
+      ${rows.length ? `<ul>${top}</ul>` : `<p class="dash-mute">No calls with a recognisable country yet.</p>`}
+      ${scale}
+      <p class="dash-mute dash-fine">From the other party's country code. Tibet — Ü-Tsang, Kham and Amdo — is shown as its own country.</p>
+    </aside></div>`;
+}
+
+function dashNaMap(d, W, table) {
+  const g = window.NA_GEO;
+  const rows = (d.byRegion || []).slice().sort((a, b) => b.count - a.count);
+  const nameOf = (c) => g?.meta?.[c]?.name || STATE_NAME[c] || c;
+  if (table || !g) {
+    if (!rows.length) return dashNone("No calls to a US or Canadian number in this period");
+    return dashTable(["State / province", "Calls"], rows.map((r) => [esc(nameOf(r.code)), dashN(r.count)]));
+  }
+  const max = rows[0]?.count || 0;
+  const STEPS = [22, 40, 58, 78, 100];
+  const cls = (n) => !n ? -1 : Math.min(4, Math.floor(((n - 1) / Math.max(1, max)) * 5));
+  const by = new Map(rows.map((r) => [r.code, r.count]));
+  const shapes = Object.keys(g.shapes).map((code) => {
+    const n = by.get(code) || 0, c = cls(n);
+    const fill = c < 0 ? DASH_LAND : `color-mix(in srgb, var(--cat-1) ${STEPS[c]}%, var(--surface-2))`;
+    const tip = dashTip(`<div class="dash-tip-h">${esc(nameOf(code))}</div><div class="dash-tip-row">${n ? dashN(n) + " call" + (n === 1 ? "" : "s") : "No calls"}</div>`);
+    return `<path class="dash-reg${n ? " lit" : ""}" d="${g.shapes[code]}" fill="${fill}" data-tip="${tip}"${n ? ' tabindex="0"' : ""}/>`;
+  }).join("");
+  const labels = rows.filter((r) => g.labels[r.code]).map((r) => {
+    const [x, y] = g.labels[r.code];
+    const dark = cls(r.count) >= 3;
+    return `<text class="dash-maplab${dark ? " on-dark" : ""}" x="${x}" y="${y}" text-anchor="middle">
+      <tspan x="${x}" dy="0">${esc(r.code)}</tspan><tspan class="n" x="${x}" dy="9">${dashN(r.count)}</tspan></text>`;
+  }).join("");
+  const vb = (g.view || [0, 0, g.width, g.height]).join(" ");
+  const top = rows.slice(0, 6).map((r) => `<li><span>${esc(nameOf(r.code))}</span>
+    <i style="width:${(r.count / max) * 100}%"></i><b>${dashN(r.count)}</b></li>`).join("");
+  const scale = max ? `<div class="dash-scale"><span>Fewer</span>${STEPS.map((s) =>
+    `<i style="background:color-mix(in srgb, var(--cat-1) ${s}%, var(--surface-2))"></i>`).join("")}<span>More</span></div>` : "";
+  return `<div class="dash-mapwrap">
+    <svg class="dash-map" viewBox="${vb}" preserveAspectRatio="xMidYMid meet" role="img"
+      aria-label="Calls by state and province">${shapes}${labels}</svg>
+    <aside class="dash-maplist">
+      <h4>Top regions</h4>
+      ${rows.length ? `<ul>${top}</ul>` : `<p class="dash-mute">No calls to a US or Canadian number yet.</p>`}
+      ${scale}
+      <p class="dash-mute dash-fine">From the other party's area code — where a number was issued, not necessarily where they are.</p>
+    </aside></div>`;
+}
+
+/* ================= Call logs — every RingCentral call =================
+
+   One search row (date, free text) and one filter row (agent, type, result,
+   number, disposition, recorded) scope the table, the totals and the
+   download alike — what you download is what you are looking at, every
+   page of it. Filters are applied server-side over the cached call log, so
+   changing one is quick and costs RingCentral nothing. */
+
+const CL = {
+  preset: "today", from: "", to: "", q: "", agent: "", mode: "", result: "",
+  number: "", disposition: "", rec: false, page: 1, per: 50,
+  data: null, error: null, wired: false, seq: 0,
+};
+
+function clSpan() {
+  const now = new Date(), ymd = dashYmd;
+  const back = (n) => { const d = new Date(now); d.setDate(d.getDate() - n); return ymd(d); };
+  switch (CL.preset) {
+    case "yesterday": return { from: back(1), to: back(1) };
+    case "7": return { from: back(6), to: ymd(now) };
+    case "30": return { from: back(29), to: ymd(now) };
+    case "month": return { from: ymd(new Date(now.getFullYear(), now.getMonth(), 1)), to: ymd(now) };
+    case "custom": return { from: CL.from || ymd(now), to: CL.to || CL.from || ymd(now) };
+    default: return { from: ymd(now), to: ymd(now) };
+  }
+}
+function clQuery(extra = {}) {
+  const { from, to } = clSpan();
+  const q = new URLSearchParams({ from, to, tz: dashTz(), page: CL.page, per: CL.per, ...extra });
+  for (const [k, v] of [["q", CL.q], ["agent", CL.agent], ["mode", CL.mode], ["result", CL.result],
+    ["number", CL.number], ["disposition", CL.disposition]]) if (v) q.set(k, v);
+  if (CL.rec) q.set("rec", "1");
+  return q;
+}
+
+async function loadCallLog() {
+  clWire();
+  const body = $("cl-body");
+  if (!CL.data) body.innerHTML = `<div class="dash-empty"><div class="dash-spin"></div>Reading the call log from RingCentral…</div>`;
+  else body.classList.add("dash-stale");
+  const seq = ++CL.seq;                     // a slow answer to an old search never overwrites a newer one
+  try {
+    const d = await api("/api/voice/rc/calllog?" + clQuery());
+    if (seq !== CL.seq) return;
+    CL.data = d; CL.error = null;
+  } catch (e) {
+    if (seq !== CL.seq) return;
+    CL.error = e.message || String(e);
+  }
+  body.classList.remove("dash-stale");
+  renderCallLog();
+}
+
+function clWire() {
+  if (CL.wired) return;
+  CL.wired = true;
+  on("cl-crm", "click", openCrmSync);
+  crmPaintChip();
+  const reload = () => { CL.page = 1; loadCallLog(); };
+  on("cl-preset", "change", (e) => {
+    CL.preset = e.target.value;
+    const custom = CL.preset === "custom";
+    for (const id of ["cl-from", "cl-arrow", "cl-to"]) $(id).classList.toggle("hidden", !custom);
+    if (custom && !CL.from) { const s = clSpan(); $("cl-from").value = CL.from = s.from; $("cl-to").value = CL.to = s.to; }
+    reload();
+  });
+  on("cl-from", "change", (e) => { CL.from = e.target.value; if (CL.to && CL.to < CL.from) $("cl-to").value = CL.to = CL.from; reload(); });
+  on("cl-to", "change", (e) => { CL.to = e.target.value; reload(); });
+  let t;
+  on("cl-q", "input", (e) => { clearTimeout(t); t = setTimeout(() => { CL.q = e.target.value.trim(); reload(); }, 350); });
+  for (const [id, key] of [["cl-agent", "agent"], ["cl-mode", "mode"], ["cl-result", "result"],
+    ["cl-number", "number"], ["cl-dispo", "disposition"]])
+    on(id, "change", (e) => { CL[key] = e.target.value; reload(); });
+  on("cl-rec", "click", () => { CL.rec = !CL.rec; reload(); });
+  on("cl-clear", "click", () => {
+    Object.assign(CL, { q: "", agent: "", mode: "", result: "", number: "", disposition: "", rec: false });
+    $("cl-q").value = "";
+    reload();
+  });
+
+  const pop = $("cl-dl-pop"), open = $("cl-dl-open");
+  on("cl-dl-open", "click", (e) => {
+    e.stopPropagation();
+    const show = pop.classList.contains("hidden");
+    pop.classList.toggle("hidden", !show);
+    open.setAttribute("aria-expanded", String(show));
+  });
+  document.addEventListener("click", (e) => {
+    if (!pop.classList.contains("hidden") && !e.target.closest("#cl-dl-pop")) {
+      pop.classList.add("hidden"); open.setAttribute("aria-expanded", "false");
+    }
+  });
+  pop.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-format]");
+    if (!b) return;
+    const q = clQuery({ format: b.dataset.format });
+    q.delete("page"); q.delete("per");
+    const a = document.createElement("a");
+    a.href = "/api/voice/rc/calllog?" + q;
+    a.rel = "noopener";
+    document.body.appendChild(a); a.click(); a.remove();
+    pop.classList.add("hidden"); open.setAttribute("aria-expanded", "false");
+    toast("Preparing your download…", 3000);
+  });
+
+  const body = $("cl-body");
+  body.addEventListener("click", (e) => {
+    const lead = e.target.closest("[data-cl-lead]");
+    if (lead) {
+      const tab = KIND_TAB[lead.dataset.kind] || "companies";
+      setTab(tab);
+      return select({ Id: +lead.dataset.clLead, _t: tab });
+    }
+    const play = e.target.closest("[data-play]");
+    if (play) {
+      const id = play.dataset.play;
+      play.closest(".cl-rec").innerHTML = `<audio controls autoplay preload="none" src="/api/voice/rc/recording/${encodeURIComponent(id)}"></audio>
+        <a class="cl-recdl" href="/api/voice/rc/recording/${encodeURIComponent(id)}?download=1" title="Download the recording" aria-label="Download the recording">⤓</a>`;
+      return;
+    }
+    const pg = e.target.closest("[data-page]");
+    if (pg && !pg.disabled) { CL.page = +pg.dataset.page; loadCallLog(); body.scrollTop = 0; }
+  });
+  body.addEventListener("change", (e) => {
+    if (e.target.id === "cl-per") { CL.per = +e.target.value; CL.page = 1; loadCallLog(); }
+  });
+  /* One recording at a time: starting one pauses whichever was playing. */
+  body.addEventListener("play", (e) => {
+    body.querySelectorAll("audio").forEach((a) => { if (a !== e.target) a.pause(); });
+  }, true);
+}
+
+/* ---------------- Zoho CRM sync: the chip and its panel ---------------- */
+
+async function crmPaintChip() {
+  const chip = $("cl-crm"), txt = $("cl-crm-text");
+  if (!chip) return;
+  try {
+    const s = await api("/api/crm/sync");
+    CL.crm = s;
+    chip.classList.toggle("on", s.on);
+    chip.classList.toggle("warn", s.on && s.stats.errors > 0);
+    txt.textContent = !s.configured ? "Zoho CRM · not set up"
+      : !s.on ? "Zoho CRM · off"
+        : `Zoho CRM · on · ${dashN(s.stats.today)} sent today${s.stats.errors ? ` · ${s.stats.errors} failed` : ""}`;
+  } catch (e) { txt.textContent = "Zoho CRM · unavailable"; }
+}
+
+async function openCrmSync() {
+  $("modal-title").textContent = "Zoho CRM call logging";
+  $("modal-body").innerHTML = `<p class="modal-sub">Loading…</p>`;
+  $("modal-backdrop").classList.remove("hidden");
+  const paint = async () => {
+    let s, prev = null;
+    try { s = await api("/api/crm/sync"); } catch (e) { $("modal-body").innerHTML = `<p class="login-error">${esc(e.message)}</p>`; return; }
+    try { prev = await api("/api/crm/sync/preview"); } catch (e) { prev = { error: e.message }; }
+    const st = s.stats;
+    $("modal-body").innerHTML = `
+      <p class="modal-sub">When this is on, every RingCentral call placed from Karma Connect is written into
+        Zoho CRM's <b>Calls</b> — who called, when, how long, the disposition (as the CRM's Call Result), the
+        rep's notes and the recording link — attached to the Lead, Account or Contact with that number.
+        After a <b>connected</b> call, a rep can also create the person as a <b>Lead</b>.
+        Calls made through Zoho Voice are skipped: Zoho Voice already logs those itself.
+        Nothing from before it was first turned on is sent.</p>
+      <div class="crm-state">
+        <span class="pd-status ${s.on ? "ongoing" : "draft"}"><i></i>${s.on ? "On" : "Off"}</span>
+        <span class="dash-mute">${s.changedBy ? `last changed by ${esc(s.changedBy)} · ${esc(new Date(s.changedAt).toLocaleString())}` : "never turned on"}</span>
+        ${isOwner() && s.configured ? `<button class="${s.on ? "btn-ghost" : "btn-primary"}" id="crm-toggle">${s.on ? "Turn off" : "Turn on"}</button>`
+          : `<span class="dash-mute">${s.configured ? "Only an owner can turn it on or off." : "Zoho CRM is not configured on this server."}</span>`}
+      </div>
+      ${s.since ? `<div class="crm-stats">
+        <div><b>${dashN(st.synced)}</b><span>calls sent</span></div>
+        <div><b>${dashN(st.today)}</b><span>in the last 24h</span></div>
+        <div><b>${dashN(st.pending)}</b><span>waiting</span></div>
+        <div class="${st.errors ? "bad" : ""}"><b>${dashN(st.errors)}</b><span>failed</span></div>
+      </div>${st.lastError ? `<p class="login-error">Last error: ${esc(st.lastError)}</p>` : ""}` : ""}
+      <h4 class="crm-h">Preview — what the next calls would look like in the CRM</h4>
+      ${prev.error ? `<p class="login-error">${esc(prev.error)}</p>`
+        : !prev.items.length ? `<p class="dash-mute">No RingCentral calls waiting to be sent${s.since ? "" : " in the last 7 days"}.</p>`
+          : `<div class="crm-prev">${prev.items.map((it) => it.error ? `<div class="crm-item"><b>${esc(it.lead || "Call")}</b><p class="login-error">${esc(it.error)}</p></div>`
+            : `<div class="crm-item">
+              <div class="crm-item-h"><b>${esc(it.call.Subject)}</b>
+                <span class="dash-chip">${it.link ? `→ ${esc(it.link.module)}: ${esc(it.link.name || it.link.id)}` : "no CRM match — logged unattached"}</span></div>
+              <div class="crm-item-m">${esc(new Date(it.call.Call_Start_Time).toLocaleString())} · ${esc(it.call.Call_Duration)}
+                ${it.call.Call_Result ? ` · Call Result <b>${esc(it.call.Call_Result)}</b>` : ""}</div>
+              <pre>${esc(it.call.Description)}</pre></div>`).join("")}</div>
+            <p class="dash-mute crm-fine">${esc(prev.note)}</p>`}
+      <div class="modal-actions"><button type="button" class="btn-secondary" id="modal-cancel">Close</button></div>`;
+    $("modal-cancel").addEventListener("click", closeModal);
+    $("crm-toggle")?.addEventListener("click", async () => {
+      if (!s.on && !confirm("Turn on Zoho CRM call logging?\n\nFrom now on, RingCentral calls placed in Karma Connect will be written into Zoho CRM's call log, and reps can create CRM leads from connected calls.")) return;
+      try {
+        await api("/api/crm/sync", { method: "PUT", body: JSON.stringify({ on: !s.on }) });
+        toast(s.on ? "Zoho CRM call logging is off" : "Zoho CRM call logging is on", 4000);
+        crmCheck(); crmPaintChip(); paint();
+      } catch (e) { toast("Couldn't change it: " + e.message, 6000); }
+    });
+  };
+  paint();
+}
+
+function clFillSelect(id, rows, cur) {
+  const el = $(id);
+  if (!el) return;
+  el.innerHTML = `<option value="">All</option>` + rows.map(([v, l]) =>
+    `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${esc(l)}</option>`).join("");
+  el.closest(".cl-chip")?.classList.toggle("on", !!cur);
+}
+
+const CL_MODE = {
+  outgoing: ["Outgoing", DASH_IC.out], incoming: ["Incoming", DASH_IC.in], missed: ["Missed", DASH_IC.miss],
+};
+
+function renderCallLog() {
+  const d = CL.data, body = $("cl-body");
+  const filtered = CL.q || CL.agent || CL.mode || CL.result || CL.number || CL.disposition || CL.rec;
+  $("cl-clear")?.classList.toggle("hidden", !filtered);
+  const rec = $("cl-rec");
+  if (rec) { rec.setAttribute("aria-pressed", String(CL.rec)); rec.classList.toggle("on", CL.rec); }
+  const modeSel = $("cl-mode");
+  if (modeSel) { modeSel.value = CL.mode; modeSel.closest(".cl-chip").classList.toggle("on", !!CL.mode); }
+
+  if (!d) {
+    const connect = /connect your ringcentral/i.test(CL.error || "");
+    body.innerHTML = `<div class="dash-empty"><b>${connect ? "Connect RingCentral to see call logs" : "Call logs couldn't load"}</b>
+      <span>${esc(CL.error || "")}</span>${connect ? `<a class="btn-primary" href="/api/voice/rc/connect">Connect RingCentral</a>` : ""}</div>`;
+    return;
+  }
+
+  const o = d.options;
+  clFillSelect("cl-agent", o.agents.map((a) => [a.id, a.ext ? `${a.name} · x${a.ext}` : a.name]), CL.agent);
+  clFillSelect("cl-result", o.results.map((r) => [r, r]), CL.result);
+  clFillSelect("cl-number", o.numbers.map((n) => [n, dashPhone(n)]), CL.number);
+  clFillSelect("cl-dispo", o.dispositions.map((x) => [x, x]), CL.disposition);
+
+  const span = d.range.from === d.range.to
+    ? new Date(d.range.from + "T12:00").toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", year: "numeric" })
+    : `${new Date(d.range.from + "T12:00").toLocaleDateString([], { month: "short", day: "numeric" })} – ${
+        new Date(d.range.to + "T12:00").toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}`;
+  $("cl-sub").textContent = `${span} · ${dashN(d.total)} call${d.total === 1 ? "" : "s"} · ${dashDur(d.summary.talkSecs)} talk · ${dashN(d.summary.recorded)} recorded`;
+  $("cl-total").innerHTML = `Total logs: <b>${dashN(d.total)}</b>`;
+  $("cl-dl-scope").textContent = `${span} · ${dashN(d.total)} call${d.total === 1 ? "" : "s"}${filtered ? " (filtered)" : ""}`;
+
+  const warn = (d.warnings || []).map((w) => `<div class="dash-warn">${esc(w)}</div>`).join("")
+    + (CL.error ? `<div class="dash-warn">Last refresh failed: ${esc(CL.error)}</div>` : "");
+  if (!d.rows.length) {
+    body.innerHTML = `${warn}<div class="dash-empty"><b>No calls ${filtered ? "match these filters" : "in this period"}</b>
+      <span>${filtered ? "Try clearing a filter or widening the dates." : "Pick a wider date range above."}</span></div>`;
+    return;
+  }
+
+  const party = (p) => {
+    const name = p.lead
+      ? `<button class="cl-lead" data-cl-lead="${p.lead.id}" data-kind="${esc(p.lead.kind || "")}" title="Open this lead">${esc(p.name)}</button>`
+      : p.name ? `<b>${esc(p.name)}</b>` : `<b class="dash-mute">${esc(p.place || "Unknown")}</b>`;
+    return `<div class="cl-party">${name}<span>${esc(dashPhone(p.number) || "—")}</span></div>`;
+  };
+  const when = (ms) => {
+    const t = new Date(ms);
+    return `<div class="cl-when"><b>${esc(t.toLocaleDateString([], { month: "short", day: "numeric" }))}</b>
+      <span>${esc(t.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }))}</span></div>`;
+  };
+  const rows = d.rows.map((r) => {
+    const [label, ic] = CL_MODE[r.mode];
+    return `<tr class="cl-${r.mode}">
+      <td><span class="cl-mode ${r.mode}" title="${label}">${dashIc(ic)}<span class="kd-sr">${label}</span></span></td>
+      <td>${party(r.from)}</td>
+      <td>${party(r.to)}</td>
+      <td>${r.agent ? `<div class="cl-party"><b>${esc(r.agent.name)}</b>${r.agent.ext ? `<span>x${esc(r.agent.ext)}</span>` : ""}</div>` : `<span class="dash-mute">—</span>`}</td>
+      <td class="n cl-dur">${r.seconds ? esc(liveClock(r.seconds * 1000)) : `<span class="dash-mute">0:00</span>`}</td>
+      <td>${when(r.at)}</td>
+      <td><span class="cl-result${/connected|accepted/i.test(r.result) ? " ok" : ""}">${esc(r.result)}</span></td>
+      <td>${r.disposition ? `<span class="dash-chip">${esc(r.disposition)}</span>` : `<span class="dash-mute">—</span>`}</td>
+      <td class="cl-rec">${r.recording
+        ? `<button class="cl-play" data-play="${esc(r.recording)}" title="Play the recording">
+             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5l11 7-11 7V5z"/></svg>Play</button>`
+        : `<span class="dash-mute">—</span>`}</td>
+    </tr>`;
+  }).join("");
+
+  const first = (d.page - 1) * d.per + 1, last = Math.min(d.total, d.page * d.per);
+  body.innerHTML = `${warn}
+    <div class="cl-tablewrap"><table class="cl-table">
+      <thead><tr><th>Mode</th><th>From</th><th>To</th><th>Agent</th><th class="n">Duration</th>
+        <th>Date / time</th><th>Result</th><th>Disposition</th><th>Recording</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>
+    <div class="cl-pager">
+      <span>${dashN(first)}–${dashN(last)} of ${dashN(d.total)}</span>
+      <label>Per page <select id="cl-per">${[50, 100, 200].map((n) =>
+        `<option value="${n}"${n === d.per ? " selected" : ""}>${n}</option>`).join("")}</select></label>
+      <div class="cl-pages">
+        <button class="btn-ghost" data-page="${d.page - 1}"${d.page <= 1 ? " disabled" : ""}>‹ Prev</button>
+        <span>Page ${d.page} of ${d.pages}</span>
+        <button class="btn-ghost" data-page="${d.page + 1}"${d.page >= d.pages ? " disabled" : ""}>Next ›</button>
+      </div>
+    </div>`;
+}
+
+/* ================= Power dialer — the manager's side =================
+
+   A campaign is a rep's assigned leads, snapshotted, that the manager starts.
+   While it is "ongoing" the rep's Call session dials it by itself (see the
+   CAMP code); "paused" stops it after the current call. The list polls every
+   10s while open so progress moves without a refresh. */
+
+const PD = { q: "", status: "", data: null, error: null, poll: null, wired: false, busy: new Set() };
+const PD_STATUS = {
+  draft: ["Ready", "draft"], ongoing: ["Ongoing", "ongoing"], paused: ["Paused", "paused"],
+  completed: ["Completed", "completed"], ended: ["Ended", "ended"],
+};
+
+async function loadPower() {
+  pdWire();
+  if (!PD.data) $("pd-body").innerHTML = `<div class="dash-empty"><div class="dash-spin"></div>Loading campaigns…</div>`;
+  await pdFetch();
+  pdStop();
+  PD.poll = setInterval(() => { if (!document.hidden) pdFetch(); }, 10000);
+}
+function pdStop() { clearInterval(PD.poll); PD.poll = null; }
+async function pdFetch() {
+  try {
+    const q = new URLSearchParams();
+    if (PD.q) q.set("q", PD.q);
+    if (PD.status) q.set("status", PD.status);
+    PD.data = await api("/api/dialer/campaigns?" + q);
+    PD.error = null;
+  } catch (e) { PD.error = e.message || String(e); }
+  if (S.tab === "power") renderPower();
+}
+
+function pdWire() {
+  if (PD.wired) return;
+  PD.wired = true;
+  let t;
+  on("pd-q", "input", (e) => { clearTimeout(t); t = setTimeout(() => { PD.q = e.target.value.trim(); pdFetch(); }, 300); });
+  on("pd-status", "change", (e) => { PD.status = e.target.value; e.target.closest(".cl-chip").classList.toggle("on", !!PD.status); pdFetch(); });
+  on("pd-new", "click", openNewCampaign);
+  $("pd-body").addEventListener("click", async (e) => {
+    const b = e.target.closest("[data-pd-act]");
+    if (!b) return;
+    const id = +b.dataset.pdId, act = b.dataset.pdAct;
+    const c = PD.data?.list.find((x) => x.id === id);
+    if (act === "end" && !confirm(`End "${c?.name}"? ${c ? c.pending + " lead(s) not yet called will be dropped from it." : ""}`)) return;
+    PD.busy.add(id); renderPower();
+    try {
+      await api(`/api/dialer/campaigns/${id}/state`, { method: "POST", body: JSON.stringify({ action: act }) });
+      toast({ start: "Campaign started — the rep's dialler will pick it up", pause: "Paused — the rep stops after their current call",
+        resume: "Resumed", end: "Campaign ended" }[act], 4000);
+    } catch (err) { toast("Couldn't update the campaign: " + err.message, 6000); }
+    PD.busy.delete(id);
+    pdFetch();
+  });
+}
+
+function renderPower() {
+  const d = PD.data, body = $("pd-body");
+  if (!d) { body.innerHTML = `<div class="dash-empty"><b>Campaigns couldn't load</b><span>${esc(PD.error || "")}</span></div>`; return; }
+  const live = d.list.filter((c) => c.status === "ongoing").length;
+  const nav = $("count-power");
+  if (nav) { nav.textContent = live || ""; nav.classList.toggle("hidden", !live); }
+  $("pd-sub").textContent = `${dashN(d.total)} campaign${d.total === 1 ? "" : "s"}${live ? ` · ${live} running now` : ""}`;
+
+  if (!d.list.length) {
+    body.innerHTML = `<div class="live-quiet pd-empty"><div class="live-quiet-ic">${dashIc("M13 3 5 13.5h6L10 21l8-10.5h-6L13 3Z")}</div>
+      <b>${PD.q || PD.status ? "No campaigns match" : "No campaigns yet"}</b>
+      <span>Build one from a rep's assigned leads, press Start, and their dialler rings each lead in turn.</span>
+      ${PD.q || PD.status ? "" : `<button class="btn-primary" onclick="openNewCampaign()">+ New campaign</button>`}</div>`;
+    return;
+  }
+
+  const actions = (c) => {
+    const dis = PD.busy.has(c.id) ? " disabled" : "";
+    const btn = (act, label, cls = "btn-ghost") => `<button class="${cls} pd-btn" data-pd-act="${act}" data-pd-id="${c.id}"${dis}>${label}</button>`;
+    if (c.status === "draft") return btn("start", "▶ Start", "btn-primary") + btn("end", "Delete");
+    if (c.status === "ongoing") return btn("pause", "❚❚ Pause") + btn("end", "End");
+    if (c.status === "paused") return btn("resume", "▶ Resume", "btn-primary") + btn("end", "End");
+    return `<span class="dash-mute">${c.endedAt ? esc(new Date(c.endedAt).toLocaleDateString([], { month: "short", day: "numeric" })) : ""}</span>`;
+  };
+  body.innerHTML = `<div class="cl-tablewrap"><table class="cl-table pd-table">
+    <thead><tr><th>Campaign</th><th class="n">Contacts</th><th class="n">Completed</th><th class="n">Pending</th>
+      <th>Progress</th><th>Created by</th><th>Assigned to</th><th>Callbacks to</th><th>Status</th><th></th></tr></thead>
+    <tbody>${d.list.map((c) => {
+      const pct = c.total ? Math.round((c.completed / c.total) * 100) : 0;
+      const [label, cls] = PD_STATUS[c.status] || [c.status, "draft"];
+      return `<tr class="pd-${cls}">
+        <td><div class="cl-party"><b>${esc(c.name)}</b><span>${esc(new Date(c.createdAt).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" }))} · ${c.gap || 6}s between calls</span></div></td>
+        <td class="n"><b>${dashN(c.total)}</b></td>
+        <td class="n">${dashN(c.completed)}</td>
+        <td class="n">${dashN(c.pending)}</td>
+        <td class="pd-progc"><div class="pd-prog" title="${c.called} called · ${c.connected} connected · ${c.skipped} skipped">
+          <i style="width:${pct}%"></i></div><span>${pct}% · ${dashN(c.connected)} connected</span></td>
+        <td>${esc(c.creatorName || c.createdBy || "—")}</td>
+        <td><span class="pd-who"><span class="live-av pd-av">${esc(initials(c.ownerName))}</span>${esc(c.ownerName)}</span></td>
+        <td>${c.callback ? `<div class="cl-party"><b>${esc(c.callback.name)}</b><span>x${esc(c.callback.ext)} · ${esc(dashPhone(c.callback.number))}</span></div>`
+          : `<span class="dash-mute">Rep's own number</span>`}</td>
+        <td><span class="pd-status ${cls}"><i></i>${esc(label)}</span></td>
+        <td class="pd-acts">${actions(c)}</td></tr>`;
+    }).join("")}</tbody></table></div>`;
+}
+
+async function openNewCampaign() {
+  $("modal-title").textContent = "New power-dialer campaign";
+  $("modal-body").innerHTML = `<p class="modal-sub">Loading the team…</p>`;
+  $("modal-backdrop").classList.remove("hidden");
+  let reps, targets = { targets: [] };
+  try {
+    [reps, targets] = await Promise.all([api("/api/dialer/campaigns/reps"),
+      api("/api/dialer/callback-targets").catch((e) => ({ targets: [], error: e.message }))]);
+  } catch (e) { $("modal-body").innerHTML = `<p class="login-error">${esc(e.message)}</p>`; return; }
+  const today = new Date().toLocaleDateString([], { day: "2-digit", month: "2-digit", year: "numeric" }).replace(/\D/g, "");
+  $("modal-body").innerHTML = `
+    <p class="modal-sub">The campaign takes the leads <b>assigned to one person</b> that have a phone number,
+      oldest-untouched first. When you press <b>Start</b>, their Call session rings each lead in turn —
+      they join with one click, then it runs by itself.</p>
+    <form id="pd-form" class="pd-form">
+      <label class="modal-field">Campaign name
+        <input id="pd-name" maxlength="80" required placeholder="e.g. Water restoration ${today}"></label>
+      <label class="modal-field">Assign to
+        <select id="pd-owner" required>
+          <option value="">Choose a person…</option>
+          ${reps.reps.map((r) => `<option value="${esc(r.email)}"${r.busy_with || !r.callable ? " disabled" : ""}>
+            ${esc(r.name)} — ${r.callable ? dashN(r.callable) + " callable lead" + (r.callable === 1 ? "" : "s") : "no callable leads"}${
+            r.busy_with ? ` (busy: ${esc(r.busy_kind === "campaign" ? r.busy_with : "own session")})` : ""}</option>`).join("")}
+        </select></label>
+      <label class="modal-field">Inbound callbacks go to
+        <select id="pd-callback">
+          <option value="">The rep's own number (default)</option>
+          ${targets.targets.map((t) => `<option value="${esc(t.ext)}">${esc(t.name)} · x${esc(t.ext)} · ${esc(dashPhone(t.number))}</option>`).join("")}
+        </select>
+        <span class="pd-help">${targets.error ? esc(targets.error)
+          : "The campaign's calls show this person's number, so a lead who calls back rings them directly — and their dialler shows who it is."}</span>
+      </label>
+      <fieldset class="modal-field pd-statuses"><legend>Lead statuses to include</legend>
+        ${reps.statuses.map((s) => `<label><input type="checkbox" name="pd-st" value="${esc(s)}" checked> ${esc(s)}</label>`).join("")}
+      </fieldset>
+      <div class="pd-row">
+        <label class="modal-field">Max contacts
+          <input id="pd-limit" type="number" min="1" max="${reps.max}" value="${reps.max}"></label>
+        <label class="modal-field">Seconds between calls
+          <input id="pd-gap" type="number" min="2" max="60" value="6"></label>
+      </div>
+      <label class="pd-startnow"><input type="checkbox" id="pd-start"> Start straight away</label>
+      <div id="pd-err" class="login-error hidden"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="modal-cancel">Cancel</button>
+        <button type="submit" class="btn-primary" id="pd-create">Create campaign</button>
+      </div>
+    </form>`;
+  $("modal-cancel").addEventListener("click", closeModal);
+  $("pd-name").focus();
+  $("pd-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const err = $("pd-err"), btn = $("pd-create");
+    err.classList.add("hidden");
+    btn.disabled = true; btn.textContent = "Creating…";
+    try {
+      const out = await api("/api/dialer/campaigns", { method: "POST", body: JSON.stringify({
+        name: $("pd-name").value, owner: $("pd-owner").value,
+        statuses: [...document.querySelectorAll('input[name="pd-st"]:checked')].map((x) => x.value),
+        limit: +$("pd-limit").value, gap: +$("pd-gap").value, start: $("pd-start").checked,
+        callback_ext: $("pd-callback").value || undefined }) });
+      closeModal();
+      toast(`Campaign created with ${dashN(out.total)} lead${out.total === 1 ? "" : "s"}${out.status === "ongoing" ? " — started" : " — press Start when ready"}`, 5000);
+      if (S.tab !== "power") setTab("power"); else pdFetch();
+    } catch (ex) {
+      err.textContent = ex.message; err.classList.remove("hidden");
+      btn.disabled = false; btn.textContent = "Create campaign";
+    }
+  });
+}
+
+/* ---------------- Power dialer: the rep's side ----------------
+   Every signed-in person's page asks /api/campaign/state every 15s (one
+   indexed row). When a manager starts their campaign a banner offers Join
+   wherever they are in the app; when it is paused the dialler stops after
+   the current call; resumed, it carries on by itself — the first Join click
+   already bought the browser permission every later call reuses. */
+
+const PDR = { last: null, poll: null, dismissed: "" };
+
+function pdRepStart() {
+  if (PDR.poll) return;
+  pdRepCheck();
+  PDR.poll = setInterval(pdRepCheck, 15000);
+}
+
+async function pdRepCheck() {
+  if (document.hidden) return;
+  let c;
+  try { c = (await api("/api/campaign/state")).campaign; } catch (e) { return; }
+  PDR.last = c;
+
+  /* Keep an open Call session in step with what the manager just did. */
+  if (S.tab === "camp" && c && (!CAMP.s || CAMP.s.id !== c.id)) loadCampaign();
+  if (CAMP.s?.campaign && c && CAMP.s.id === c.id && CAMP.s.campaign.status !== c.status) {
+    CAMP.s.campaign.status = c.status;
+    const idle = !kdActive() && !CAMP.wrapTimer && !CAMP.busy;
+    if (c.status !== "ongoing") cancelAutoDial("paused by your manager");
+    if (S.tab === "camp" && idle) {
+      const note = $("camp-note")?.value || "";
+      /* resumed after Join: carry straight on to the next lead */
+      CAMP.advanced = c.status === "ongoing" && CAMP.joined;
+      renderCampaign(CAMP.s);
+      if ($("camp-note")) $("camp-note").value = note;
+    } else if (S.tab === "camp" && c.status !== "ongoing") {
+      const st = $("camp-auto-state");
+      if (st) st.textContent = "paused by your manager — finish this call; nothing else will ring";
+    }
+  }
+  pdBanner(c && c.status === "ongoing" && S.tab !== "camp" && PDR.dismissed !== c.id + ":" + c.status ? c : null);
+}
+
+function pdBanner(c) {
+  let el = $("pd-banner");
+  if (!c) { el?.remove(); return; }
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "pd-banner";
+    el.className = "pd-banner";
+    el.setAttribute("role", "status");
+    document.body.appendChild(el);
+    el.addEventListener("click", (e) => {
+      const k = PDR.last ? PDR.last.id + ":" + PDR.last.status : "";
+      if (e.target.closest("#pd-banner-x")) { PDR.dismissed = k; return el.remove(); }
+      if (e.target.closest("#pd-banner-go")) { PDR.dismissed = k; el.remove(); setTab("camp"); }
+    });
+  }
+  const left = Math.max(0, c.total - c.pos);
+  el.innerHTML = `<span class="pd-banner-ic">${dashIc("M13 3 5 13.5h6L10 21l8-10.5h-6L13 3Z")}</span>
+    <div class="pd-banner-t"><b>${esc(c.createdBy || "Your manager")} started “${esc(c.name)}”</b>
+      <span>${dashN(left)} lead${left === 1 ? "" : "s"} to call — join and they ring one after another</span></div>
+    <button class="btn-primary" id="pd-banner-go">Join</button>
+    <button class="pd-banner-x" id="pd-banner-x" aria-label="Dismiss">✕</button>`;
+}
+
+/* ================= Users — the team directory =================
+
+   Everyone on the phone system and everyone with a Karma Connect account,
+   joined by email. A row opens into the full card (role, extension,
+   department, language, time zone, status, devices, numbers, Karma Connect
+   access). Read-only for RingCentral; "Manage access" opens the existing
+   Karma Connect users dialog for invites and roles. */
+
+const TM = { q: "", status: "active", role: "", dept: "", agent: "", data: null, error: null,
+  open: new Set(), wired: false, seq: 0 };
+
+function tmQuery(extra = {}) {
+  const q = new URLSearchParams({ tz: dashTz(), status: TM.status, ...extra });
+  for (const [k, v] of [["q", TM.q], ["role", TM.role], ["dept", TM.dept], ["agent", TM.agent]]) if (v) q.set(k, v);
+  return q;
+}
+
+async function loadTeam() {
+  tmWire();
+  const body = $("tm-body");
+  if (!TM.data) body.innerHTML = `<div class="dash-empty"><div class="dash-spin"></div>Gathering the team…</div>`;
+  else body.classList.add("dash-stale");
+  const seq = ++TM.seq;
+  try {
+    const d = await api("/api/voice/rc/users?" + tmQuery());
+    if (seq !== TM.seq) return;
+    TM.data = d; TM.error = null;
+  } catch (e) { if (seq === TM.seq) TM.error = e.message || String(e); }
+  body.classList.remove("dash-stale");
+  renderTeam();
+}
+
+function tmWire() {
+  if (TM.wired) return;
+  TM.wired = true;
+  let t;
+  on("tm-q", "input", (e) => { clearTimeout(t); t = setTimeout(() => { TM.q = e.target.value.trim(); loadTeam(); }, 300); });
+  for (const [id, key] of [["tm-status", "status"], ["tm-role", "role"], ["tm-dept", "dept"], ["tm-agent", "agent"]])
+    on(id, "change", (e) => { TM[key] = e.target.value; loadTeam(); });
+  on("tm-access", "click", () => openUsersModal());
+
+  const pop = $("tm-dl-pop"), open = $("tm-dl-open");
+  on("tm-dl-open", "click", (e) => {
+    e.stopPropagation();
+    const show = pop.classList.contains("hidden");
+    pop.classList.toggle("hidden", !show);
+    open.setAttribute("aria-expanded", String(show));
+  });
+  document.addEventListener("click", (e) => {
+    if (!pop.classList.contains("hidden") && !e.target.closest("#tm-dl-pop")) {
+      pop.classList.add("hidden"); open.setAttribute("aria-expanded", "false");
+    }
+  });
+  pop.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-format]");
+    if (!b) return;
+    const a = document.createElement("a");
+    a.href = "/api/voice/rc/users?" + tmQuery({ format: b.dataset.format });
+    document.body.appendChild(a); a.click(); a.remove();
+    pop.classList.add("hidden"); open.setAttribute("aria-expanded", "false");
+  });
+
+  $("tm-body").addEventListener("click", (e) => {
+    const row = e.target.closest("[data-tm-key]");
+    if (!row || e.target.closest("a")) return;
+    const k = row.dataset.tmKey;
+    if (TM.open.has(k)) TM.open.delete(k); else TM.open.add(k);
+    renderTeam();
+  });
+  $("tm-body").addEventListener("keydown", (e) => {
+    if ((e.key === "Enter" || e.key === " ") && e.target.matches("[data-tm-key]")) { e.preventDefault(); e.target.click(); }
+  });
+}
+
+const TM_AGENT = {
+  "Available": "avail", "On call": "live", "Ringing": "ring", "On hold": "hold", "Busy": "busy",
+  "Do not disturb": "busy", "Offline": "off", "No phone seat": "none", "Using another seat": "warn", "Unknown": "none",
+};
+const tmSince = (iso) => {
+  if (!iso) return "never";
+  const m = Math.round((Date.now() - new Date(iso)) / 60000);
+  if (m < 2) return "just now";
+  if (m < 60) return `${m} min ago`;
+  if (m < 1440) return `${Math.round(m / 60)} h ago`;
+  return new Date(iso).toLocaleDateString([], { month: "short", day: "numeric" });
+};
+
+function renderTeam() {
+  const d = TM.data, body = $("tm-body");
+  if (!d) {
+    body.innerHTML = `<div class="dash-empty"><b>Users couldn't load</b><span>${esc(TM.error || "")}</span></div>`;
+    return;
+  }
+  clFillSelect("tm-role", d.options.roles.map((r) => [r, r[0].toUpperCase() + r.slice(1)]), TM.role);
+  clFillSelect("tm-dept", d.options.departments.map((x) => [x, x]), TM.dept);
+  $("tm-dept-wrap").classList.toggle("hidden", !d.options.departments.length);
+  clFillSelect("tm-agent", d.options.agentStatuses.map((x) => [x, x]), TM.agent);
+  const st = $("tm-status");
+  st.value = TM.status; st.closest(".cl-chip").classList.toggle("on", TM.status !== "active");
+
+  const onPhone = d.rows.filter((r) => r.onRc).length;
+  $("tm-sub").textContent = `${dashN(onPhone)} on the phone system · ${dashN(d.rows.length - onPhone)} with Karma Connect only`;
+  $("tm-total").innerHTML = `Total users: <b>${dashN(d.total)}</b>`;
+
+  const warn = (d.warnings || []).map((w) => `<div class="dash-warn">${esc(w)}</div>`).join("");
+  if (!d.rows.length) {
+    body.innerHTML = `${warn}<div class="dash-empty"><b>No users match</b><span>Try another filter or search.</span></div>`;
+    return;
+  }
+
+  const roleCell = (r) => [r.rcRole && `<span class="tm-role">${esc(r.rcRole)}</span>`,
+    r.app && `<span class="dash-chip tm-app ${esc(r.app.role)}">${esc(r.app.role)}</span>`].filter(Boolean).join("")
+    || `<span class="dash-mute">—</span>`;
+  const status = (r) => `<span class="tm-agent ${TM_AGENT[r.agentStatus] || "none"}"><i></i>${esc(r.agentStatus)}</span>`;
+  const field = (label, value) => `<div class="tm-f"><span>${esc(label)}</span><b>${value || `<em class="dash-mute">—</em>`}</b></div>`;
+
+  const detail = (r) => {
+    const flags = [];
+    if (r.borrowedBy?.length)
+      flags.push(`Karma Connect's dialler is signed in to this extension as <b>${r.borrowedBy.map(esc).join(", ")}</b> — not ${esc(r.name)}. `
+        + `Calls they place go out as ${esc(r.name)}, and their browser takes one of this line's phone slots.`);
+    if (r.app?.dialsAs && !r.onRc)
+      flags.push(`Dials from <b>x${esc(r.app.dialsAs)}${r.app.dialsAsName ? ` (${esc(r.app.dialsAsName)})` : ""}</b>, someone else's extension. `
+        + `They need their own RingCentral login: Calls → Disconnect, then Connect as themselves.`);
+    if (r.app?.lastError) flags.push(`Last RingCentral error: ${esc(r.app.lastError)}`);
+    const nums = r.numbers.map((n) => `<div>${esc(dashPhone(n.number))} <em>${esc((n.usage || "").replace(/([a-z])([A-Z])/g, "$1 $2"))}</em></div>`).join("");
+    const devs = r.devices.map((x) => `${esc(x.type)}${x.status ? ` <em>${esc(x.status.toLowerCase())}</em>` : ""}`).join(" · ");
+    return `<tr class="tm-detail"><td colspan="8"><div class="tm-card">
+      ${flags.map((f) => `<div class="dash-warn tm-flag">${f}</div>`).join("")}
+      <div class="tm-cols">
+        <section><h4>Phone system</h4><div class="tm-grid">
+          ${field("Role", esc(r.rcRole))}${field("Extension", r.ext ? "x" + esc(r.ext) : "")}
+          ${field("Department", esc(r.department))}${field("Language", esc(r.language))}
+          ${field("Time zone", esc(r.timezone))}${field("Status", esc(r.status))}
+          ${field("Online status", status(r))}${field("International calling", r.onRc ? (r.international ? "Enabled" : "Disabled") : "")}
+          ${field("Devices", devs)}${field("Phone admin", r.onRc ? (r.admin ? "Yes" : "No") : "")}
+        </div></section>
+        <section><h4>Numbers</h4><div class="tm-nums">${nums || `<em class="dash-mute">No numbers assigned</em>`}</div>
+          <h4>Today</h4><div class="tm-grid tm-grid2">
+            ${field("Calls", dashN(r.today.calls))}${field("Talk time", dashDur(r.today.talk))}
+            ${field("Missed", dashN(r.today.missed))}
+          </div></section>
+        <section><h4>Karma Connect</h4><div class="tm-grid tm-grid2">
+          ${field("Access", r.app ? (r.app.disabled ? "Disabled" : esc(r.app.role[0].toUpperCase() + r.app.role.slice(1))) : "No account")}
+          ${field("Dialler", r.app ? (r.app.connected ? (r.app.dialsAs && r.app.dialsAs !== r.ext ? `Connected as x${esc(r.app.dialsAs)}` : "Connected") : "Not connected") : "")}
+          ${field("Last active", r.app ? esc(tmSince(r.app.lastActive)) : "")}
+          ${field("Email", esc(r.email))}
+        </div></section>
+      </div></div></td></tr>`;
+  };
+
+  body.innerHTML = `${warn}<div class="cl-tablewrap"><table class="cl-table tm-table">
+    <thead><tr><th></th><th>Name</th><th>Role</th><th>Extension</th><th>Number(s)</th><th>Agent status</th>
+      <th class="n">Today</th><th></th></tr></thead>
+    <tbody>${d.rows.map((r) => {
+      const open = TM.open.has(r.key);
+      const flagged = r.borrowedBy?.length || (r.app?.dialsAs && !r.onRc);
+      return `<tr class="tm-row${open ? " open" : ""}${r.onRc ? "" : " tm-apponly"}" data-tm-key="${esc(r.key)}" tabindex="0" aria-expanded="${open}">
+        <td class="tm-avc"><span class="live-av tm-av">${esc(initials(r.name))}</span></td>
+        <td><div class="cl-party"><b>${esc(r.name)}${flagged ? ` <span class="tm-warndot" title="Needs attention">!</span>` : ""}</b><span>${esc(r.email || "—")}</span></div></td>
+        <td><div class="tm-roles">${roleCell(r)}</div></td>
+        <td>${r.ext ? `<b class="tm-ext">x${esc(r.ext)}</b>` : `<span class="dash-mute">—</span>`}</td>
+        <td>${r.numbers.length ? r.numbers.map((n) => `<div class="tm-num">${esc(dashPhone(n.number))}</div>`).join("") : `<span class="dash-mute">—</span>`}</td>
+        <td>${status(r)}</td>
+        <td class="n">${r.today.calls ? `<b>${dashN(r.today.calls)}</b> <span class="dash-mute">· ${esc(dashDur(r.today.talk))}</span>` : `<span class="dash-mute">0</span>`}</td>
+        <td class="tm-chev"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></td>
+      </tr>${open ? detail(r) : ""}`;
+    }).join("")}</tbody></table></div>`;
+}
+
+/* ================= Live calls — the floor this second =================
+
+   Polls /api/calls/live every 5s while the tab is open (and only then), and
+   ticks every call's timer once a second in between, so a 40-second call
+   reads 0:40 and not "about a minute". Server time anchors the timers: the
+   offset between the server's clock and this machine's is measured on each
+   poll, so a laptop running two minutes slow still shows the right length. */
+
+const LIVEB = { data: null, error: null, poll: null, tick: null, skew: 0, wired: false };
+
+async function loadLive() {
+  liveWire();
+  if (!LIVEB.data) $("live-body").innerHTML = `<div class="dash-empty"><div class="dash-spin"></div>Looking at the floor…</div>`;
+  await liveFetch();
+  liveStop();
+  LIVEB.poll = setInterval(() => { if (!document.hidden) liveFetch(); }, 5000);
+  LIVEB.tick = setInterval(liveTick, 1000);
+}
+function liveStop() {
+  clearInterval(LIVEB.poll); clearInterval(LIVEB.tick);
+  LIVEB.poll = LIVEB.tick = null;
+}
+async function liveFetch() {
+  try {
+    const d = await api("/api/calls/live");
+    LIVEB.skew = d.now - Date.now();
+    LIVEB.data = d; LIVEB.error = null;
+  } catch (e) { LIVEB.error = e.message || String(e); }
+  if (S.tab === "live") renderLive();
+}
+
+function liveWire() {
+  if (LIVEB.wired) return;
+  LIVEB.wired = true;
+  $("live-body").addEventListener("click", (e) => {
+    const a = e.target.closest("[data-live-lead]");
+    if (!a) return;
+    const tab = KIND_TAB[a.dataset.kind] || "companies";
+    setTab(tab);
+    select({ Id: +a.dataset.liveLead, _t: tab });
+  });
+}
+
+const liveClock = (ms) => {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+  return h ? `${h}:${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}` : `${m}:${String(r).padStart(2, "0")}`;
+};
+function liveTick() {
+  const now = Date.now() + LIVEB.skew;
+  document.querySelectorAll("#live-body [data-since]").forEach((el) => {
+    el.textContent = liveClock(now - +el.dataset.since);
+  });
+}
+
+const LIVE_STATE = {
+  live: ["Connected", "live"], hold: ["On hold", "hold"], ringing: ["Ringing", "ring"],
+  available: ["Available", "avail"], busy: ["Busy", "busy"], offline: ["Offline", "off"],
+};
+
+function renderLive() {
+  const body = $("live-body"), d = LIVEB.data;
+  const sub = $("live-sub"), pills = $("live-pills");
+  const navCount = $("count-live");
+  if (!d) {
+    body.innerHTML = `<div class="dash-empty"><b>The live board couldn't load</b><span>${esc(LIVEB.error || "")}</span></div>`;
+    return;
+  }
+  const c = d.counts, active = c.live + c.hold + c.ringing;
+  if (navCount) { navCount.textContent = active || ""; navCount.classList.toggle("hidden", !active); }
+  if (sub) sub.innerHTML = `<span class="dash-livetag"><i></i>Live</span> refreshes every 5 seconds`
+    + (LIVEB.error ? ` · <span class="dash-errtag" title="${esc(LIVEB.error)}">last refresh failed</span>` : "");
+  if (pills) pills.innerHTML = [
+    ["live", c.live, "on a call"], ["ring", c.ringing, "ringing"], ["hold", c.hold, "on hold"],
+    ["avail", c.available, "available"], ["off", c.offline, "offline"],
+  ].map(([k, n, l]) => `<span class="live-pill ${k}${n ? "" : " zero"}"><i></i><b>${n}</b>${l}</span>`).join("");
+
+  const calling = d.agents.filter((a) => ["live", "hold", "ringing"].includes(a.status));
+  const floor = d.agents.filter((a) => !["live", "hold", "ringing"].includes(a.status));
+
+  const card = (a) => {
+    const [label, cls] = LIVE_STATE[a.status];
+    const L = a.lead;
+    const where = L ? [L.company && L.company !== L.name ? L.company : "", [L.city, L.state].filter(Boolean).join(", ")]
+      .filter(Boolean).join(" · ") : "";
+    const who = L
+      ? `<button class="live-lead" data-live-lead="${L.id}" data-kind="${esc(L.kind || "")}" title="Open this lead">${esc(L.name || "Unnamed lead")}</button>`
+      : `<span class="live-lead none">${a.number ? "Not a lead in Karma Connect" : "Number not shown"}</span>`;
+    return `<article class="live-card ${cls}">
+      <header>
+        <span class="live-av">${esc(initials(a.name))}</span>
+        <div class="live-agent"><b>${esc(a.name)}</b>${a.ext ? `<span>x${esc(a.ext)}</span>` : ""}</div>
+        <span class="live-badge ${cls}"><i></i>${label}</span>
+      </header>
+      <div class="live-timer" ${a.since ? `data-since="${a.since}"` : ""}>${a.since ? liveClock(Date.now() + LIVEB.skew - a.since) : "—"}</div>
+      <div class="live-to">
+        <span class="live-dir">${a.direction === "Inbound" ? "← Inbound from" : "→ Calling"}</span>
+        ${who}
+        ${where ? `<span class="live-where">${esc(where)}</span>` : ""}
+        ${a.number ? `<span class="live-num">${esc(dashPhone(a.number))}</span>` : ""}
+      </div>
+      <footer>
+        ${L?.status ? `<span class="dash-chip">${esc(L.status)}</span>` : "<span></span>"}
+        <span class="live-src">${a.source === "dialler" ? "via Karma Connect" + (a.by ? ` · dialled by ${esc(a.by)}` : "") : "RingCentral app / desk phone"}</span>
+      </footer>
+    </article>`;
+  };
+
+  const chip = (a) => {
+    const [label, cls] = LIVE_STATE[a.status] || ["", "off"];
+    return `<div class="live-chip ${cls}" title="${esc(label)}"><i></i><b>${esc(a.name)}</b>${a.ext ? `<span>x${esc(a.ext)}</span>` : ""}<em>${esc(label)}</em></div>`;
+  };
+
+  body.innerHTML = `
+    ${d.presenceError ? `<div class="dash-warn">${esc(d.presenceError)}</div>` : ""}
+    <section class="live-section">
+      <h3>On the phone <span>${active}</span></h3>
+      ${calling.length ? `<div class="live-grid">${calling.map(card).join("")}</div>`
+        : `<div class="live-quiet"><div class="live-quiet-ic">${dashIc(DASH_IC.all)}</div>
+             <b>Nobody is on a call right now</b>
+             <span>${c.available} available · ${c.offline} offline. Calls appear here the moment they start ringing.</span></div>`}
+    </section>
+    <section class="live-section">
+      <h3>The floor <span>${floor.length}</span></h3>
+      ${floor.length ? `<div class="live-floor">${floor.map(chip).join("")}</div>`
+        : `<p class="dash-mute">Everyone is on a call.</p>`}
+    </section>`;
+}
+
 async function boot() {
   await discover();          // must succeed before we take the login screen away,
   $("login-screen").classList.add("hidden");   // or a no-access account gets an
@@ -5932,6 +9227,9 @@ async function boot() {
   // had a beat to paint — any exit sets kl_tour_done, so it never nags
   if (!localStorage.getItem("kl_tour_done")) setTimeout(startTour, 800);
   S.booted = true;             // from here on, a 401 means the session died
+  kdStartReminders();
+  pdRepStart();
+  crmStart();
 }
 
 async function init() {

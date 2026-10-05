@@ -4,7 +4,7 @@
 
 # API
 
-**146 routes**, generated from the source on 2026-10-01.
+**170 routes**, generated from the source on 2026-10-05.
 
 Every path is absolute. That is deliberate: Karma Leads' API paths are the same
 whether it runs standalone or mounted into Connect, which is what let its front
@@ -47,13 +47,13 @@ declared once for the group.
 
 ---
 
-## Karma Leads — 84 routes
+## Karma Leads — 108 routes
 
 ### `/api/activity`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/activity` | admin | [leads/server/index.js:135](../../leads/server/index.js#L135) |  |
+| GET | `/api/activity` | admin | [leads/server/index.js:144](../../leads/server/index.js#L144) |  |
 
 ### `/api/alerts`
 
@@ -99,20 +99,25 @@ declared once for the group.
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/calls/export` | admin | [leads/server/calls.js:630](../../leads/server/calls.js#L630) |  |
-| GET | `/api/calls/person/:email` | admin | [leads/server/calls.js:268](../../leads/server/calls.js#L268) | GET /api/calls/person/:email — one person, in depth. |
-| GET | `/api/calls/report` | admin | [leads/server/calls.js:141](../../leads/server/calls.js#L141) | GET /api/calls/report — the manager's screen. |
-| POST | `/api/calls/rollup` | admin | [leads/server/calls.js:390](../../leads/server/calls.js#L390) | POST /api/calls/rollup — rebuild stored days. |
+| GET | `/api/calls/dispositions` | admin | [leads/server/calls.js:248](../../leads/server/calls.js#L248) | GET /api/calls/dispositions — the Dashboard's disposition log. |
+| GET | `/api/calls/export` | admin | [leads/server/calls.js:848](../../leads/server/calls.js#L848) |  |
+| GET | `/api/calls/live` | admin | [leads/server/live.js:116](../../leads/server/live.js#L116) |  |
+| POST | `/api/calls/live` | signed in | [leads/server/live.js:89](../../leads/server/live.js#L89) |  |
+| GET | `/api/calls/person/:email` | admin | [leads/server/calls.js:486](../../leads/server/calls.js#L486) | GET /api/calls/person/:email — one person, in depth. |
+| GET | `/api/calls/report` | admin | [leads/server/calls.js:359](../../leads/server/calls.js#L359) | GET /api/calls/report — the manager's screen. |
+| POST | `/api/calls/rollup` | admin | [leads/server/calls.js:608](../../leads/server/calls.js#L608) | POST /api/calls/rollup — rebuild stored days. |
+| GET | `/api/calls/whois` | signed in | [leads/server/calls.js:203](../../leads/server/calls.js#L203) | GET /api/calls/whois?number= — who is ringing in. |
 
 ### `/api/campaign`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/campaign/current` | signed in | [leads/server/campaign.js:135](../../leads/server/campaign.js#L135) |  |
-| POST | `/api/campaign/end` | signed in | [leads/server/campaign.js:217](../../leads/server/campaign.js#L217) |  |
-| POST | `/api/campaign/outcome` | signed in | [leads/server/campaign.js:147](../../leads/server/campaign.js#L147) | One press: log the call, set the status, optionally book a follow-back and leave a note, then… |
-| GET | `/api/campaign/preview` | signed in | [leads/server/campaign.js:82](../../leads/server/campaign.js#L82) | How many are callable, before committing to a session. |
-| POST | `/api/campaign/start` | signed in | [leads/server/campaign.js:94](../../leads/server/campaign.js#L94) |  |
+| GET | `/api/campaign/current` | signed in | [leads/server/campaign.js:154](../../leads/server/campaign.js#L154) |  |
+| POST | `/api/campaign/end` | signed in | [leads/server/campaign.js:269](../../leads/server/campaign.js#L269) |  |
+| POST | `/api/campaign/outcome` | signed in | [leads/server/campaign.js:166](../../leads/server/campaign.js#L166) | One press: log the call, set the status, optionally book a follow-back and leave a note, then… |
+| GET | `/api/campaign/preview` | signed in | [leads/server/campaign.js:94](../../leads/server/campaign.js#L94) | How many are callable, before committing to a session. |
+| POST | `/api/campaign/start` | signed in | [leads/server/campaign.js:106](../../leads/server/campaign.js#L106) |  |
+| GET | `/api/campaign/state` | signed in | [leads/server/campaign.js:259](../../leads/server/campaign.js#L259) | The rep's screen polls this to notice a manager starting or pausing their campaign. |
 
 ### `/api/comments`
 
@@ -132,14 +137,29 @@ declared once for the group.
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/crm/preview` | admin | [leads/server/zoho-crm.js:142](../../leads/server/zoho-crm.js#L142) | How much of our own base would ever reach the CRM. |
+| GET | `/api/crm/dedupe` | admin | [leads/server/zoho-crm.js:234](../../leads/server/zoho-crm.js#L234) | GET /api/crm/dedupe — which worked leads the CRM already holds, so a sync attaches to those r… |
+| GET | `/api/crm/preview` | admin | [leads/server/zoho-crm.js:152](../../leads/server/zoho-crm.js#L152) | How much of our own base would ever reach the CRM. |
 | GET | `/api/crm/status` | admin | [leads/server/zoho-crm.js:102](../../leads/server/zoho-crm.js#L102) | GET /api/crm/status — is it connected, and what is actually in there. |
+| GET | `/api/crm/sync` | admin | [leads/server/crm-sync.js:212](../../leads/server/crm-sync.js#L212) |  |
+| PUT | `/api/crm/sync` | owner | [leads/server/crm-sync.js:245](../../leads/server/crm-sync.js#L245) |  |
+| GET | `/api/crm/sync/on` | signed in | [leads/server/crm-sync.js:241](../../leads/server/crm-sync.js#L241) | Just "is it on" — for a rep's wrap-up, which offers "Create CRM lead" only when there is some… |
+| GET | `/api/crm/sync/preview` | admin | [leads/server/crm-sync.js:261](../../leads/server/crm-sync.js#L261) | The exact payloads the next calls would produce. |
 
 ### `/api/cron`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
 | POST | `/api/cron/daily` | — | [leads/server/digest.js:118](../../leads/server/digest.js#L118) | The knock. Not behind requireUser — the caller is a scheduler, not a person — so it carries a… |
+
+### `/api/dialer`
+
+| Method | Path | Guard | Source | |
+|---|---|---|---|---|
+| GET | `/api/dialer/callback-targets` | admin | [leads/server/campaign.js:309](../../leads/server/campaign.js#L309) |  |
+| GET | `/api/dialer/campaigns` | admin | [leads/server/campaign.js:322](../../leads/server/campaign.js#L322) |  |
+| POST | `/api/dialer/campaigns` | admin | [leads/server/campaign.js:370](../../leads/server/campaign.js#L370) |  |
+| POST | `/api/dialer/campaigns/:id/state` | admin | [leads/server/campaign.js:423](../../leads/server/campaign.js#L423) | start / pause / resume / end |
+| GET | `/api/dialer/campaigns/reps` | admin | [leads/server/campaign.js:352](../../leads/server/campaign.js#L352) | Who can be given a campaign, and how many callable leads each one has — the New campaign form… |
 
 ### `/api/dnc-import`
 
@@ -187,7 +207,9 @@ declared once for the group.
 | POST | `/api/leads/:id/call` | signed in, own lead *(inherited)* | [leads/server/calls.js:98](../../leads/server/calls.js#L98) | POST /api/leads/:id/call — the softphone reporting how a call went. |
 | GET | `/api/leads/:id/comments` | own lead *(inherited)* | [leads/server/leads.js:442](../../leads/server/leads.js#L442) |  |
 | POST | `/api/leads/:id/comments` | own lead *(inherited)* | [leads/server/leads.js:453](../../leads/server/leads.js#L453) |  |
+| POST | `/api/leads/:id/crm-lead` | signed in, own lead *(inherited)* | [leads/server/crm-sync.js:283](../../leads/server/crm-sync.js#L283) |  |
 | GET | `/api/leads/:id/delete-preview` | admin, own lead *(inherited)* | [leads/server/trash.js:94](../../leads/server/trash.js#L94) | what the confirm modal shows before the click: |
+| POST | `/api/leads/:id/disposition` | signed in, own lead *(inherited)* | [leads/server/calls.js:160](../../leads/server/calls.js#L160) |  |
 | GET | `/api/leads/:id/followup` | signed in, own lead *(inherited)* | [leads/server/followups.js:104](../../leads/server/followups.js#L104) | What is set on this lead right now — the reading pane asks on every open. |
 | POST | `/api/leads/:id/followup` | signed in, own lead *(inherited)* | [leads/server/followups.js:51](../../leads/server/followups.js#L51) | Set (or replace) the reminder on a lead. |
 | DELETE | `/api/leads/:id/followup` | signed in, own lead *(inherited)* | [leads/server/followups.js:116](../../leads/server/followups.js#L116) |  |
@@ -196,6 +218,7 @@ declared once for the group.
 | GET | `/api/leads/:id/research` | signed in, own lead *(inherited)* | [leads/server/research.js:49](../../leads/server/research.js#L49) | GET — whatever we already hold. |
 | POST | `/api/leads/:id/research` | signed in, own lead *(inherited)* | [leads/server/research.js:90](../../leads/server/research.js#L90) | POST — buy a briefing. |
 | POST | `/api/leads/:id/restore` | own lead *(inherited)* | [leads/server/leads.js:410](../../leads/server/leads.js#L410) |  |
+| GET | `/api/leads/:id/timeline` | signed in, own lead *(inherited)* | [leads/server/calls.js:312](../../leads/server/calls.js#L312) | GET /api/leads/:id/timeline — everything that ever happened to ONE lead. |
 | GET | `/api/leads/:key` | signed in | [leads/server/demo.js:310](../../leads/server/demo.js#L310) | Opening a lead. |
 | GET | `/api/leads/:key` | signed in *(inherited)* | [leads/server/leads.js:202](../../leads/server/leads.js#L202) | one lead plus everything the reading pane shows beside it |
 
@@ -261,11 +284,17 @@ declared once for the group.
 | GET | `/api/voice/providers` | signed in | [leads/server/voice.js:234](../../leads/server/voice.js#L234) | GET/PUT /api/voice/providers — which telephony providers are on offer. |
 | PUT | `/api/voice/providers` | owner | [leads/server/voice.js:251](../../leads/server/voice.js#L251) |  |
 | GET | `/api/voice/rc/callback` | — | [leads/server/ringcentral.js:122](../../leads/server/ringcentral.js#L122) |  |
+| GET | `/api/voice/rc/calllog` | admin | [leads/server/calllogs.js:188](../../leads/server/calllogs.js#L188) |  |
 | GET | `/api/voice/rc/connect` | signed in | [leads/server/ringcentral.js:111](../../leads/server/ringcentral.js#L111) |  |
-| DELETE | `/api/voice/rc/connect` | signed in | [leads/server/ringcentral.js:269](../../leads/server/ringcentral.js#L269) |  |
-| POST | `/api/voice/rc/session` | signed in | [leads/server/ringcentral.js:231](../../leads/server/ringcentral.js#L231) | POST /api/voice/rc/session — everything the browser needs to register a softphone, and nothin… |
-| GET | `/api/voice/rc/status` | signed in | [leads/server/ringcentral.js:213](../../leads/server/ringcentral.js#L213) |  |
-| GET | `/api/voice/rc/team` | admin | [leads/server/ringcentral.js:278](../../leads/server/ringcentral.js#L278) | Who on the team has a working phone. |
+| DELETE | `/api/voice/rc/connect` | signed in | [leads/server/ringcentral.js:296](../../leads/server/ringcentral.js#L296) |  |
+| GET | `/api/voice/rc/dashboard` | admin | [leads/server/rc-dashboard.js:285](../../leads/server/rc-dashboard.js#L285) |  |
+| GET | `/api/voice/rc/extensions` | signed in | [leads/server/ringcentral.js:361](../../leads/server/ringcentral.js#L361) | GET /api/voice/rc/extensions — who a rep can transfer a live call to. |
+| GET | `/api/voice/rc/me` | signed in | [leads/server/ringcentral.js:329](../../leads/server/ringcentral.js#L329) | GET /api/voice/rc/me — what this rep's own seat is, for the dialler header. |
+| GET | `/api/voice/rc/recording/:id` | admin | [leads/server/calllogs.js:257](../../leads/server/calllogs.js#L257) |  |
+| POST | `/api/voice/rc/session` | signed in | [leads/server/ringcentral.js:258](../../leads/server/ringcentral.js#L258) | POST /api/voice/rc/session — everything the browser needs to register a softphone, and nothin… |
+| GET | `/api/voice/rc/status` | signed in | [leads/server/ringcentral.js:240](../../leads/server/ringcentral.js#L240) |  |
+| GET | `/api/voice/rc/team` | admin | [leads/server/ringcentral.js:306](../../leads/server/ringcentral.js#L306) | Who on the team has a working phone. |
+| GET | `/api/voice/rc/users` | admin | [leads/server/users-dir.js:197](../../leads/server/users-dir.js#L197) |  |
 | POST | `/api/voice/token` | signed in | [leads/server/voice.js:199](../../leads/server/voice.js#L199) | The SDK's oAuthCallBack fetches this. |
 
 ---

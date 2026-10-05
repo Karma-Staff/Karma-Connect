@@ -18,14 +18,30 @@ export function KarmaMark({ color = "#fff", w = 24 }) {
   );
 }
 
-// The full-colour app tile (bevelled navy square, handshake, bars+k, "karma staff" wordmark),
-// supplied as a raster asset. Use it only where the logo is shown large and branded.
+// The real Karma Staff logo, cut from the supplied artwork to transparency.
+// Use it where the logo is shown large and branded.
 //
-// It deliberately does NOT replace KarmaMark everywhere. KarmaMark stays for two things a PNG
-// cannot do: it is drawn in `currentColor` / a passed colour in the nav and footer, and it is
-// legible down to 18px, where this tile's wordmark degrades into a smudge.
-export function KarmaIcon({ w = 64, alt = "Karma Connect" }) {
-  return <img className="kicon" src="/icon-256.png" width={w} height={w} alt={alt} />;
+//   variant="mark"   the bars + k           212x128  (1.66:1)
+//   variant="lockup" mark + "karma staff"   340x200  (1.70:1)
+//
+// WIDTH DRIVES HEIGHT. The asset it replaced was a square tile, so this used to
+// render w x w; passing the real artwork through a square box would letterbox it
+// to two thirds its size. `height: auto` via the attribute ratio keeps it honest.
+//
+// It deliberately does NOT replace KarmaMark everywhere. KarmaMark stays for two
+// things a PNG cannot do: it is drawn in `currentColor` or a passed colour in the
+// nav and footer, and it stays legible at 18px, where a raster mark goes soft.
+const LOGO = {
+  mark: { src: "/karma-mark-white.png", w: 212, h: 128 },
+  lockup: { src: "/karma-lockup-white.png", w: 340, h: 200 },
+};
+export function KarmaIcon({ w = 64, variant = "mark", alt = "Karma Staff" }) {
+  const a = LOGO[variant] || LOGO.mark;
+  return (
+    <img className="kicon" src={a.src} alt={alt}
+      width={w} height={Math.round(w * (a.h / a.w))}
+      style={{ width: w, height: "auto", display: "block" }} />
+  );
 }
 
 export const Ic = {

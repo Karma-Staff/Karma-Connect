@@ -18,7 +18,7 @@
 
 const express = require("express");
 const { query } = require("./db");
-const { requireUser, requireAdmin } = require("./auth");
+const { requireUser, requireAdmin, rankOf, RANK } = require("./auth");
 const activity = require("./activity");
 
 const router = express.Router();
@@ -121,6 +121,11 @@ router.post("/api/leads/:id/call", requireUser, express.json({ limit: "4kb" }),
           outcome,
           seconds,
           provider: String(b.provider || "zoho").slice(0, 24),
+          /* a callback answered in the dialler is logged too, marked inbound;
+             a power-dialer call carries whose number it showed */
+          ...(b.direction === "inbound" ? { direction: "inbound" } : {}),
+          ...(b.callback_ext ? { callback_ext: String(b.callback_ext).slice(0, 12) } : {}),
+          ...(b.campaign ? { campaign: String(b.campaign).slice(0, 80) } : {}),
           call_id: b.call_id ? String(b.call_id).slice(0, 120) : null,
           number: b.number ? String(b.number).slice(0, 32) : null,
         },
@@ -128,6 +133,219 @@ router.post("/api/leads/:id/call", requireUser, express.json({ limit: "4kb" }),
       res.json({ ok: true, outcome, seconds });
     } catch (e) { next(e); }
   });
+
+/* POST /api/leads/:id/disposition — what the rep says happened on a call.
+
+   The softphone already logs what the LINE saw (connected, no answer, how
+   long); this is the human half — "voicemail", "gatekeeper", "wrong
+   number" — which no phone system can know. Before this it was not stored
+   at all: picking "No Answer" in the wrap-up wrote nothing anywhere.
+
+   It is stamped onto that call's own row in activity_log (meta.disposition)
+   rather than written as a row of its own, so one call is one row carrying
+   both halves, and the call report's counts are untouched. "That call" is
+   this rep's most recent call to this lead in the last three hours. With no
+   such call — a disposition logged by hand, or long after — it is recorded
+   as a note carrying the disposition, so it is never dropped.
+
+   No new action type, so no migration: the CHECK on activity_log.action
+   already allows 'call' and 'note'. Member-safe by position, like timeline
+   below: requireOwnLead has run on every /api/leads/:id path. */
+const DISPOSITIONS = new Set([
+  "Interested", "Follow-up Required", "Not Interested", "No Answer", "Busy",
+  "Voicemail", "Gatekeeper", "Hung Up", "Wrong Number", "Not in Service",
+  "Email Captured", "Call Back Later", "Converted", "Do Not Contact",
+]);
+
+router.post("/api/leads/:id/disposition", requireUser, express.json({ limit: "4kb" }),
+  async (req, res, next) => {
+    try {
+      const id = +req.params.id;
+      if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "bad lead id" });
+      const b = req.body || {};
+      const disposition = String(b.disposition || "").trim();
+      if (!DISPOSITIONS.has(disposition)) return res.status(400).json({ error: "unknown disposition" });
+      const note = String(b.note || "").trim().slice(0, 500) || null;
+
+      const lead = (await query(
+        "SELECT id, lead_code, name FROM leads WHERE id = $1 AND deleted_at IS NULL", [id])).rows[0];
+      if (!lead) return res.status(404).json({ error: "no such lead" });
+
+      const stamp = { disposition, dispo_note: note, dispo_at: new Date().toISOString() };
+      const hit = (await query(
+        `UPDATE activity_log SET meta = coalesce(meta, '{}'::jsonb) || $3::jsonb
+          WHERE id = (SELECT id FROM activity_log
+                       WHERE action = 'call' AND lead_id = $1 AND actor = $2
+                         AND at > now() - interval '3 hours'
+                       ORDER BY at DESC LIMIT 1)
+          RETURNING id`, [lead.id, req.user.email, JSON.stringify(stamp)])).rows[0];
+      if (hit) return res.json({ ok: true, on: "call", id: hit.id });
+
+      await activity.log({
+        actor: req.user.email, user_id: req.user.id, action: "note",
+        lead_id: lead.id, lead_code: lead.lead_code, lead_name: lead.name,
+        to_value: disposition,
+        meta: { ...stamp, note: note ? `${disposition} — ${note}` : disposition },
+      });
+      res.json({ ok: true, on: "note" });
+    } catch (e) { next(e); }
+  });
+
+/* GET /api/calls/whois?number= — who is ringing in. The incoming-call pop-up
+   asks this the moment a call arrives, so whoever picks up knows the company
+   and why they are calling back before they say hello.
+
+   Answers with the lead (matched on the last ten digits) and the last time
+   anyone here called that number: who, when, what was logged, and in which
+   power-dialer campaign. A member only sees a lead they own, or one they are
+   the callback person for (the campaign showed THEIR number) — the same
+   privacy line the rest of the app holds. */
+router.get("/api/calls/whois", requireUser, async (req, res, next) => {
+  try {
+    const d = String(req.query.number || "").replace(/\D/g, "").slice(-10);
+    if (d.length !== 10) return res.json({ lead: null, last: null });
+    const isAdmin = rankOf(req.user.role) >= RANK.admin;
+
+    const lead = (await query(
+      `SELECT id, kind, name, company, city, state, status, owner, industry
+         FROM leads
+        WHERE deleted_at IS NULL AND NOT removed
+          AND right(regexp_replace(coalesce(phone, ''), '\\D', '', 'g'), 10) = $1
+        ORDER BY id LIMIT 1`, [d])).rows[0] || null;
+    const last = (await query(
+      `SELECT a.at, a.actor, a.meta->>'disposition' AS disposition, a.meta->>'outcome' AS outcome,
+              a.meta->>'campaign' AS campaign, a.meta->>'callback_ext' AS callback_ext,
+              coalesce(nullif(btrim(u.display_name), ''), a.actor) AS name
+         FROM activity_log a
+         LEFT JOIN app_users u ON lower(u.email) = lower(a.actor)
+        WHERE a.action = 'call' AND coalesce(a.meta->>'direction', 'outbound') <> 'inbound'
+          AND right(regexp_replace(coalesce(a.meta->>'number', ''), '\\D', '', 'g'), 10) = $1
+        ORDER BY a.at DESC LIMIT 1`, [d])).rows[0] || null;
+
+    let mayView = isAdmin || (lead && String(lead.owner || "").trim() === String(req.user.email || "").trim());
+    if (!mayView && last?.callback_ext) {
+      const mine = (await query(
+        `SELECT extension FROM voice_identities WHERE user_id = $1 AND provider = 'ringcentral'`,
+        [req.user.id])).rows[0];
+      mayView = !!mine && String(mine.extension) === String(last.callback_ext);
+    }
+    res.json({
+      lead: lead && mayView ? lead : null,
+      known: !!lead,
+      last: last && (mayView || !lead) ? { at: last.at, by: last.name, disposition: last.disposition,
+        outcome: last.outcome, campaign: last.campaign } : null,
+    });
+  } catch (e) { next(e); }
+});
+
+/* GET /api/calls/dispositions — the Dashboard's disposition log. Admin only:
+   the whole floor's calls.
+
+   `from`/`to` are instants (the browser turns its own day boundaries into
+   them, the same days the RingCentral cards use). `ext` narrows to the rep
+   on that RingCentral extension — the Dashboard's agent filter speaks
+   extensions, and voice_identities is where an extension meets a person. */
+router.get("/api/calls/dispositions", requireAdmin, async (req, res, next) => {
+  try {
+    const from = new Date(String(req.query.from || ""));
+    const to = new Date(String(req.query.to || ""));
+    if (isNaN(from) || isNaN(to) || to <= from) return res.status(400).json({ error: "from/to must be ISO instants" });
+    if (to - from > 32 * 86400e3) return res.status(400).json({ error: "at most 31 days" });
+    const ext = String(req.query.ext || "").trim();
+
+    const args = [from.toISOString(), to.toISOString()];
+    let extSql = "";
+    if (ext) { args.push(ext); extSql = ` AND v.extension = $${args.length}`; }
+    const { rows } = await query(`
+      SELECT a.at, a.actor, a.action, a.lead_id, a.lead_name,
+             coalesce(nullif(btrim(u.display_name), ''), a.actor) AS name,
+             a.meta->>'disposition' AS disposition,
+             a.meta->>'outcome'     AS outcome,
+             a.meta->>'seconds'     AS seconds,
+             a.meta->>'dispo_note'  AS note
+        FROM activity_log a
+        LEFT JOIN app_users u ON lower(u.email) = lower(a.actor)
+        LEFT JOIN voice_identities v ON v.user_id = u.id AND v.provider = 'ringcentral'
+       WHERE a.at >= $1 AND a.at < $2
+         AND a.action IN ('call', 'note')
+         AND a.meta ? 'disposition'${extSql}
+       ORDER BY a.at DESC
+       LIMIT 2000`, args);
+
+    const counts = new Map(), people = new Map();
+    for (const r of rows) {
+      counts.set(r.disposition, (counts.get(r.disposition) || 0) + 1);
+      if (!people.has(r.name)) people.set(r.name, { name: r.name, total: 0, by: {} });
+      const p = people.get(r.name);
+      p.total++;
+      p.by[r.disposition] = (p.by[r.disposition] || 0) + 1;
+    }
+    res.json({
+      total: rows.length,
+      counts: [...counts].map(([disposition, count]) => ({ disposition, count }))
+        .sort((a, b) => b.count - a.count),
+      byAgent: [...people.values()].sort((a, b) => b.total - a.total),
+      log: rows.slice(0, 200).map((r) => ({
+        at: r.at, name: r.name, lead_id: r.lead_id, lead_name: r.lead_name,
+        disposition: r.disposition, outcome: r.outcome, note: r.note,
+        seconds: r.seconds == null ? null : +r.seconds, onCall: r.action === "call",
+      })),
+    });
+  } catch (e) { next(e); }
+});
+
+/* GET /api/leads/:id/timeline — everything that ever happened to ONE lead.
+
+   The manager's report reads the log by time and by person; the dialler reads
+   it by lead, because the panel beside the phone answers "what do I already
+   know about the company I am about to ring". Same table, opposite axis —
+   hence the index in migration 014.
+
+   Member-safe by position: mounted under /api/leads/:id, so leads.js's
+   requireOwnLead has already refused a lead this rep does not own. It is NOT
+   requireAdmin like the rest of this file, and that is the point — a rep must
+   see their own lead's history or the panel is empty for everyone but admins.
+
+   `kind` is the History tab's filter, derived here rather than in the browser
+   so the two cannot drift: the tab offers All / Calls / Notes / Follow-ups and
+   each row already says which it is. */
+router.get("/api/leads/:id/timeline", requireUser, async (req, res, next) => {
+  try {
+    const id = +req.params.id;
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "bad lead id" });
+    const limit = Math.max(1, Math.min(100, +req.query.limit || 40));
+
+    const { rows } = await query(`
+      SELECT at, actor, action, from_value, to_value, meta
+        FROM activity_log
+       WHERE lead_id = $1
+       ORDER BY at DESC
+       LIMIT $2`, [id, limit]);
+
+    /* 'open' is every time anyone looked at the lead. It is the noisiest
+       action in the log by a wide margin and says nothing a rep on a call
+       needs, so it never reaches the panel. */
+    const KINDS = { call: "call", note: "note", status: "status", owner: "status",
+      remove: "status", restore: "status", enrich: "note" };
+
+    res.json({
+      items: rows
+        .filter((r) => KINDS[r.action])
+        .map((r) => ({
+          at: r.at,
+          actor: r.actor,
+          action: r.action,
+          kind: KINDS[r.action],
+          from: r.from_value,
+          to: r.to_value,
+          outcome: r.meta?.outcome || null,
+          seconds: Number.isFinite(r.meta?.seconds) ? r.meta.seconds : null,
+          note: r.meta?.note || r.meta?.dispo_note || null,
+          disposition: r.meta?.disposition || null,
+        })),
+    });
+  } catch (e) { next(e); }
+});
 
 /* GET /api/calls/report — the manager's screen. Admin only: it is the whole
    team's activity, which is precisely what a member may not see.

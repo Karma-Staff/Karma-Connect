@@ -32,13 +32,16 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
   box-shadow:inset -1px 0 0 rgba(255,255,255,.05);
   padding:22px 16px; display:flex; flex-direction:column; gap:5px;
   position:fixed; top:0; left:0; z-index:5; height:100vh; overflow-y:auto;}
-.kc .brand{display:flex; align-items:center; gap:12px; padding:6px 8px 20px}
-/* The icon asset draws its own bevelled navy tile, so this box only sizes and lifts it. */
-.kc .mark{width:44px; height:44px; display:flex; align-items:center; justify-content:center; flex:0 0 44px}
-.kc .mark .kicon{width:100%; height:100%; object-fit:contain; display:block;
-  filter:drop-shadow(0 8px 18px rgba(7,24,85,.9))}
-.kc .brand h1{font-family:'Manrope',ui-sans-serif,system-ui,sans-serif; font-size:17px; font-weight:800; letter-spacing:-.02em; line-height:1.1}
-.kc .brand h1 b{color:var(--yellow); font-weight:800}
+.kc .brand{display:flex; align-items:center; gap:11px; padding:6px 8px 20px}
+/* The mark is transparent white ink at 212x128, NOT the bevelled tile this box
+   used to hold. So the box is the artwork's shape, not a square: forcing 1.66:1
+   into 44x44 letterboxed it to two thirds the size it asks for. */
+.kc .mark{width:44px; display:flex; align-items:center; flex:0 0 44px}
+.kc .mark .kicon{width:100%; height:auto; display:block}
+/* One word, two weights — the same split Karma Leads uses in its header, so the
+   two halves of the product write their own name the same way. */
+.kc .brand h1{font-family:'Manrope',ui-sans-serif,system-ui,sans-serif; font-size:17px; font-weight:500; letter-spacing:-.015em; line-height:1.1; color:var(--muted)}
+.kc .brand h1 b{color:var(--text); font-weight:700}
 .kc .brand span{font-size:10px; color:var(--faint); letter-spacing:.16em; text-transform:uppercase; font-weight:700}
 .kc .navlbl{font-size:10px; letter-spacing:.18em; text-transform:uppercase; color:var(--faint); padding:14px 10px 6px; font-weight:700}
 .kc .nav{display:flex; align-items:center; gap:11px; padding:10px 11px; border-radius:11px;
@@ -78,7 +81,7 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
 .kc .appfoot{margin-top:40px; padding:18px 2px 6px; border-top:1px solid var(--border);
   display:flex; align-items:center; gap:10px; font-size:11.5px; color:var(--faint); letter-spacing:.03em}
 .kc .appfoot svg{opacity:.55}
-.kc .appfoot b{color:var(--muted); font-weight:600}
+.kc .appfoot b{color:var(--muted); font-weight:700}
 .kc .appfoot .sp{margin-left:auto; opacity:.8}
 .kc .head{margin-bottom:24px}
 .kc .eyebrow{font-size:11px; letter-spacing:.2em; text-transform:uppercase; color:var(--yellow); font-weight:700; margin-bottom:9px}
@@ -493,7 +496,14 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
 @keyframes btnSweep{from{left:-70%}to{left:130%}}
 
 /* 4) Brighter glowing accents (gold + violet light bloom). */
-.kc .mark .kicon{filter:drop-shadow(0 8px 18px rgba(7,24,85,.9)) drop-shadow(0 0 16px rgba(255,207,0,.35))}
+/* The mark gets no bloom. The gold one here was tuned for the old tile icon,
+   which had gold in it; around transparent white ink on navy it is a yellow
+   smear sitting on the panel rather than light coming off the mark. White ink
+   on this navy is already the brightest thing in the sidebar — a soft dark
+   shadow gives it depth, and any colour added behind it is a colour the
+   surface never uses. NOTE: this rule is after the brand block, so it is the
+   one that wins; editing the filter up there alone does nothing. */
+.kc .mark .kicon{filter:drop-shadow(0 5px 12px rgba(2,8,22,.6))}
 .kc .nav.on:before{box-shadow:0 0 12px var(--yellow)}
 .kc .btn.primary:hover{box-shadow:0 24px 48px -12px rgba(231,183,75,.95), 0 0 34px -6px rgba(255,207,0,.5), inset 0 1px 0 rgba(255,255,255,.65)}
 .kc .btn.ai:hover{box-shadow:0 24px 50px -12px rgba(124,92,255,1), 0 0 36px -6px rgba(124,92,255,.6), inset 0 1px 0 rgba(255,255,255,.45)}

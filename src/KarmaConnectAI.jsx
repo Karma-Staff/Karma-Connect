@@ -979,7 +979,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
         <aside className="side">
           <div className="brand">
             <span className="mark"><KarmaIcon w={44} /></span>
-            <div><h1>Karma <b>Connect</b></h1><span>AI Prospecting</span></div>
+            <div><h1><b>Karma</b>Connect</h1><span>AI Prospecting</span></div>
           </div>
           {/* One product, two halves; this flips to the other
               half. A real link rather than a button so middle-click opens a tab and
@@ -1467,7 +1467,7 @@ ${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
           </div>
           <div className="appfoot">
             <KarmaMark color="#5f72a0" w={18} />
-            <span>Karma <b>Connect</b> · AI-Powered Prospect Intelligence</span>
+            <span><b>Karma</b>Connect · AI-Powered Prospect Intelligence</span>
             <span className="sp">{analysis ? "Profile active" : "Awaiting analysis"}</span>
           </div>
         </main>
