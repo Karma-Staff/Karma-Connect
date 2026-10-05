@@ -977,21 +977,21 @@
           </button>
         </div>
         <div id="kd-dispos" class="kd-dispos" role="group" aria-label="Call outcome"></div>
-        <div class="kd-field">
-          <label for="kd-note">Notes <span>(optional)</span></label>
-          <textarea id="kd-note" rows="2" placeholder="Add a short note about this call"></textarea>
-        </div>
-        <!-- Shown after a CONNECTED call while the Zoho CRM sync is on: a name
-             here creates the person as a Lead in the CRM (or links the record
-             that already has this number). Left blank, nothing is created. -->
+        <!-- Shown for the Prospect disposition while the Zoho CRM sync is on:
+             saving creates the person as a Lead in the CRM (or links the
+             record that already has this number), then sends the call. -->
         <div id="kd-crm" class="kd-field kd-crm hidden">
-          <label>Add to Zoho CRM <span>(optional)</span></label>
+          <label>Prospect <span>(email optional)</span></label>
           <div class="kd-crm-row">
             <input id="kd-crm-first" placeholder="First name" autocomplete="off" aria-label="First name">
             <input id="kd-crm-last" placeholder="Last name" autocomplete="off" aria-label="Last name">
           </div>
           <input id="kd-crm-email" type="email" placeholder="Email (optional)" autocomplete="off" aria-label="Email">
-          <p class="kd-hint">A last name creates this person as a lead in Zoho CRM. Already there? It's linked, not duplicated.</p>
+          <p class="kd-hint">Saved as a Lead in Zoho CRM, with this call on it. Already there? It's linked, not duplicated.</p>
+        </div>
+        <div class="kd-field">
+          <label for="kd-note">Notes <span>(optional)</span></label>
+          <textarea id="kd-note" rows="2" placeholder="Add a short note about this call"></textarea>
         </div>
         <div id="kd-fu" class="kd-field hidden">
           <label for="kd-fu-at">Follow-up</label>

@@ -35,8 +35,17 @@
    the CRM's call id, or the error — is written back onto the call's own row
    in activity_log (meta.crm_*). No new table.
 
-   Calls are left alone for three minutes after they end, so the rep's
-   wrap-up (disposition, note) is on the row before it is sent. */
+   WHEN IT GOES. The moment the rep saves the call's disposition (calls.js
+   calls sendNow) — that click is the rep saying "done", so the Call reaches
+   Zoho seconds later with its Call Result and notes. A call nobody
+   dispositions is swept up three minutes after it ends instead, so none is
+   missed. RingCentral needs a minute or two after a call to publish its
+   recording, so a call sent before that is updated in Zoho with the link
+   once it exists (meta.crm_rec_pending), for up to half an hour.
+
+   PROSPECT. Saving the "Prospect" disposition with a name creates that
+   person as a Lead (createLead) BEFORE the call is sent, so the call lands
+   on the new Lead rather than unattached. */
 
 const express = require("express");
 const { query } = require("./db");
@@ -94,7 +103,7 @@ async function recordingFor(row) {
   } catch (e) { return null; }
 }
 
-async function buildCall(row) {
+async function buildCall(row, known = {}) {
   const m = row.meta || {};
   const seconds = Math.max(0, +m.seconds || 0);
   const start = new Date(new Date(row.at).getTime() - seconds * 1000);
@@ -108,7 +117,7 @@ async function buildCall(row) {
   if (m.dispo_note && !notes.includes(String(m.dispo_note).trim())) notes.push(String(m.dispo_note).trim());
 
   const link = m.crm_link || (await zoho.findInCrm(m.number || row.phone));
-  const recording = await recordingFor(row);
+  const recording = known.recording || await recordingFor(row);
   const rep = row.rep_name || row.actor;
   const who = row.lead_name || row.company || m.number || "a lead";
 
@@ -121,25 +130,42 @@ async function buildCall(row) {
     `Logged by Karma Connect (RingCentral).`,
   ].filter(Boolean);
 
+  /* The number goes in To/From Number (Zoho phone fields, which its search
+     indexes) and, formatted, in the subject — so typing the number into
+     Zoho's search finds the call even when it is attached to nothing.
+     Dialled_Number looks right but is read-only: Zoho drops it silently. */
+  const inbound = m.direction === "inbound";
+  const raw = String(m.number || row.phone || "").trim();
+  const digits = raw.replace(/\D/g, "");
+  const us = digits.length === 10 ? digits : digits.length === 11 && digits[0] === "1" ? digits.slice(1) : "";
+  const pretty = us ? `(${us.slice(0, 3)}) ${us.slice(3, 6)}-${us.slice(6)}` : raw;
+  const e164 = us ? "+1" + us : raw;
   const call = {
-    Subject: `Outgoing call to ${who} — ${rep}`,
-    Call_Type: "Outbound",
+    Subject: `${inbound ? "Incoming call from" : "Outgoing call to"} ${who}${pretty && who !== raw ? " " + pretty : ""} — ${rep}`,
+    Call_Type: inbound ? "Inbound" : "Outbound",
+    ...(raw ? (inbound ? { From_Number__s: e164 } : { To_Number__s: e164 }) : {}),
     Call_Start_Time: zIso(start),
     Call_Duration: mmss(seconds),
     Description: lines.join("\n"),
     ...(RESULT[m.disposition] ? { Call_Result: RESULT[m.disposition] } : {}),
-    ...(m.number ? { Dialled_Number: String(m.number) } : {}),
     ...(recording ? { Voice_Recording__s: recording } : {}),
   };
   if (link && link.module && link.id) {
     if (link.module === "Contacts") call.Who_Id = { id: link.id };
     else { call.What_Id = { id: link.id }; call.$se_module = link.module; }
   }
-  return { call, link: link && link.module ? { module: link.module, id: link.id, name: link.name || null } : null };
+  return { call, recording, link: link && link.module ? { module: link.module, id: link.id, name: link.name || null } : null };
 }
 
 /* Calls eligible to send: ours, RingCentral, after `since`, settled, not yet
-   sent, not given up on. */
+   sent, not given up on. ELIGIBLE_NOW is the same without the settle, for a
+   call whose rep has just saved the disposition. */
+const ELIGIBLE_NOW = `
+  a.action = 'call'
+  AND a.meta->>'provider' = 'ringcentral'
+  AND a.at >= $1::timestamptz
+  AND NOT (coalesce(a.meta, '{}'::jsonb) ? 'crm_call_id')
+  AND coalesce((a.meta->>'crm_attempts')::int, 0) < ${MAX_ATTEMPTS}`;
 const ELIGIBLE = `
   a.action = 'call'
   AND a.meta->>'provider' = 'ringcentral'
@@ -157,6 +183,82 @@ const ROW = `
     LEFT JOIN crm_identities ci ON ci.user_id = a.user_id
     LEFT JOIN leads l ON l.id = a.lead_id
     LEFT JOIN app_users u ON lower(u.email) = lower(a.actor)`;
+
+/* ---------------- sending one call ---------------- */
+
+const REC_WINDOW_MIN = 30;     // how long to keep looking for a late recording
+
+/* Send one row that has already been claimed (crm_state = 'sending'). */
+async function sendClaimed(id) {
+  const row = (await query(`${ROW} WHERE a.id = $1`, [id])).rows[0];
+  if (!row) return { error: "gone" };
+  try {
+    const { call, link, recording } = await buildCall(row);
+    /* As the rep, if they have signed in to Zoho themselves — then the
+       Call is theirs in the CRM. Otherwise as the service account. */
+    const w = await people.writeAs(row.user_id, "/Calls", { method: "POST", body: JSON.stringify({ data: [call] }) });
+    const d = w.d?.data?.[0];
+    if (!d || d.status !== "success") throw new Error(d?.message || d?.code || "Zoho refused the call");
+    const young = Date.now() - new Date(row.at).getTime() < REC_WINDOW_MIN * 60e3;
+    await query(
+      `UPDATE activity_log SET meta = meta || jsonb_build_object(
+         'crm_state', 'done', 'crm_call_id', $2::text, 'crm_synced_at', now(),
+         'crm_related', $3::jsonb, 'crm_as', $4::text, 'crm_rec_pending', $5::boolean) - 'crm_error'
+        WHERE id = $1`, [id, String(d.details.id), JSON.stringify(link), w.as, !recording && young]);
+    return { sent: true, as: w.as, zohoId: String(d.details.id), link };
+  } catch (e) {
+    await query(
+      `UPDATE activity_log SET meta = meta || jsonb_build_object(
+         'crm_state', 'error', 'crm_error', $2::text,
+         'crm_attempts', coalesce((meta->>'crm_attempts')::int, 0) + 1)
+        WHERE id = $1`, [id, String(e.message).slice(0, 300)]);
+    return { error: e.message };
+  }
+}
+
+/* Send this call now — the disposition was just saved. Claims the row the
+   same way the sweeper does, so a sweep running at the same instant cannot
+   send it twice; the three-minute settle is skipped, since the rep has
+   finished. Returns null when there is nothing to do (sync off, not a
+   RingCentral call, already sent). */
+async function sendNow(id) {
+  if (!zoho.ENABLED) return null;
+  const cfg = await config();
+  if (!cfg.on || !cfg.since) return null;
+  const claimed = (await query(
+    `UPDATE activity_log a SET meta = coalesce(a.meta, '{}'::jsonb)
+            || jsonb_build_object('crm_state', 'sending', 'crm_claimed_at', now())
+      WHERE a.id = $2
+        AND ${ELIGIBLE_NOW}
+        AND (a.meta->>'crm_state' IS DISTINCT FROM 'sending'
+             OR (a.meta->>'crm_claimed_at')::timestamptz < now() - interval '10 minutes')
+      RETURNING a.id`, [cfg.since, id])).rows[0];
+  if (!claimed) return null;
+  return sendClaimed(id);
+}
+
+/* A call sent before RingCentral published its recording: add the link to
+   the same Zoho record once it exists. Gives up after REC_WINDOW_MIN. */
+async function backfillRecordings() {
+  const rows = (await query(`${ROW}
+     WHERE a.action = 'call' AND a.meta->>'crm_rec_pending' = 'true'
+       AND a.meta ? 'crm_call_id'
+     ORDER BY a.at LIMIT ${BATCH}`)).rows;
+  for (const row of rows) {
+    const old = Date.now() - new Date(row.at).getTime() > REC_WINDOW_MIN * 60e3;
+    try {
+      const recording = old ? null : await recordingFor(row);
+      if (recording) {
+        const { call } = await buildCall(row, { recording });
+        await people.writeAs(row.user_id, "/Calls", { method: "PUT", body: JSON.stringify({ data: [{
+          id: row.meta.crm_call_id, Voice_Recording__s: recording, Description: call.Description }] }) });
+      }
+      if (recording || old)
+        await query(`UPDATE activity_log SET meta = meta || jsonb_build_object('crm_rec_pending', false)
+          WHERE id = $1`, [row.id]);
+    } catch (e) { console.warn("[karma] crm recording update:", e.message); }
+  }
+}
 
 /* ---------------- the sweeper ---------------- */
 
@@ -181,29 +283,10 @@ async function tick() {
            FOR UPDATE SKIP LOCKED)
         RETURNING a.id`, [cfg.since])).rows.map((r) => r.id);
     for (const id of claimed) {
-      const row = (await query(`${ROW} WHERE a.id = $1`, [id])).rows[0];
-      try {
-        const { call, link } = await buildCall(row);
-        /* As the rep, if they have signed in to Zoho themselves — then the
-           Call is theirs in the CRM. Otherwise as the service account. */
-        const w = await people.writeAs(row.user_id, "/Calls", { method: "POST", body: JSON.stringify({ data: [call] }) });
-        const d = w.d?.data?.[0];
-        if (!d || d.status !== "success") throw new Error(d?.message || d?.code || "Zoho refused the call");
-        await query(
-          `UPDATE activity_log SET meta = meta || jsonb_build_object(
-             'crm_state', 'done', 'crm_call_id', $2::text, 'crm_synced_at', now(),
-             'crm_related', $3::jsonb, 'crm_as', $4::text) - 'crm_error'
-            WHERE id = $1`, [id, String(d.details.id), JSON.stringify(link), w.as]);
-        sent++;
-      } catch (e) {
-        failed++;
-        await query(
-          `UPDATE activity_log SET meta = meta || jsonb_build_object(
-             'crm_state', 'error', 'crm_error', $2::text,
-             'crm_attempts', coalesce((meta->>'crm_attempts')::int, 0) + 1)
-            WHERE id = $1`, [id, String(e.message).slice(0, 300)]);
-      }
+      const r = await sendClaimed(id);
+      if (r.sent) sent++; else failed++;
     }
+    await backfillRecordings();
   } catch (e) {
     console.warn("[karma] crm sync:", e.message);
   } finally { running = false; }
@@ -292,70 +375,78 @@ router.get("/api/crm/sync/preview", requireAdmin, async (req, res, next) => {
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+/* Create (or link) the Zoho Lead for one of our leads. Shared by the route
+   below and the Prospect disposition. Throws an Error with .status. */
+async function createLead(user, id, { first_name, last_name, email } = {}) {
+  const fail = (status, msg) => { const e = new Error(msg); e.status = status; return e; };
+  if (!zoho.ENABLED) throw fail(503, "Zoho CRM is not configured on this server");
+  const cfg = await config();
+  if (!cfg.on) throw fail(409, "Zoho CRM sync is off — an owner can turn it on in Call logs.");
+  const first = String(first_name || "").trim().slice(0, 40);
+  const last = String(last_name || "").trim().slice(0, 80);
+  const mail = String(email || "").trim().slice(0, 100);
+  if (!last) throw fail(400, "Last name is required to create a CRM lead.");
+  if (mail && !EMAIL_RE.test(mail)) throw fail(400, "That email doesn't look right.");
+
+  const lead = (await query(
+    `SELECT id, lead_code, name, company, phone, city, state, website
+       FROM leads WHERE id = $1 AND deleted_at IS NULL`, [id])).rows[0];
+  if (!lead) throw fail(404, "No such lead.");
+
+  /* The CRM may already hold this number — link to it, never duplicate. */
+  let link = await zoho.findInCrm(lead.phone);
+  if (link.error) throw fail(502, "Couldn't check Zoho CRM for duplicates: " + link.error);
+  let created = false, as = null;
+  if (!link.module) {
+    const rec = {
+      First_Name: first || undefined, Last_Name: last, Email: mail || undefined,
+      Company: lead.company || lead.name || `${first} ${last}`.trim(),
+      Phone: lead.phone || undefined, City: lead.city || undefined, State: lead.state || undefined,
+      Website: lead.website || undefined,
+      Lead_Source: "Cold Call", Lead_Status: "Contacted",
+      Description: `Created from Karma Connect by ${user.name || user.email} after a connected call on ${new Date().toISOString().slice(0, 10)}.`,
+    };
+    /* Created as the rep when they have signed in to Zoho, so the Lead is
+       theirs; the duplicate check above stays on the service account. */
+    const w = await people.writeAs(user.id, "/Leads", { method: "POST", body: JSON.stringify({ data: [rec] }) });
+    const d = w.d?.data?.[0];
+    as = w.as;
+    if (d?.code === "DUPLICATE_DATA" && d.details?.id) {
+      link = { module: "Leads", id: String(d.details.id), name: rec.Company };
+    } else if (!d || d.status !== "success") {
+      throw fail(502, "Zoho CRM refused the lead: " + (d?.message || d?.code || "unknown"));
+    } else {
+      link = { module: "Leads", id: String(d.details.id), name: `${first} ${last}`.trim() };
+      created = true;
+    }
+  }
+
+  /* Point this rep's latest call to the lead at the record, so the call
+     lands in the CRM attached to it (buildCall reads meta.crm_link). */
+  await query(
+    `UPDATE activity_log SET meta = coalesce(meta, '{}'::jsonb) || jsonb_build_object('crm_link', $3::jsonb)
+      WHERE id = (SELECT id FROM activity_log WHERE action = 'call' AND lead_id = $1 AND actor = $2
+                   AND at > now() - interval '2 hours' ORDER BY at DESC LIMIT 1)`,
+    [id, user.email, JSON.stringify({ module: link.module, id: link.id, name: link.name || null })]);
+  await activity.log({
+    actor: user.email, user_id: user.id, action: "note",
+    lead_id: lead.id, lead_code: lead.lead_code, lead_name: lead.name,
+    to_value: created ? "Zoho CRM lead created" : "Linked to existing Zoho CRM record",
+    meta: { note: created ? `Created Zoho CRM lead: ${`${first} ${last}`.trim()}${mail ? " <" + mail + ">" : ""}`
+      : `Already in Zoho CRM (${link.module}: ${link.name || link.id}) — linked, not duplicated`,
+      crm_link: { module: link.module, id: link.id } },
+  });
+  return { ok: true, created, module: link.module, id: link.id, name: link.name || null,
+    ...(created ? { as } : {}) };
+}
+
 router.post("/api/leads/:id/crm-lead", requireUser, express.json({ limit: "4kb" }), async (req, res, next) => {
   try {
-    if (!zoho.ENABLED) return res.status(503).json({ error: "Zoho CRM is not configured on this server" });
-    const cfg = await config();
-    if (!cfg.on) return res.status(409).json({ error: "Zoho CRM sync is off — an owner can turn it on in Call logs." });
-    const id = +req.params.id;
-    const b = req.body || {};
-    const first = String(b.first_name || "").trim().slice(0, 40);
-    const last = String(b.last_name || "").trim().slice(0, 80);
-    const email = String(b.email || "").trim().slice(0, 100);
-    if (!last) return res.status(400).json({ error: "Last name is required to create a CRM lead." });
-    if (email && !EMAIL_RE.test(email)) return res.status(400).json({ error: "That email doesn't look right." });
-
-    const lead = (await query(
-      `SELECT id, lead_code, name, company, phone, city, state, website
-         FROM leads WHERE id = $1 AND deleted_at IS NULL`, [id])).rows[0];
-    if (!lead) return res.status(404).json({ error: "No such lead." });
-
-    /* The CRM may already hold this number — link to it, never duplicate. */
-    let link = await zoho.findInCrm(lead.phone);
-    if (link.error) return res.status(502).json({ error: "Couldn't check Zoho CRM for duplicates: " + link.error });
-    let created = false, as = null;
-    if (!link.module) {
-      const rec = {
-        First_Name: first || undefined, Last_Name: last, Email: email || undefined,
-        Company: lead.company || lead.name || `${first} ${last}`.trim(),
-        Phone: lead.phone || undefined, City: lead.city || undefined, State: lead.state || undefined,
-        Website: lead.website || undefined,
-        Lead_Source: "Cold Call", Lead_Status: "Contacted",
-        Description: `Created from Karma Connect by ${req.user.name || req.user.email} after a connected call on ${new Date().toISOString().slice(0, 10)}.`,
-      };
-      /* Created as the rep when they have signed in to Zoho, so the Lead is
-         theirs; the duplicate check above stays on the service account. */
-      const w = await people.writeAs(req.user.id, "/Leads", { method: "POST", body: JSON.stringify({ data: [rec] }) });
-      const d = w.d?.data?.[0];
-      as = w.as;
-      if (d?.code === "DUPLICATE_DATA" && d.details?.id) {
-        link = { module: "Leads", id: String(d.details.id), name: rec.Company };
-      } else if (!d || d.status !== "success") {
-        return res.status(502).json({ error: "Zoho CRM refused the lead: " + (d?.message || d?.code || "unknown") });
-      } else {
-        link = { module: "Leads", id: String(d.details.id), name: `${first} ${last}`.trim() };
-        created = true;
-      }
-    }
-
-    /* Point this rep's latest call to the lead at the record, so the call
-       lands in the CRM attached to it (the sweeper reads meta.crm_link). */
-    await query(
-      `UPDATE activity_log SET meta = coalesce(meta, '{}'::jsonb) || jsonb_build_object('crm_link', $3::jsonb)
-        WHERE id = (SELECT id FROM activity_log WHERE action = 'call' AND lead_id = $1 AND actor = $2
-                     AND at > now() - interval '2 hours' ORDER BY at DESC LIMIT 1)`,
-      [id, req.user.email, JSON.stringify({ module: link.module, id: link.id, name: link.name || null })]);
-    await activity.log({
-      actor: req.user.email, user_id: req.user.id, action: "note",
-      lead_id: lead.id, lead_code: lead.lead_code, lead_name: lead.name,
-      to_value: created ? "Zoho CRM lead created" : "Linked to existing Zoho CRM record",
-      meta: { note: created ? `Created Zoho CRM lead: ${`${first} ${last}`.trim()}${email ? " <" + email + ">" : ""}`
-        : `Already in Zoho CRM (${link.module}: ${link.name || link.id}) — linked, not duplicated`,
-        crm_link: { module: link.module, id: link.id } },
-    });
-    res.json({ ok: true, created, module: link.module, id: link.id, name: link.name || null,
-      ...(created ? { as } : {}) });
-  } catch (e) { next(e); }
+    res.json(await createLead(req.user, +req.params.id, req.body || {}));
+  } catch (e) {
+    if (e.status) return res.status(e.status).json({ error: e.message });
+    next(e);
+  }
 });
 
-module.exports = { router, startSweeper, tick, _test: { buildCall, RESULT, mmss, zIso } };
+module.exports = { router, startSweeper, tick, sendNow, createLead, _test: { buildCall, RESULT, mmss, zIso } };

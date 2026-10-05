@@ -154,7 +154,7 @@ router.post("/api/leads/:id/call", requireUser, express.json({ limit: "4kb" }),
 const DISPOSITIONS = new Set([
   "Interested", "Follow-up Required", "Not Interested", "No Answer", "Busy",
   "Voicemail", "Gatekeeper", "Hung Up", "Wrong Number", "Not in Service",
-  "Email Captured", "Call Back Later", "Converted", "Do Not Contact",
+  "Email Captured", "Call Back Later", "Converted", "Do Not Contact", "Prospect",
 ]);
 
 router.post("/api/leads/:id/disposition", requireUser, express.json({ limit: "4kb" }),
@@ -179,7 +179,24 @@ router.post("/api/leads/:id/disposition", requireUser, express.json({ limit: "4k
                          AND at > now() - interval '3 hours'
                        ORDER BY at DESC LIMIT 1)
           RETURNING id`, [lead.id, req.user.email, JSON.stringify(stamp)])).rows[0];
-      if (hit) return res.json({ ok: true, on: "call", id: hit.id });
+      if (hit) {
+        /* Into Zoho CRM now that the rep has finished (crm-sync.js). A
+           Prospect with a name becomes a Lead first, so the call lands on it.
+           Neither may cost the disposition, which is already saved: a CRM
+           problem is reported back, and the sweeper retries the call. */
+        const crm = {};
+        try {
+          const sync = require("./crm-sync");
+          const p = b.prospect || null;
+          if (disposition === "Prospect" && p && String(p.last_name || "").trim()) {
+            try { crm.lead = await sync.createLead(req.user, lead.id, p); }
+            catch (e) { crm.leadError = e.message; }
+          }
+          const sent = await sync.sendNow(hit.id);
+          if (sent) Object.assign(crm, sent.sent ? { sent: true, as: sent.as } : { sendError: sent.error });
+        } catch (e) { crm.sendError = e.message; }
+        return res.json({ ok: true, on: "call", id: hit.id, crm });
+      }
 
       await activity.log({
         actor: req.user.email, user_id: req.user.id, action: "note",

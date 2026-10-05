@@ -3074,6 +3074,9 @@ const KD_DISPOS = [
   /* Each chip writes to the ONE place Karma Connect already keeps that fact —
      see kdSaveDispo. `kind` is what it touches, so nothing is stored twice. */
   { label: "Interested", kind: "status", value: "Responded" },
+  /* A person worth a CRM record: asks for their name (email optional) and,
+     on save, creates them as a Lead in Zoho before the call is sent there. */
+  { label: "Prospect", kind: "prospect" },
   { label: "Follow-up Required", kind: "followup" },
   { label: "Not Interested", kind: "status", value: "Not interested" },
   { label: "No Answer", kind: "outcome", value: "no-answer" },
@@ -4310,10 +4313,6 @@ function kdOpenWrap() {
     if (el) el.value = new Date(KD.followup.due_at).toISOString().slice(0, 16);
   }
   kdRenderDispos();
-  /* "Add to Zoho CRM" only after the person actually picked up, and only
-     while the CRM sync is on — otherwise there is no name to take and
-     nowhere for it to go. */
-  kdShow("kd-crm", !!VOICE.crmOn && (KD.lastOutcome === "connected" || KD.phase === "live"));
   kdShow("kd-wrap", true);
 }
 
@@ -4340,6 +4339,10 @@ function kdRenderDispos() {
     `<button data-dispo="${esc(d.label)}" aria-pressed="${KD.dispo === d.label}">${esc(d.label)}</button>`).join("");
   const picked = KD_DISPOS.find((d) => d.label === KD.dispo);
   kdShow("kd-fu", picked?.kind === "followup");
+  /* The prospect's name — only for Prospect, and only while the Zoho CRM
+     sync is on, since that is where it goes. */
+  kdShow("kd-crm", picked?.kind === "prospect" && !!VOICE.crmOn);
+  if (picked?.kind === "prospect" && VOICE.crmOn) setTimeout(() => kdEl("kd-crm-first")?.focus(), 0);
   if (picked?.kind === "followup" && !kdEl("kd-fu-at").value) {
     /* A sensible default beats an empty field: tomorrow, same hour, on the
        hour. A rep picking "call back later" means soon, not never. */
@@ -4382,20 +4385,28 @@ async function kdSaveDispo() {
       { method: "POST", body: JSON.stringify({ reason: "Marked Do Not Contact on a call" }) }));
   }
 
-  /* The disposition itself, for the log and the Dashboard. Stamped onto
-     this call server-side; see calls.js. */
-  if (picked) jobs.push(api("/api/leads/" + L.id + "/disposition", {
-    method: "POST", body: JSON.stringify({ disposition: picked.label, note }) }));
-
-  /* A name from a connected call → a Lead in Zoho CRM. Only when the box is
-     showing and a last name was typed; blank means "not this time". */
-  const crmBox = kdEl("kd-crm");
-  const crmLast = (kdEl("kd-crm-last")?.value || "").trim();
-  if (crmBox && !crmBox.classList.contains("hidden") && crmLast) {
-    jobs.push(crmCreateLead(L.id, (kdEl("kd-crm-first")?.value || "").trim(), crmLast,
-      (kdEl("kd-crm-email")?.value || "").trim())
-      .then((msg) => { toast(msg, 6000); for (const i of ["kd-crm-first", "kd-crm-last", "kd-crm-email"]) kdEl(i).value = ""; }));
+  /* A Prospect needs a name to become a Lead in Zoho; the email is optional. */
+  let prospect = null;
+  if (picked?.kind === "prospect" && VOICE.crmOn) {
+    prospect = {
+      first_name: (kdEl("kd-crm-first")?.value || "").trim(),
+      last_name: (kdEl("kd-crm-last")?.value || "").trim(),
+      email: (kdEl("kd-crm-email")?.value || "").trim(),
+    };
+    if (!prospect.last_name) { kdEl("kd-crm-last")?.focus(); return kdToast("Enter their last name to save the prospect"); }
+    if (prospect.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(prospect.email)) {
+      kdEl("kd-crm-email")?.focus(); return kdToast("That email doesn't look right");
+    }
   }
+
+  /* The disposition itself, for the log and the Dashboard. Stamped onto
+     this call server-side (calls.js), which also sends the call to Zoho CRM
+     right away — creating the Prospect as a Lead first, so the call lands
+     on it. What the CRM said comes back in r.crm. */
+  let crm = null;
+  if (picked) jobs.push(api("/api/leads/" + L.id + "/disposition", {
+    method: "POST", body: JSON.stringify({ disposition: picked.label, note, ...(prospect ? { prospect } : {}) }) })
+    .then((r) => { crm = r.crm || null; }));
 
   if (picked?.kind === "outcome" && KD.lastOutcome && picked.value !== KD.lastOutcome)
     jobs.push(api("/api/leads/" + L.id + "/comments", {
@@ -4409,8 +4420,16 @@ async function kdSaveDispo() {
     await Promise.all(jobs);
     kdShow("kd-wrap", false);
     kdEl("kd-note").value = "";
+    for (const i of ["kd-crm-first", "kd-crm-last", "kd-crm-email"]) if (kdEl(i)) kdEl(i).value = "";
     KD.dispo = "";
-    kdToast("Saved");
+    kdToast(crm?.sent ? "Saved · sent to Zoho CRM" : "Saved");
+    /* Say what happened in the CRM — and say it plainly when it didn't, so
+       a rep never assumes a Lead exists that does not. */
+    if (crm?.lead) toast(crm.lead.created
+      ? `Lead created in Zoho CRM: ${[prospect.first_name, prospect.last_name].filter(Boolean).join(" ")}`
+      : `Already in Zoho CRM (${crm.lead.module}${crm.lead.name ? ": " + crm.lead.name : ""}) — linked, not duplicated`, 6000);
+    if (crm?.leadError) toast("Zoho CRM lead not created: " + crm.leadError, 9000);
+    if (crm?.sendError) toast("Call saved, but Zoho CRM refused it for now — it will retry: " + crm.sendError, 9000);
     kdLoadLead(L.id);
     if (picked?.kind === "followup") kdLoadFollowups();
   } catch (e) {
