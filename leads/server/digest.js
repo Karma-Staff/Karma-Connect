@@ -26,6 +26,13 @@ const JOB = "storm-digest";
    editing a cron line. */
 const TZ = process.env.DIGEST_TZ || "America/New_York";
 const HOUR = Math.max(0, Math.min(23, +process.env.DIGEST_HOUR || 7));
+/* The last hour a late knock still counts. GitHub's scheduler is best-effort
+   and in practice fires the 7am job hours late (10:47am to 3:25pm Eastern
+   across the last two weeks). Demanding exactly 7 made every one of those a
+   skip, so the email went once — when somebody pressed the button — and
+   never again. Any hour from 7 to this one sends; job_runs still makes it
+   once a day. After it, the news is stale and the day is simply skipped. */
+const LAST_HOUR = Math.max(HOUR, Math.min(23, +process.env.DIGEST_LAST_HOUR || 16));
 
 let email = null;
 try { email = require("../../server/email.cjs"); }
@@ -63,8 +70,8 @@ async function claim(job, day, detail) {
 async function runDigest({ force = false, only = "" } = {}) {
   const day = localDate(TZ);
   const hour = localHour(TZ);
-  if (!force && hour !== HOUR)
-    return { skipped: `it is ${hour}:00 in ${TZ}, the digest goes at ${HOUR}:00` };
+  if (!force && (hour < HOUR || hour > LAST_HOUR))
+    return { skipped: `it is ${hour}:00 in ${TZ}, the digest goes between ${HOUR}:00 and ${LAST_HOUR}:59` };
   if (!email || !email.emailVerifyOn)
     return { skipped: "mail is not configured (GATEWAY_URL / GATEWAY_TOKEN)" };
 

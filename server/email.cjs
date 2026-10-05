@@ -203,50 +203,101 @@ async function sendStormDigestEmail(to, d, idempotencyKey) {
    Goes to admins and the owner rather than the whole team: this is everyone's
    numbers side by side, which is a management view and not a team one.
 
-   It shows people who called NOTHING as a zero rather than leaving them out.
+   It is about the SALES REPS. Each rep gets a line in the table and a card of
+   their own underneath — talk time, hours on the phone, how calls ended,
+   follow-ups booked and overdue — so a manager can read one person's day
+   without working it out from the totals. Anyone else who called is listed
+   after them, so the total still adds up.
+
+   It shows reps who called NOTHING as a zero rather than leaving them out.
    A list of only the active makes an idle day look like a quiet one, and the
    gap is the thing a manager needs to see. */
 async function sendCallDigestEmail(to, d, idempotencyKey) {
   const hi = d.name ? "Morning " + escapeHtml(d.name) + "," : "Morning,";
   const pct = d.calls ? Math.round((d.connected / d.calls) * 100) : 0;
+  const ROLE = { owner: "owner", admin: "admin", member: "member", sales_rep: "sales rep" };
+  const talk = (sec) => !sec ? "0m"
+    : sec >= 3600 ? Math.floor(sec / 3600) + "h " + Math.round((sec % 3600) / 60) + "m"
+    : Math.max(1, Math.round(sec / 60)) + "m";
+  const reps = d.people.filter((p) => p.rep);
+  const others = d.people.filter((p) => !p.rep);
+  const cell = "padding:8px 10px;border-bottom:1px solid #e6e9f0";
 
-  const row = (p, i) => `<tr${p.calls === 0 ? ' style="opacity:.62"' : ""}>
-    <td style="padding:8px 10px;border-bottom:1px solid #e6e9f0">
-      <b>${escapeHtml(p.label)}</b>${p.role && p.role !== "member"
-        ? ` <span style="color:#8a93a3;font-size:11px">${escapeHtml(p.role)}</span>` : ""}
+  const row = (p) => `<tr${p.calls === 0 ? ' style="opacity:.62"' : ""}>
+    <td style="${cell}">
+      <b>${escapeHtml(p.label)}</b>${!p.rep || (p.role && p.role !== "sales_rep" && p.role !== "member")
+        ? ` <span style="color:#8a93a3;font-size:11px">${escapeHtml(ROLE[p.role] || p.role)}</span>` : ""}
       ${p.calls === 0 ? '<br><span style="color:#b0342c;font-size:12px">no calls</span>' : ""}</td>
-    <td style="padding:8px 10px;border-bottom:1px solid #e6e9f0;text-align:right"><b>${p.calls}</b></td>
-    <td style="padding:8px 10px;border-bottom:1px solid #e6e9f0;text-align:right">${p.connected}${
+    <td style="${cell};text-align:right"><b>${p.calls}</b></td>
+    <td style="${cell};text-align:right">${p.connected}${
       p.placed ? `<br><span style="color:#8a93a3;font-size:11px">+${p.placed} unknown</span>` : ""}</td>
-    <td style="padding:8px 10px;border-bottom:1px solid #e6e9f0;text-align:right;color:#667">${
+    <td style="${cell};text-align:right;color:#667">${
       p.calls ? Math.round((p.connected / p.calls) * 100) + "%" : "—"}</td>
+    <td style="${cell};text-align:right;color:#667">${talk(p.seconds)}</td>
   </tr>`;
 
   const th = (t, right) => `<th style="text-align:${right ? "right" : "left"};padding:0 10px 6px;
     color:#667;font-size:11px;letter-spacing:.06em;text-transform:uppercase">${t}</th>`;
 
+  /* One person's day, in plain sentences. Only what happened is said — a
+     card for a rep who did not call is one line, not a page of zeros. */
+  const stat = (n, label) => `<td style="padding:4px 14px 4px 0;vertical-align:top">
+      <div style="font-size:17px;font-weight:700;color:#0b2545">${n}</div>
+      <div style="font-size:11px;color:#8a93a3">${label}</div></td>`;
+  const card = (p) => {
+    const flags = [];
+    if (p.overdue) flags.push(`<span style="color:#b0342c"><b>${p.overdue}</b> follow-up${p.overdue === 1 ? "" : "s"} overdue</span>`);
+    if (p.booked) flags.push(`<b>${p.booked}</b> follow-up${p.booked === 1 ? "" : "s"} booked`);
+    const body = p.calls === 0
+      ? `<p style="margin:6px 0 0;color:#b0342c;font-size:13px">No calls through Karma Connect.</p>`
+      : `<table style="border-collapse:collapse;margin-top:6px"><tr>
+          ${stat(p.calls, "calls")}${stat(p.connected, "connected")}${stat(talk(p.seconds), "talk time")}${stat(p.leads, "leads reached")}
+        </tr></table>
+        ${p.from ? `<p style="margin:6px 0 0;font-size:12px;color:#667">On the phone ${escapeHtml(p.from)}${
+          p.to && p.to !== p.from ? " – " + escapeHtml(p.to) : ""}${p.noAnswer ? ` · ${p.noAnswer} no answer` : ""}</p>` : ""}
+        ${p.dispositions && p.dispositions.length ? `<p style="margin:6px 0 0;font-size:12px;color:#667">Outcomes: ${
+          p.dispositions.map((x) => escapeHtml(x.name) + " " + x.n).join(" · ")}</p>` : ""}`;
+    return `<div style="border:1px solid #e6e9f0;border-radius:10px;padding:12px 14px;margin:0 0 10px">
+      <div style="font-size:14px"><b>${escapeHtml(p.label)}</b></div>
+      ${body}
+      ${flags.length ? `<p style="margin:6px 0 0;font-size:12px">${flags.join(" · ")}</p>` : ""}
+    </div>`;
+  };
+
+  const foot = "padding:9px 10px;border-top:2px solid #0b2545";
+  const total = `<tr><td style="${foot}"><b>Total</b></td>
+      <td style="${foot};text-align:right"><b>${d.calls}</b></td>
+      <td style="${foot};text-align:right"><b>${d.connected}</b></td>
+      <td style="${foot};text-align:right"><b>${pct}%</b></td>
+      <td style="${foot};text-align:right"><b>${talk(d.people.reduce((a, p) => a + p.seconds, 0))}</b></td></tr>`;
+
+  const who = d.repsOnly ? "sales rep" : "person";
   const html = `<div style="font-family:Inter,Segoe UI,Arial,sans-serif;max-width:560px;margin:0 auto;color:#0b2545">
     <h2 style="color:#0b2545;margin-bottom:4px">Call report — ${escapeHtml(d.dayLabel)}</h2>
     <p style="color:#667;margin-top:0">${d.calls.toLocaleString()} call${d.calls === 1 ? "" : "s"}
-       by ${d.callers} of ${d.members} · ${d.connected.toLocaleString()} connected (${pct}%)</p>
+       · ${d.callers} of ${d.members} ${d.repsOnly ? "sales reps" : "people"} called
+       · ${d.connected.toLocaleString()} connected (${pct}%)</p>
     <p>${hi}</p>
-    <table style="width:100%;border-collapse:collapse;margin:18px 0;font-size:14px">
-      <tr>${th("Person")}${th("Calls", 1)}${th("Connected", 1)}${th("Rate", 1)}</tr>
-      ${d.people.map(row).join("")}
-      <tr><td style="padding:9px 10px;border-top:2px solid #0b2545"><b>Total</b></td>
-          <td style="padding:9px 10px;border-top:2px solid #0b2545;text-align:right"><b>${d.calls}</b></td>
-          <td style="padding:9px 10px;border-top:2px solid #0b2545;text-align:right"><b>${d.connected}</b></td>
-          <td style="padding:9px 10px;border-top:2px solid #0b2545;text-align:right"><b>${pct}%</b></td></tr>
+    <table style="width:100%;border-collapse:collapse;margin:18px 0 8px;font-size:14px">
+      <tr>${th(d.repsOnly ? "Sales rep" : "Person")}${th("Calls", 1)}${th("Connected", 1)}${th("Rate", 1)}${th("Talk", 1)}</tr>
+      ${reps.map(row).join("")}
+      ${others.length ? `<tr><td colspan="5" style="padding:14px 10px 4px;color:#667;font-size:11px;letter-spacing:.06em;text-transform:uppercase">Also called</td></tr>
+      ${others.map(row).join("")}` : ""}
+      ${total}
     </table>
     ${d.vsPrev ? `<p style="font-size:13px;color:#667">${escapeHtml(d.vsPrev)}</p>` : ""}
     ${d.placed ? `<p style="font-size:12px;color:#8a6100;background:#fdf6e6;padding:9px 11px;border-radius:7px">
       ${d.placed} of these were handed to Zoho's own dialler, which never reports back how
       they went. They count as calls and never as connections, so the connected figure is a
       floor rather than a rate.</p>` : ""}
+    <h3 style="color:#0b2545;font-size:15px;margin:26px 0 10px">Each ${who}'s day</h3>
+    ${reps.map(card).join("")}
     ${d.link ? `<p style="margin:22px 0"><a href="${d.link}" style="background:#0b2545;color:#fff;text-decoration:none;font-weight:700;padding:12px 22px;border-radius:10px;display:inline-block">Open the call report</a></p>` : ""}
-    <p style="font-size:12px;color:#667">Counts calls placed <b>through the dashboard</b>.
+    <p style="font-size:12px;color:#667">Counts calls placed <b>through Karma Connect</b>.
       A rep dialling from a handset or the Zoho app directly appears here as zero.
-      Times are ${escapeHtml(d.tz)}.</p>
+      Times are ${escapeHtml(d.tz)}.${d.repsOnly ? "" : `
+      <br>Everyone is listed because nobody is marked <b>Sales rep</b> yet. Set it in
+      Manage users to keep this report to the people on the phones.`}</p>
   </div>`;
   await send(to, `Call report ${d.dayLabel}: ${d.calls} calls, ${d.connected} connected`,
     html, { idempotencyKey });

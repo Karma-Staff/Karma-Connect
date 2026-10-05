@@ -9,7 +9,7 @@
 
 const express = require("express");
 const { query, tx } = require("./db");
-const { requireAdmin, rankOf, RANK, isOwnerEmail } = require("./auth");
+const { requireAdmin, rankOf, RANK, ROLES, isOwnerEmail } = require("./auth");
 
 /* Adding somebody creates their row; the email is what makes it an invite.
    Optional — the module is absent in some setups and a missing mailer must
@@ -67,7 +67,7 @@ router.get("/api/users", async (req, res, next) => {
 router.post("/api/users", express.json({ limit: "4kb" }), async (req, res, next) => {
   try {
     const email = String(req.body?.email || "").trim().toLowerCase();
-    const role = ["owner", "admin", "member"].includes(req.body?.role)
+    const role = ROLES.includes(req.body?.role)
       ? req.body.role : "member";
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))
       return res.status(400).json({ error: "bad email" });
@@ -133,7 +133,7 @@ router.patch("/api/users/:id", express.json({ limit: "4kb" }), async (req, res, 
         error: `Only the owner can change ${target.email}'s access.` });
 
     if ("role" in b) {
-      if (!["owner", "admin", "member"].includes(b.role))
+      if (!ROLES.includes(b.role))
         return res.status(400).json({ error: "unknown role" });
       if (!mayGrant(req.user, b.role))
         return res.status(403).json({

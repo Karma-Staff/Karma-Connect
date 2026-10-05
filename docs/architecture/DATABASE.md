@@ -576,7 +576,7 @@ of:
 
 1. the GitHub secrets are unset, so the workflow emits a notice and never knocks
 2. `CRON_TOKEN` is unset on Render, so the knock gets a 503
-3. the knock arrives but the local hour is not `DIGEST_HOUR` — a correct skip
+3. the knock arrives outside `DIGEST_HOUR`..`DIGEST_LAST_HOUR` local — a correct skip
 4. mail is not configured (`GATEWAY_URL` / `GATEWAY_TOKEN`) — also skipped early
 5. every run so far was `force`d, which deliberately leaves no row
 

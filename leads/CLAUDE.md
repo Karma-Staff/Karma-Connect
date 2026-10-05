@@ -45,7 +45,7 @@ Run: `docker compose up -d` → `node server/migrate.js` → `node server/index.
   Connect and read here by `server/auth.js`. WorkOS (`kl_session`) is still
   accepted as a fallback so pre-cutover sessions are not thrown out, but it is
   no longer how anyone signs in.
-  Authorisation is a **ranked ladder** — `owner > admin > member`, compared as
+  Authorisation is a **ranked ladder** — `owner > admin > member = sales_rep`, compared as
   "at least", never `=== "admin"`. member works leads; admin adds job search,
   imports, users, trash, DNC, Team activity; owner holds the irreversible
   things and is conferred by `OWNER_EMAILS` in the environment, not by the

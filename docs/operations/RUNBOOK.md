@@ -134,7 +134,8 @@ these first — it is one cause, not three.
 | Variable | Notes |
 |---|---|
 | `CRON_TOKEN` | shared secret for `POST /api/cron/daily`. **Unset ⇒ the route returns 503**, refusing rather than defaulting to open |
-| `DIGEST_HOUR` | local hour the digest sends. Default 7 |
+| `DIGEST_HOUR` | earliest local hour the digest sends. Default 7 |
+| `DIGEST_LAST_HOUR` | latest local hour a late knock still sends. Default 16 — GitHub runs schedules hours late |
 | `DIGEST_TZ` | the timezone that hour is judged in |
 | `REPORT_TZ` | the timezone a *day* is measured in for the call rollup and report. Falls back to `DIGEST_TZ`, then `America/New_York`. **Changing it moves the boundary only for days rolled up from then on**, not for rows already stored |
 
@@ -296,8 +297,10 @@ Each digest claims its own row in `job_runs`, so a failure in one never
 silently swallows the other, and the storm digest's "nothing active today, no
 email" does not stop the call report going out.
 
-The storm digest checks the real local hour in `DIGEST_TZ` and only sends at
-`DIGEST_HOUR`; the second knock is then a no-op.
+The storm digest checks the real local hour in `DIGEST_TZ` and sends on the
+first knock from `DIGEST_HOUR` to `DIGEST_LAST_HOUR`; later knocks that day are
+no-ops. The window exists because GitHub's scheduler is late by hours, not
+minutes — an exact-hour check skipped every day.
 
 **The call report differs in one deliberate way: it sends even on a zero day.**
 A silent floor is exactly what a manager needs to be told about, so that email

@@ -747,7 +747,10 @@ function renderList() {
 /* The same ladder the API enforces (leads/server/auth.js). Presentation
    only — every gate below is also a 403 — but it has to agree, or an owner
    loses the manager screens they outrank. */
-const RANK = { member: 0, admin: 1, owner: 2 };
+const RANK = { member: 0, sales_rep: 0, admin: 1, owner: 2 };
+/* sales_rep has a member's access; it marks whose calling the reports cover. */
+const ROLE_LABEL = { owner: "Owner", admin: "Admin", member: "Member", sales_rep: "Sales rep" };
+const roleLabel = (r) => ROLE_LABEL[r] || (r ? r[0].toUpperCase() + r.slice(1) : "");
 const rankOf = (role) => RANK[role] ?? 0;
 const isAdmin = () => rankOf(S.me?.role) >= RANK.admin;
 const isOwner = () => rankOf(S.me?.role) >= RANK.owner;
@@ -1448,7 +1451,9 @@ async function openUsersModal() {
     <p class="modal-sub">Anyone with a company email joins as a <b>member</b> the
       first time they sign in — they work the leads assigned to them.
       <b>Admins</b> run the floor: assigning, imports, job search, the call
-      report and Team activity. <b>Owners</b> hold what cannot be undone —
+      report and Team activity. <b>Sales reps</b> have a member's access and are
+      who the morning call report is about; a <b>member</b> who is not on the phones
+      is left out of it. <b>Owners</b> hold what cannot be undone —
       appointing admins, emptying the bin, lifting a do-not-call ban.
       ${isOwner() ? "" : "Only the owner can change admin access."}
       Adding someone emails them a sign-up link — they still need to create
@@ -1457,9 +1462,10 @@ async function openUsersModal() {
     <form id="user-add-row" class="user-add-row">
       <input type="email" id="user-add-email" placeholder="invite an email outside the company…" required>
       <select id="user-add-role">
-        <option value="member" selected>member</option>
-        ${isOwner() ? `<option value="admin">admin</option>
-        <option value="owner">owner</option>` : ""}
+        <option value="sales_rep" selected>Sales rep</option>
+        <option value="member">Member</option>
+        ${isOwner() ? `<option value="admin">Admin</option>
+        <option value="owner">Owner</option>` : ""}
       </select>
       <button type="submit" class="btn-secondary">Add</button>
     </form>
@@ -1515,8 +1521,8 @@ async function renderUsersList() {
        unavailable rather than failing after the click. */
     const locked = !isOwner() && (rankOf(u.role) >= RANK.admin);
     const grantable = isOwner()
-      ? ["member", "admin", "owner"]
-      : ["member"];
+      ? ["sales_rep", "member", "admin", "owner"]
+      : ["sales_rep", "member"];
     const who = esc(u.display_name || u.email.split("@")[0]);
     return `
     <div class="user-row${u.disabled ? " user-disabled" : ""}">
@@ -1530,7 +1536,7 @@ async function renderUsersList() {
               ${u.disabled || locked ? "disabled" : ""}
               title="${locked ? "Only the owner can change this" : "Set this person's access"}">
         ${(grantable.includes(u.role) ? grantable : [u.role, ...grantable]).map((r) =>
-          `<option value="${esc(r)}"${r === u.role ? " selected" : ""}>${esc(r)}</option>`).join("")}
+          `<option value="${esc(r)}"${r === u.role ? " selected" : ""}>${esc(roleLabel(r))}</option>`).join("")}
       </select>
       ${u.ownerByConfig ? `<span class="asg-tag" title="Listed in OWNER_EMAILS — this holds whatever the table says">by config</span>` : ""}
       <button type="button" class="btn-ghost user-toggle" data-id="${u.id}" data-disable="${!u.disabled}"
@@ -6091,7 +6097,7 @@ function renderResearch(r, d) {
 
   const p = b.person || {};
   const personBits = [
-    rsLine("Their role", p.role),
+    rsLine("Their role", roleLabel(p.role)),
     rsLine("Background", p.background),
     rsLine("Education", p.education),
     rsList("Interests", p.interests || []),
@@ -6419,7 +6425,7 @@ function renderCallReport(d) {
               <td>
                 <span class="avatar avatar-sm" style="background:${avColor(p.email)}">${esc(initials(p.label))}</span>
                 <span class="asg-name">${esc(p.label)}</span>
-                ${p.role !== "member" ? `<span class="asg-tag">${esc(p.role)}</span>` : ""}
+                ${p.role !== "member" ? `<span class="asg-tag">${esc(roleLabel(p.role))}</span>` : ""}
                 ${p.ghost ? `<span class="asg-tag" title="Calls under a name that is nobody's account">no account</span>` : ""}
                 ${p.active ? `<span class="live-dot" title="Active just now"></span>` : ""}
               </td>
@@ -6492,7 +6498,7 @@ function renderPerson(p) {
       <div class="person-who">
         <h3>${esc(p.label)}</h3>
         <span class="person-sub">${esc(p.email)}
-          ${p.role ? `<span class="asg-tag">${esc(p.role)}</span>` : ""}
+          ${p.role ? `<span class="asg-tag">${esc(roleLabel(p.role))}</span>` : ""}
           ${!p.account ? `<span class="asg-tag" title="Calls logged under a name that is nobody's account">no account</span>` : ""}
           ${p.disabled ? `<span class="asg-tag">disabled</span>` : ""}</span>
       </div>
@@ -8983,7 +8989,7 @@ function renderTeam() {
     body.innerHTML = `<div class="dash-empty"><b>Users couldn't load</b><span>${esc(TM.error || "")}</span></div>`;
     return;
   }
-  clFillSelect("tm-role", d.options.roles.map((r) => [r, r[0].toUpperCase() + r.slice(1)]), TM.role);
+  clFillSelect("tm-role", d.options.roles.map((r) => [r, roleLabel(r)]), TM.role);
   clFillSelect("tm-dept", d.options.departments.map((x) => [x, x]), TM.dept);
   $("tm-dept-wrap").classList.toggle("hidden", !d.options.departments.length);
   clFillSelect("tm-agent", d.options.agentStatuses.map((x) => [x, x]), TM.agent);
@@ -9001,7 +9007,7 @@ function renderTeam() {
   }
 
   const roleCell = (r) => [r.rcRole && `<span class="tm-role">${esc(r.rcRole)}</span>`,
-    r.app && `<span class="dash-chip tm-app ${esc(r.app.role)}">${esc(r.app.role)}</span>`].filter(Boolean).join("")
+    r.app && `<span class="dash-chip tm-app ${esc(r.app.role)}">${esc(roleLabel(r.app.role))}</span>`].filter(Boolean).join("")
     || `<span class="dash-mute">—</span>`;
   const status = (r) => `<span class="tm-agent ${TM_AGENT[r.agentStatus] || "none"}"><i></i>${esc(r.agentStatus)}</span>`;
   const field = (label, value) => `<div class="tm-f"><span>${esc(label)}</span><b>${value || `<em class="dash-mute">—</em>`}</b></div>`;
@@ -9033,7 +9039,7 @@ function renderTeam() {
             ${field("Missed", dashN(r.today.missed))}
           </div></section>
         <section><h4>Karma Connect</h4><div class="tm-grid tm-grid2">
-          ${field("Access", r.app ? (r.app.disabled ? "Disabled" : esc(r.app.role[0].toUpperCase() + r.app.role.slice(1))) : "No account")}
+          ${field("Access", r.app ? (r.app.disabled ? "Disabled" : esc(roleLabel(r.app.role))) : "No account")}
           ${field("Dialler", r.app ? (r.app.connected ? (r.app.dialsAs && r.app.dialsAs !== r.ext ? `Connected as x${esc(r.app.dialsAs)}` : "Connected") : "Not connected") : "")}
           ${field("Last active", r.app ? esc(tmSince(r.app.lastActive)) : "")}
           ${field("Email", esc(r.email))}

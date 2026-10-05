@@ -15,6 +15,13 @@
  * management view. A member seeing a league table of their colleagues is a
  * different product decision and not one to make by accident.
  *
+ * WHO IT IS ABOUT: the sales reps (role sales_rep, migration 015). A member
+ * who researches or imports is not meant to call, and listing them every day
+ * as "no calls" buried the people the report is for. Anyone else who did call
+ * still appears, so the total never disagrees with the rows. Until somebody
+ * has been marked a sales rep it falls back to everyone, as before — an empty
+ * report the morning after deploy would read as a broken one.
+ *
  * WHY YESTERDAY AND NOT TODAY: at 7am today has barely started. The useful
  * question in the morning is how yesterday went.
  *
@@ -61,15 +68,47 @@ async function recipients() {
 }
 
 /* The roster, so somebody who called nothing appears as a zero. Leaving them
-   out makes an idle day look like a quiet one, and the gap is the point. */
+   out makes an idle day look like a quiet one, and the gap is the point.
+   Sales reps only, once anybody holds the role (see WHO IT IS ABOUT). */
 async function roster() {
-  return (await query(
+  const all = (await query(
     `SELECT u.email, u.display_name, m.role
        FROM app_users u
        LEFT JOIN organization_memberships m ON m.user_id = u.id
       WHERE NOT u.disabled AND u.email LIKE '%@%'
       ORDER BY coalesce(u.display_name, u.email)`)).rows;
+  const reps = all.filter((u) => u.role === "sales_rep");
+  return { all, reps: reps.length ? reps : all, repsOnly: reps.length > 0 };
 }
+
+/* The rest of each rep's day: how their calls were dispositioned, the
+   follow-ups they booked, and the ones they let go past due. One query each,
+   grouped by person, for the same local day the rollup used. */
+async function detailFor(day) {
+  const [dispo, booked, overdue] = await Promise.all([
+    query(`SELECT lower(actor) AS who, meta->>'disposition' AS d, count(*)::int AS n
+             FROM activity_log
+            WHERE meta ? 'disposition' AND call_day(at, $2) = $1::date
+            GROUP BY 1, 2 ORDER BY 3 DESC`, [day, TZ]),
+    query(`SELECT lower(created_by) AS who, count(*)::int AS n
+             FROM lead_followups
+            WHERE call_day(created_at, $2) = $1::date AND cancelled_at IS NULL
+            GROUP BY 1`, [day, TZ]),
+    query(`SELECT lower(owner) AS who, count(*)::int AS n
+             FROM lead_followups
+            WHERE due_at < now() AND done_at IS NULL AND cancelled_at IS NULL
+            GROUP BY 1`),
+  ]);
+  const out = new Map();
+  const of = (who) => out.get(who) || (out.set(who, { dispositions: [], booked: 0, overdue: 0 }), out.get(who));
+  for (const r of dispo.rows) of(r.who).dispositions.push({ name: r.d, n: r.n });
+  for (const r of booked.rows) of(r.who).booked = r.n;
+  for (const r of overdue.rows) of(r.who).overdue = r.n;
+  return out;
+}
+
+const clock = (ts) => ts ? new Intl.DateTimeFormat("en-US",
+  { timeZone: TZ, hour: "numeric", minute: "2-digit" }).format(new Date(ts)) : "";
 
 /* force — ignore the once-a-day claim (a forced run also never claims, so it
            cannot consume the real one)
@@ -91,24 +130,38 @@ async function runCallDigest({ force = false, only = "", day = "" } = {}) {
   if (!force && !(await claim(JOB, today, { for: target })))
     return { skipped: "already sent today", day: target };
 
-  const team = await roster();
+  const { all, reps, repsOnly } = await roster();
+  const team = reps;
   const by = new Map(rows.map((r) => [String(r.actor).toLowerCase(), r]));
-
-  const people = team.map((u) => {
-    const r = by.get(u.email.toLowerCase());
-    return {
-      label: u.display_name || u.email, role: u.role || "member",
-      calls: r ? r.calls : 0, connected: r ? r.connected : 0,
-      placed: r ? r.placed : 0, seconds: r ? r.seconds : 0,
-    };
+  /* The day is already claimed, so the extra detail must never cost the
+     email: without it each rep still gets their numbers. */
+  const detail = await detailFor(target).catch((e) => {
+    console.error("[karma] call digest detail:", e.message);
+    return new Map();
   });
-  /* Callers who are not accounts — an owner string from the old system. They
-     made the calls, so hiding them would make the total disagree with the rows. */
+
+  const person = (label, role, r, who) => {
+    const d = detail.get(who) || { dispositions: [], booked: 0, overdue: 0 };
+    return {
+      label, role, calls: r ? r.calls : 0, connected: r ? r.connected : 0,
+      placed: r ? r.placed : 0, seconds: r ? r.seconds : 0, leads: r ? r.leads : 0,
+      noAnswer: r ? r.no_answer : 0, from: clock(r?.first_at), to: clock(r?.last_at),
+      dispositions: d.dispositions.slice(0, 4), booked: d.booked, overdue: d.overdue,
+    };
+  };
+  const people = team.map((u) => ({ ...person(u.display_name || u.email, u.role || "member",
+    by.get(u.email.toLowerCase()), u.email.toLowerCase()), rep: true }));
+  /* Anyone else who called: a manager taking a few, or an owner string from
+     the old system with no account. They made the calls, so hiding them would
+     make the total disagree with the rows — they are listed, just not as reps. */
   const known = new Set(team.map((u) => u.email.toLowerCase()));
+  const roleOf = new Map(all.map((u) => [u.email.toLowerCase(), u]));
   for (const r of rows) {
-    if (known.has(String(r.actor).toLowerCase())) continue;
-    people.push({ label: r.actor, role: "no account", calls: r.calls,
-      connected: r.connected, placed: r.placed, seconds: r.seconds });
+    const who = String(r.actor).toLowerCase();
+    if (known.has(who)) continue;
+    const u = roleOf.get(who);
+    people.push(person(u ? (u.display_name || u.email) : r.actor,
+      u ? (u.role || "member") : "no account", r, who));
   }
   people.sort((a, b) => b.calls - a.calls || a.label.localeCompare(b.label));
 
@@ -150,7 +203,8 @@ async function runCallDigest({ force = false, only = "", day = "" } = {}) {
         name: (p.display_name || "").split(" ")[0],
         dayLabel, day: target, tz: TZ,
         calls, connected, placed, people, vsPrev, link,
-        callers: rows.length, members: team.length,
+        callers: people.filter((p) => p.rep && p.calls > 0).length,
+        members: team.length, repsOnly,
       }, `${JOB}-${target}-${p.email}`);
       sent++;
     } catch (e) {

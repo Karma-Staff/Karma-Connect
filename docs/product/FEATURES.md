@@ -323,7 +323,8 @@ Book a reminder against a lead; it arrives by email when due.
 
 **Acceptance**
 
-- Sends at `DIGEST_HOUR` local in `DIGEST_TZ`, judged on the real local hour.
+- Sends on the first knock from `DIGEST_HOUR` to `DIGEST_LAST_HOUR` local in
+  `DIGEST_TZ` (GitHub's schedule runs hours late), judged on the real local hour.
 - Claimed once a day via `job_runs (job, ran_on)`, so a double knock cannot
   double-send.
 - Claim happens **before** the send, never after: losing a day's digest is a

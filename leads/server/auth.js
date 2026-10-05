@@ -42,7 +42,11 @@ const setAppPath = (p) => { APP_URL = p; };
    Mirrored in server/auth.cjs for Karma Connect's own users table, and in
    migrations/006_owner_role.sql. Three copies because the two products keep
    separate user rows on purpose. */
-const RANK = { member: 0, admin: 1, owner: 2 };
+/* sales_rep is a member on the phones: the same rank, so the same access.
+   It only decides whose calling the reports are about (migration 015). */
+const RANK = { member: 0, sales_rep: 0, admin: 1, owner: 2 };
+/* Every role a membership row may hold, for validating input. */
+const ROLES = ["owner", "admin", "member", "sales_rep"];
 const rankOf = (role) => RANK[role] ?? 0;
 
 /* The owner tier is bootstrapped from the environment, not the database.
@@ -103,7 +107,7 @@ const DEV_BYPASS = !!DEV_AUTH_EMAIL && process.env.NODE_ENV !== "production";
    salesperson's view can be checked without a second account. Admin-only
    surfaces are presentation; the real control is the API's 403s, and this
    exercises both. Only meaningful while the bypass is active. */
-const DEV_AUTH_ROLE = ["owner", "admin", "member"].includes(process.env.DEV_AUTH_ROLE)
+const DEV_AUTH_ROLE = ROLES.includes(process.env.DEV_AUTH_ROLE)
   ? process.env.DEV_AUTH_ROLE : null;
 if (DEV_AUTH_EMAIL && !DEV_BYPASS) {
   console.error("[karma] DEV_AUTH_EMAIL IGNORED — NODE_ENV=production. Sign-in stays required.");
@@ -398,4 +402,4 @@ function mountAuthRoutes(app) {
 
 module.exports = { requireUser, requireAdmin, requireOwner, requireRank,
   resolve, mountAuthRoutes, autoInvite, WORKOS_ON, setAppPath,
-  RANK, rankOf, isOwnerEmail };
+  RANK, ROLES, rankOf, isOwnerEmail };

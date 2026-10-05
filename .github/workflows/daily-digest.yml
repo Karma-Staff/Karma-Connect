@@ -9,11 +9,13 @@ name: Daily storm digest
 # app is not running and fires nothing. Something outside has to knock.
 # GitHub Actions is free and already has the repo.
 #
-# TWO TIMES, ONE EMAIL: cron here is UTC and has no idea about daylight
-# saving, so 11:00 UTC is 7am Eastern in summer and 6am in winter. Both are
-# fired; the server checks the real local hour in DIGEST_TZ and only sends
-# at 7, and job_runs (migration 009) means the other one is a no-op even if
-# both were to qualify.
+# THREE TIMES, ONE EMAIL: cron here is UTC and has no idea about daylight
+# saving, so 11:00 UTC is 7am Eastern in summer and 6am in winter. GitHub
+# also runs scheduled jobs late — hours late, in practice (10:47am to 3:25pm
+# Eastern in late Sept 2026). So the server sends on the first knock between
+# 7am and 4:59pm local (digest.js, LAST_HOUR), job_runs (migration 009) makes
+# every later knock that day a no-op, and the 15:00 UTC run is a backstop for
+# a morning whose earlier runs were dropped altogether.
 #
 # SETUP — two repository secrets (Settings -> Secrets and variables -> Actions):
 #   APP_URL     https://karma-connect-9s2z.onrender.com
@@ -26,11 +28,12 @@ on:
   schedule:
     - cron: "0 11 * * *"   # 7am Eastern while daylight saving is in effect
     - cron: "0 12 * * *"   # 7am Eastern the rest of the year
+    - cron: "0 15 * * *"   # backstop: 10-11am Eastern, if both were dropped
   workflow_dispatch:        # and a button, for testing it now
 
 jobs:
   knock:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # pinned: ubuntu-latest moves to Ubuntu 26 on 19 Oct 2026; move deliberately
     steps:
       - name: Is it configured?
         id: cfg

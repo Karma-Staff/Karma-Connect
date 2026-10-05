@@ -78,12 +78,12 @@ declared once for the group.
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/auth/callback` | — | [leads/server/auth.js:316](../../leads/server/auth.js#L316) |  |
-| GET | `/api/auth/callback` | — | [leads/server/auth.js:394](../../leads/server/auth.js#L394) |  |
-| GET | `/api/auth/login` | — | [leads/server/auth.js:306](../../leads/server/auth.js#L306) |  |
-| GET | `/api/auth/login` | — | [leads/server/auth.js:393](../../leads/server/auth.js#L393) |  |
-| POST | `/api/auth/logout` | — | [leads/server/auth.js:355](../../leads/server/auth.js#L355) |  |
-| POST | `/api/auth/logout` | — | [leads/server/auth.js:395](../../leads/server/auth.js#L395) |  |
+| GET | `/api/auth/callback` | — | [leads/server/auth.js:320](../../leads/server/auth.js#L320) |  |
+| GET | `/api/auth/callback` | — | [leads/server/auth.js:398](../../leads/server/auth.js#L398) |  |
+| GET | `/api/auth/login` | — | [leads/server/auth.js:310](../../leads/server/auth.js#L310) |  |
+| GET | `/api/auth/login` | — | [leads/server/auth.js:397](../../leads/server/auth.js#L397) |  |
+| POST | `/api/auth/logout` | — | [leads/server/auth.js:359](../../leads/server/auth.js#L359) |  |
+| POST | `/api/auth/logout` | — | [leads/server/auth.js:399](../../leads/server/auth.js#L399) |  |
 
 ### `/api/bulk`
 
@@ -149,7 +149,7 @@ declared once for the group.
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| POST | `/api/cron/daily` | — | [leads/server/digest.js:118](../../leads/server/digest.js#L118) | The knock. Not behind requireUser — the caller is a scheduler, not a person — so it carries a… |
+| POST | `/api/cron/daily` | — | [leads/server/digest.js:125](../../leads/server/digest.js#L125) | The knock. Not behind requireUser — the caller is a scheduler, not a person — so it carries a… |
 
 ### `/api/dialer`
 

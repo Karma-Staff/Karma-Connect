@@ -35,12 +35,12 @@ async function main() {
       console.log(`${t.revoked_at ? "REVOKED " : "active  "} ${t.name}  ` +
         `[${t.scopes.join(",")}]  since ${t.created_at.toISOString().slice(0, 10)}`);
   } else if (cmd === "user:add") {
-    if (!a) throw new Error("usage: user:add <email> [owner|admin|member]");
+    if (!a) throw new Error("usage: user:add <email> [owner|admin|member|sales_rep]");
     /* The terminal is deliberately the one place that can hand out any rank:
        it already needs the database password, so there is nothing left to
        protect. The owner tier still really comes from OWNER_EMAILS — this
        only keeps the table agreeing with it. */
-    const role = ["owner", "admin", "member"].includes(rest[0]) ? rest[0] : "member";
+    const role = ["owner", "admin", "member", "sales_rep"].includes(rest[0]) ? rest[0] : "member";
     const email = a.trim().toLowerCase();
     const u = (await query(
       `INSERT INTO app_users (email) VALUES ($1)
