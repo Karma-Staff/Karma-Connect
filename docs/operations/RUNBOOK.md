@@ -151,6 +151,7 @@ call log.
 
 | Variable | Notes |
 |---|---|
+| `ZOHO_CRM_OAUTH_CLIENT_ID` / `ZOHO_CRM_OAUTH_CLIENT_SECRET` | optional. A **Server-based Application** in the Zoho API console, redirect URI `<APP_URL>/api/crm/oauth/callback`. Lets each rep connect their own Zoho CRM (Calls tab) so their calls and Leads are owned by them in Zoho; anyone not connected, or refused, goes through the shared `ZOHO_CRM_*` account |
 | `RINGCENTRAL_CLIENT_ID` / `RINGCENTRAL_CLIENT_SECRET` | from a **Private**, **server-side web app** at developers.ringcentral.com. API access is included with a RingEX subscription — sign in with the RingEX admin account rather than creating a separate $10/month developer account |
 | `RINGCENTRAL_SERVER_URL` | defaults to `https://platform.ringcentral.com`. A `devtest` host is the sandbox and can only reach RingCentral test numbers |
 | `APP_URL` | the redirect URI is derived from it and must match the app registration **character for character** |

@@ -114,6 +114,8 @@ function mount(app, opts = {}) {
   app.use(crmSync.router);
   crmSync.startSweeper();
   app.use(require("./zoho-crm").router);
+  /* each person's own Zoho CRM sign-in, so what they create there is theirs */
+  app.use(require("./crm-identity").router);
   /* recording calls, and the manager's report built from them. After leads.js
      so its requireOwnLead guard has already run for /api/leads/:id paths. */
   app.use(require("./calls").router);

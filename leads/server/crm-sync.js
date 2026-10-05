@@ -13,6 +13,12 @@
                     name (POST /api/leads/:id/crm-lead). An existing CRM record
                     with that number is linked instead — never a second copy.
 
+   AS WHOM
+     A rep who has signed in to Zoho themselves (crm-identity.js) has their
+     Calls and Leads created as themselves, so Zoho files them as that rep's.
+     Anyone else's go through the service account. Which one it was is kept
+     on the row (meta.crm_as: "rep" | "shared").
+
    WHAT IS NOT SENT
      Calls dialled through Zoho Voice: Zoho Voice already writes those into
      the CRM itself (230k of them), so sending them too would double every
@@ -37,6 +43,7 @@ const { query } = require("./db");
 const { requireUser, requireAdmin, requireOwner } = require("./auth");
 const settings = require("./settings");
 const zoho = require("./zoho-crm");
+const people = require("./crm-identity");
 const activity = require("./activity");
 const dash = require("./rc-dashboard");
 
@@ -144,8 +151,10 @@ const ELIGIBLE = `
 const ROW = `
   SELECT a.id, a.at, a.actor, a.user_id, a.lead_id, a.lead_name, a.meta,
          l.company, l.phone,
-         coalesce(nullif(btrim(u.display_name), ''), a.actor) AS rep_name
+         coalesce(nullif(btrim(u.display_name), ''), a.actor) AS rep_name,
+         ci.zoho_name AS rep_crm
     FROM activity_log a
+    LEFT JOIN crm_identities ci ON ci.user_id = a.user_id
     LEFT JOIN leads l ON l.id = a.lead_id
     LEFT JOIN app_users u ON lower(u.email) = lower(a.actor)`;
 
@@ -175,14 +184,16 @@ async function tick() {
       const row = (await query(`${ROW} WHERE a.id = $1`, [id])).rows[0];
       try {
         const { call, link } = await buildCall(row);
-        const r = await zoho.crm("/Calls", { method: "POST", body: JSON.stringify({ data: [call] }) });
-        const d = r?.data?.[0];
+        /* As the rep, if they have signed in to Zoho themselves — then the
+           Call is theirs in the CRM. Otherwise as the service account. */
+        const w = await people.writeAs(row.user_id, "/Calls", { method: "POST", body: JSON.stringify({ data: [call] }) });
+        const d = w.d?.data?.[0];
         if (!d || d.status !== "success") throw new Error(d?.message || d?.code || "Zoho refused the call");
         await query(
           `UPDATE activity_log SET meta = meta || jsonb_build_object(
              'crm_state', 'done', 'crm_call_id', $2::text, 'crm_synced_at', now(),
-             'crm_related', $3::jsonb) - 'crm_error'
-            WHERE id = $1`, [id, String(d.details.id), JSON.stringify(link)]);
+             'crm_related', $3::jsonb, 'crm_as', $4::text) - 'crm_error'
+            WHERE id = $1`, [id, String(d.details.id), JSON.stringify(link), w.as]);
         sent++;
       } catch (e) {
         failed++;
@@ -266,7 +277,8 @@ router.get("/api/crm/sync/preview", requireAdmin, async (req, res, next) => {
     const rows = (await query(`${ROW} WHERE ${ELIGIBLE} ORDER BY a.at DESC LIMIT 5`, [since])).rows;
     const items = [];
     for (const row of rows) {
-      try { items.push({ at: row.at, rep: row.rep_name, lead: row.lead_name, ...(await buildCall(row)) }); }
+      const as = row.rep_crm ? { as: "rep", asName: row.rep_crm } : { as: "shared" };
+      try { items.push({ at: row.at, rep: row.rep_name, lead: row.lead_name, ...as, ...(await buildCall(row)) }); }
       catch (e) { items.push({ at: row.at, rep: row.rep_name, lead: row.lead_name, error: e.message }); }
     }
     res.json({ on: !!cfg.on, since, items,
@@ -301,7 +313,7 @@ router.post("/api/leads/:id/crm-lead", requireUser, express.json({ limit: "4kb" 
     /* The CRM may already hold this number — link to it, never duplicate. */
     let link = await zoho.findInCrm(lead.phone);
     if (link.error) return res.status(502).json({ error: "Couldn't check Zoho CRM for duplicates: " + link.error });
-    let created = false;
+    let created = false, as = null;
     if (!link.module) {
       const rec = {
         First_Name: first || undefined, Last_Name: last, Email: email || undefined,
@@ -311,8 +323,11 @@ router.post("/api/leads/:id/crm-lead", requireUser, express.json({ limit: "4kb" 
         Lead_Source: "Cold Call", Lead_Status: "Contacted",
         Description: `Created from Karma Connect by ${req.user.name || req.user.email} after a connected call on ${new Date().toISOString().slice(0, 10)}.`,
       };
-      const r = await zoho.crm("/Leads", { method: "POST", body: JSON.stringify({ data: [rec] }) });
-      const d = r?.data?.[0];
+      /* Created as the rep when they have signed in to Zoho, so the Lead is
+         theirs; the duplicate check above stays on the service account. */
+      const w = await people.writeAs(req.user.id, "/Leads", { method: "POST", body: JSON.stringify({ data: [rec] }) });
+      const d = w.d?.data?.[0];
+      as = w.as;
       if (d?.code === "DUPLICATE_DATA" && d.details?.id) {
         link = { module: "Leads", id: String(d.details.id), name: rec.Company };
       } else if (!d || d.status !== "success") {
@@ -338,7 +353,8 @@ router.post("/api/leads/:id/crm-lead", requireUser, express.json({ limit: "4kb" 
         : `Already in Zoho CRM (${link.module}: ${link.name || link.id}) — linked, not duplicated`,
         crm_link: { module: link.module, id: link.id } },
     });
-    res.json({ ok: true, created, module: link.module, id: link.id, name: link.name || null });
+    res.json({ ok: true, created, module: link.module, id: link.id, name: link.name || null,
+      ...(created ? { as } : {}) });
   } catch (e) { next(e); }
 });
 

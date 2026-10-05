@@ -4008,6 +4008,18 @@ function kdRenderSettings() {
           <span>The number your calls go out as</span></div>
           <span class="kd-row-v">${KD.callerId ? esc(kdFmtNum(KD.callerId)) : "—"}</span></div>
       </div>
+      ${CRMME && CRMME.enabled ? `<div class="kd-group">
+        <div class="kd-row">
+          <div class="kd-row-t"><b>Zoho CRM</b>
+            <span>${CRMME.connected
+              ? (CRMME.lastError ? "Refused — going in under the shared account"
+                : "Calls and leads filed under " + esc(CRMME.name || CRMME.email || "you"))
+              : "Not connected — calls go in under the shared account"}</span></div>
+          ${CRMME.connected && !CRMME.lastError
+            ? `<span class="kd-state-pill ok"><i></i>Connected</span>`
+            : `<a class="kd-pill" href="${esc(CRMME.connectUrl)}">${CRMME.connected ? "Reconnect" : "Connect"}</a>`}
+        </div>
+      </div>` : ""}
       <div class="kd-group">
         <div class="kd-row">
           <div class="kd-row-t"><b>Dark mode</b><span>Same switch as the theme button up top</span></div>
@@ -6368,6 +6380,7 @@ function renderCallReport(d) {
 
   el.innerHTML = `
     ${rcBar}
+    ${crmMeBar()}
     ${zohoBar}
     <div class="kpi-strip">
       ${kpiTile(d.isToday ? "Calls today" : "Calls", t.calls.toLocaleString(),
@@ -7636,6 +7649,13 @@ function wire() {
         .catch((err) => toast(err.message, 9000));
       return;
     }
+    if (e.target.closest("#crm-disconnect")) {
+      if (!confirm("Disconnect Zoho CRM? Your calls and leads will go into Zoho under the shared account until you connect again.")) return;
+      api("/api/crm/me/connect", { method: "DELETE" })
+        .then(() => { toast("Zoho CRM disconnected"); return crmMeLoad(); })
+        .catch((err) => toast("Could not disconnect: " + err.message));
+      return;
+    }
     if (e.target.closest("#rc-disconnect")) {
       if (!confirm("Disconnect RingCentral? You will dial from the shared line until you sign in again.")) return;
       api("/api/voice/rc/connect", { method: "DELETE" })
@@ -8509,6 +8529,40 @@ async function crmPaintChip() {
   } catch (e) { txt.textContent = "Zoho CRM · unavailable"; }
 }
 
+/* ---------- each person's own Zoho CRM sign-in ----------
+   Optional, and each rep does it themselves: once connected, the calls and
+   Leads Karma Connect creates in Zoho are filed under them instead of the
+   shared account (server/crm-identity.js). */
+let CRMME = null;
+
+async function crmMeLoad() {
+  try { CRMME = await api("/api/crm/me"); } catch (e) { CRMME = null; }
+  const bar = $("crm-me-bar");
+  if (bar) bar.outerHTML = crmMeBar();
+  kdRenderSettings();          // a no-op unless the settings panel is open
+}
+
+function crmMeBar() {
+  const c = CRMME;
+  if (!c) return `<div id="crm-me-bar" hidden></div>`;
+  if (!c.enabled) return isAdmin()
+    ? `<div id="crm-me-bar" class="rc-bar"><span>Personal Zoho CRM sign-in isn't set up on this server yet,
+        so every call and Lead goes into Zoho under the shared account.</span></div>`
+    : `<div id="crm-me-bar" hidden></div>`;
+  if (c.connected && c.lastError) return `<div id="crm-me-bar" class="rc-bar">
+      <b>Zoho CRM refused your sign-in.</b> ${esc(c.lastError)} — your calls are going in under the shared account.
+      <a class="btn-primary rc-go" href="${esc(c.connectUrl)}">Reconnect Zoho CRM</a>
+      <button class="btn-ghost rc-off" id="crm-disconnect">Disconnect</button></div>`;
+  if (c.connected) return `<div id="crm-me-bar" class="rc-bar on">
+      <span class="rc-dot"></span>
+      Zoho CRM connected${c.name || c.email ? " as " + esc(c.name || c.email) : ""} — your calls and leads are filed under you
+      <button class="btn-ghost rc-off" id="crm-disconnect">Disconnect</button></div>`;
+  return `<div id="crm-me-bar" class="rc-bar">
+      <b>Connect your Zoho CRM.</b> The calls and leads you create are then filed under you in Zoho —
+      until then they go in under the shared account.
+      <a class="btn-primary rc-go" href="${esc(c.connectUrl)}">Connect Zoho CRM</a></div>`;
+}
+
 async function openCrmSync() {
   $("modal-title").textContent = "Zoho CRM call logging";
   $("modal-body").innerHTML = `<p class="modal-sub">Loading…</p>`;
@@ -8517,6 +8571,8 @@ async function openCrmSync() {
     let s, prev = null;
     try { s = await api("/api/crm/sync"); } catch (e) { $("modal-body").innerHTML = `<p class="login-error">${esc(e.message)}</p>`; return; }
     try { prev = await api("/api/crm/sync/preview"); } catch (e) { prev = { error: e.message }; }
+    let ppl = null;
+    try { ppl = await api("/api/crm/people"); } catch (e) { ppl = null; }
     const st = s.stats;
     $("modal-body").innerHTML = `
       <p class="modal-sub">When this is on, every RingCentral call placed from Karma Connect is written into
@@ -8544,10 +8600,23 @@ async function openCrmSync() {
             : `<div class="crm-item">
               <div class="crm-item-h"><b>${esc(it.call.Subject)}</b>
                 <span class="dash-chip">${it.link ? `→ ${esc(it.link.module)}: ${esc(it.link.name || it.link.id)}` : "no CRM match — logged unattached"}</span></div>
-              <div class="crm-item-m">${esc(new Date(it.call.Call_Start_Time).toLocaleString())} · ${esc(it.call.Call_Duration)}
+              <div class="crm-item-m">${it.as === "rep" ? `Filed under <b>${esc(it.asName)}</b> · ` : "Shared account · "}${esc(new Date(it.call.Call_Start_Time).toLocaleString())} · ${esc(it.call.Call_Duration)}
                 ${it.call.Call_Result ? ` · Call Result <b>${esc(it.call.Call_Result)}</b>` : ""}</div>
               <pre>${esc(it.call.Description)}</pre></div>`).join("")}</div>
             <p class="dash-mute crm-fine">${esc(prev.note)}</p>`}
+      ${ppl ? `<h4 class="crm-h">Who files calls under their own name</h4>
+        <p class="dash-mute crm-fine">Anyone not connected goes into Zoho under the shared account.</p>
+        ${ppl.enabled ? "" : `<p class="dash-mute">Personal sign-in isn't set up on this server yet
+          (ZOHO_CRM_OAUTH_CLIENT_ID / _SECRET) — everything goes in under the shared account.</p>`}
+        <div class="crm-people">${ppl.people.map((p) => `<div class="crm-person">
+          <span class="avatar avatar-sm" style="background:${avColor(p.email)}">${esc(initials(p.name))}</span>
+          <span class="crm-person-n">${esc(p.name)}</span>${p.role === "sales_rep" ? `<span class="asg-tag">Sales rep</span>` : ""}
+          ${p.connected_at
+            ? (p.last_error ? `<span class="dash-chip bad" title="${esc(p.last_error)}">refused — reconnect</span>`
+              : `<span class="dash-chip ok">as ${esc(p.zoho_name || p.zoho_email || "themselves")}</span>`)
+            : `<span class="dash-mute">not connected</span>`}
+        </div>`).join("")}</div>
+        <p class="dash-mute crm-fine">Each person connects from the Calls tab or the dialler's Settings.</p>` : ""}
       <div class="modal-actions"><button type="button" class="btn-secondary" id="modal-cancel">Close</button></div>`;
     $("modal-cancel").addEventListener("click", closeModal);
     $("crm-toggle")?.addEventListener("click", async () => {
@@ -9236,6 +9305,7 @@ async function boot() {
   kdStartReminders();
   pdRepStart();
   crmStart();
+  crmMeLoad();
 }
 
 async function init() {
@@ -9246,6 +9316,14 @@ async function init() {
     usp.delete("authError");
     history.replaceState(null, "",
       location.pathname + (usp.toString() ? "?" + usp.toString() : ""));
+  }
+  /* back from Zoho's sign-in page: say how it went, then tidy the URL */
+  if (usp.get("crm")) {
+    const ok = usp.get("crm") === "ok", msg = usp.get("msg") || "";
+    setTimeout(() => toast(ok ? "Zoho CRM connected — your calls and leads will be filed under you"
+      : "Zoho CRM didn't connect: " + (msg || "unknown error"), ok ? 5000 : 9000), 600);
+    usp.delete("crm"); usp.delete("msg");
+    history.replaceState(null, "", location.pathname + (usp.toString() ? "?" + usp.toString() : ""));
   }
   if (usp.get("theme") !== null) localStorage.setItem("kl_theme", usp.get("theme"));
   // compact is the default now; browsers that saved the old "cozy" default flip once

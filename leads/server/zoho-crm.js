@@ -7,11 +7,11 @@
  * with a message that blames the wrong thing — which has already happened once
  * on this project.
  *
- * ONE IDENTITY, NOT PER REP. The opposite of RingCentral, and deliberately:
- * telephony has to be per person because the caller ID and the call log are
- * theirs, but a CRM write is the system recording what the company did. One
- * service identity keeps the audit trail legible and avoids six people each
- * holding a token that can rewrite the CRM.
+ * THE SERVICE IDENTITY. One account in the environment, used for every read
+ * (the duplicate check has to see the whole CRM) and for any write made for
+ * somebody who has not signed in to Zoho themselves. Reps who have are written
+ * as themselves instead — see crm-identity.js — because Zoho files a record
+ * under whoever creates it, and the team wants each rep's calls to be theirs.
  *
  * NOTHING IS WRITTEN YET. This file is the connection and a read-only survey.
  * The survey exists because the shape of the sync depends on how the CRM is
@@ -277,4 +277,4 @@ router.get("/api/crm/dedupe", requireAdmin, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-module.exports = { router, ENABLED, crm, accessToken, digits10, findInCrm };
+module.exports = { router, ENABLED, crm, accessToken, digits10, findInCrm, ACCOUNTS, API };

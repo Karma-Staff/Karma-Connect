@@ -374,4 +374,4 @@ router.get("/api/voice/rc/extensions", requireUser, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-module.exports = { router, ENABLED, SANDBOX, SERVER, accessFor, identity };
+module.exports = { router, ENABLED, SANDBOX, SERVER, accessFor, identity, signState, readState };
