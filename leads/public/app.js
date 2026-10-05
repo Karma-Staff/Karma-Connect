@@ -2807,7 +2807,7 @@ function reportCall(raw, state) {
      hang-up is what should move a hands-free session on — not a button
      press after the fact. */
   if (typeof campaignCallEnded === "function") campaignCallEnded(c.leadId, outcome);
-  fetch("/api/leads/" + c.leadId + "/call", {
+  return fetch("/api/leads/" + c.leadId + "/call", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -3109,6 +3109,7 @@ const KD_IC = {
   pause: "M9 5v14M15 5v14",
   play: "M8 5l11 7-11 7V5z",
   rec: "M12 20a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM12 14.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z",
+  vm: "M7 15a3 3 0 1 1 0-6 3 3 0 0 1 0 6zm10 0a3 3 0 1 1 0-6 3 3 0 0 1 0 6zM7 15h10",
   transfer: "M4 8h14M14 4l4 4-4 4M20 16H6M10 12l-4 4 4 4",
   more: "M6 12h.01M12 12h.01M18 12h.01",
 };
@@ -3321,11 +3322,237 @@ function kdRenderLead(live, calling, ended, active) {
   kdRenderPanel();
 }
 
+/* ---------------- voicemail drop ----------------
+   A rep records their voicemail message once (Settings → Voicemail). On a call
+   that reaches an answering machine they wait for the beep and press VM drop:
+   the recording plays into the line in place of their microphone, the call
+   hangs up when it finishes, and it is logged as Voicemail. The recording is
+   kept on the server (leads/server/vm-drop.js) so it follows them anywhere.
+
+   How it plays into the call: the outgoing audio of a WebRTC call is one
+   track on one RTCRtpSender. replaceTrack() swaps the microphone for a track
+   fed from the decoded recording — no renegotiation, nothing the far end can
+   tell apart from a person speaking. */
+const VM = { meta: null, bytes: null, rec: null, draft: null, playing: null, playingSaved: false, drop: null };
+const VM_MAX_SEC = 90;
+
+async function vmLoad() {
+  try { VM.meta = await api("/api/voice/vmdrop"); } catch (e) { VM.meta = null; }
+  VM.bytes = null;                      // fetched on first use, then kept
+  if (KD.session) kdRender();
+}
+
+async function vmBytes() {
+  if (VM.bytes) return VM.bytes;
+  const r = await fetch("/api/voice/vmdrop/audio", { credentials: "same-origin" });
+  if (!r.ok) throw new Error("couldn't load your voicemail recording");
+  VM.bytes = await r.arrayBuffer();
+  return VM.bytes;
+}
+
+const vmClock = (s) => `${Math.floor(s / 60)}:${String(Math.round(s) % 60).padStart(2, "0")}`;
+
+/* ---- recording one ---- */
+
+async function vmRecordStart() {
+  if (VM.rec) return;
+  if (KD.session) return kdToast("Finish the call before recording your voicemail");
+  let stream;
+  try {
+    const p = kdAudioPrefs();
+    stream = await navigator.mediaDevices.getUserMedia({ audio:
+      !p.system && p.input && p.input !== "default" ? { deviceId: { exact: p.input } } : true });
+  } catch (e) { return kdToast("Microphone blocked — allow it in the browser to record"); }
+  const type = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/webm", "audio/mp4"]
+    .find((t) => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || "";
+  const recorder = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
+  const chunks = [];
+  recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  recorder.onstop = () => {
+    stream.getTracks().forEach((t) => t.stop());
+    const secs = (Date.now() - VM.rec.at) / 1000;
+    clearInterval(VM.rec.tick);
+    const blob = new Blob(chunks, { type: (recorder.mimeType || type || "audio/webm").split(";")[0] });
+    VM.rec = null;
+    VM.draft = secs < 1 ? null : { blob, secs, url: URL.createObjectURL(blob) };
+    if (!VM.draft) kdToast("That was too short — try again");
+    kdRenderSettings();
+  };
+  VM.rec = { recorder, at: Date.now(),
+    tick: setInterval(() => {
+      const el = kdEl("vm-rec-time");
+      const s = (Date.now() - VM.rec.at) / 1000;
+      if (el) el.textContent = vmClock(s);
+      if (s >= VM_MAX_SEC) vmRecordStop();
+    }, 250) };
+  recorder.start();
+  kdRenderSettings();
+}
+
+function vmRecordStop() {
+  if (VM.rec && VM.rec.recorder.state !== "inactive") VM.rec.recorder.stop();
+}
+
+function vmPlay(url, saved) {
+  if (VM.playing) { VM.playing.pause(); VM.playing = null; VM.playingSaved = false; kdRenderSettings(); return; }
+  const a = new Audio(url);
+  const p = kdAudioPrefs();
+  if (!p.system && p.output && a.setSinkId) a.setSinkId(p.output).catch(() => {});
+  a.onended = () => { VM.playing = null; VM.playingSaved = false; kdRenderSettings(); };
+  VM.playing = a;
+  VM.playingSaved = !!saved;
+  a.play().catch(() => { VM.playing = null; kdToast("Couldn't play it"); });
+  kdRenderSettings();
+}
+
+async function vmSave() {
+  if (!VM.draft) return;
+  try {
+    const r = await fetch("/api/voice/vmdrop", { method: "PUT", credentials: "same-origin",
+      headers: { "Content-Type": VM.draft.blob.type || "audio/webm", "X-Seconds": String(VM.draft.secs.toFixed(2)) },
+      body: VM.draft.blob });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || "HTTP " + r.status);
+    URL.revokeObjectURL(VM.draft.url);
+    VM.draft = null;
+    await vmLoad();
+    kdToast("Voicemail saved — use VM drop on your next voicemail");
+  } catch (e) { kdToast("Couldn't save: " + e.message); }
+  kdRenderSettings();
+}
+
+async function vmDelete() {
+  if (!confirm("Delete your recorded voicemail?")) return;
+  try { await api("/api/voice/vmdrop", { method: "DELETE" }); await vmLoad(); kdToast("Voicemail deleted"); }
+  catch (e) { kdToast("Couldn't delete: " + e.message); }
+  kdRenderSettings();
+}
+
+function vmRenderSettings(box) {
+  const m = VM.meta || { has: false };
+  const playingSaved = VM.playing && VM.playingSaved;
+  if (VM.rec) {
+    box.innerHTML = `
+      <div class="vm-card vm-live">
+        <span class="vm-dot"></span>
+        <div class="vm-t"><b>Recording…</b><span>Speak your voicemail message. Stops by itself at ${vmClock(VM_MAX_SEC)}.</span></div>
+        <span id="vm-rec-time" class="vm-time">0:00</span>
+      </div>
+      <button class="kd-primary vm-stop" data-set="vm-stop">Stop recording</button>`;
+    return;
+  }
+  if (VM.draft) {
+    box.innerHTML = `
+      <div class="vm-card">
+        <div class="vm-t"><b>New recording · ${vmClock(VM.draft.secs)}</b><span>Listen back, then save it — or record again.</span></div>
+      </div>
+      <div class="vm-btns">
+        <button class="kd-pill" data-set="vm-play-draft">${VM.playing ? "Stop" : "Play"}</button>
+        <button class="kd-pill" data-set="vm-rec">Record again</button>
+        <button class="kd-pill" data-set="vm-discard">Discard</button>
+      </div>
+      <button class="kd-primary" data-set="vm-save">Save as my voicemail</button>`;
+    return;
+  }
+  box.innerHTML = `
+    <div class="vm-card">
+      <div class="vm-t">${m.has
+        ? `<b>Your voicemail · ${m.seconds ? vmClock(m.seconds) : "saved"}</b><span>Recorded ${esc(relTime(m.updatedAt))}</span>`
+        : `<b>No voicemail recorded</b><span>Record it once, then drop it on any call that reaches voicemail.</span>`}</div>
+    </div>
+    <div class="vm-btns">
+      ${m.has ? `<button class="kd-pill" data-set="vm-play">${playingSaved ? "Stop" : "Play"}</button>` : ""}
+      <button class="kd-pill" data-set="vm-rec">${m.has ? "Re-record" : "Record"}</button>
+      ${m.has ? `<button class="kd-pill" data-set="vm-del">Delete</button>` : ""}
+    </div>
+    <p class="kd-hint">On a call: when you hear the voicemail beep, press <b>VM drop</b>. Your message plays,
+      the call hangs up when it ends, and it's logged as Voicemail.</p>`;
+}
+
+async function vmSettingAction(which) {
+  if (which === "vm-rec") { if (VM.draft) { URL.revokeObjectURL(VM.draft.url); VM.draft = null; } return vmRecordStart(); }
+  if (which === "vm-stop") return vmRecordStop();
+  if (which === "vm-play-draft") return VM.draft && vmPlay(VM.draft.url);
+  if (which === "vm-play") {
+    if (VM.playing) return vmPlay();
+    try {
+      const url = URL.createObjectURL(new Blob([await vmBytes()], { type: VM.meta?.mime || "audio/webm" }));
+      vmPlay(url, true);
+    } catch (e) { kdToast(e.message); }
+    return;
+  }
+  if (which === "vm-save") return vmSave();
+  if (which === "vm-discard") { if (VM.draft) URL.revokeObjectURL(VM.draft.url); VM.draft = null; return kdRenderSettings(); }
+  if (which === "vm-del") return vmDelete();
+}
+
+/* ---- dropping it into a call ---- */
+
+async function kdVmDrop() {
+  const s = KD.session;
+  if (!s || KD.phase !== "live") return;
+  if (VM.drop) return kdVmDropCancel();
+  if (!VM.meta?.has) {
+    KD.view = "settings"; KD.stab = "vm"; kdRender();
+    return kdToast("Record your voicemail first — Settings → Voicemail");
+  }
+  const pc = s.rtcPeerConnection;
+  const sender = pc?.getSenders?.().find((x) => x.track && x.track.kind === "audio");
+  if (!sender) return kdToast("Voicemail drop isn't available on this call");
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const buf = await ctx.decodeAudioData((await vmBytes()).slice(0));
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const dest = ctx.createMediaStreamDestination();
+    src.connect(dest);
+    const mic = sender.track;
+    await sender.replaceTrack(dest.stream.getAudioTracks()[0]);
+    KD.muted = false;
+    VM.drop = { ctx, src, sender, mic, ends: Date.now() + buf.duration * 1000, done: false };
+    src.onended = () => {
+      if (!VM.drop || VM.drop.done) return;
+      VM.drop.done = true;
+      KD.vmDropped = true;
+      kdVmDropCleanup();
+      if (KD.session === s) kdGuard(() => s.hangup(), "hang up").catch(() => {});
+    };
+    src.start();
+    VM.drop.tick = setInterval(() => kdRender(), 500);
+    kdRender();
+    kdToast("Leaving your voicemail — the call ends when it finishes");
+  } catch (e) {
+    console.warn("[karma] voicemail drop:", e);
+    kdVmDropCleanup();
+    kdToast("Couldn't play your voicemail — " + (describeErr(e) || "unknown"));
+  }
+}
+
+/* Pressed again mid-message: stop it and give the rep their microphone back. */
+function kdVmDropCancel() {
+  if (!VM.drop) return;
+  VM.drop.done = true;
+  const { sender, mic } = VM.drop;
+  kdVmDropCleanup();
+  if (sender && mic && mic.readyState === "live") sender.replaceTrack(mic).catch(() => {});
+  kdToast("Voicemail stopped — you're back on the line");
+  kdRender();
+}
+
+function kdVmDropCleanup() {
+  const d = VM.drop;
+  if (!d) return;
+  clearInterval(d.tick);
+  try { d.src.onended = null; d.src.stop(); } catch (e) { /* already stopped */ }
+  d.ctx.close().catch(() => {});
+  VM.drop = null;
+}
+
 function kdRenderControls(live) {
-  /* Six, not the seven the mock-up drew. "Voice drop" was the seventh and
-     there is no such primitive in ringcentral-web-phone — toVoicemail() sends
-     an INCOMING call to voicemail, which is a different thing — so rather than
-     ship a button that apologises, it is not here. */
+  /* Seven. "VM drop" plays the rep's recorded voicemail into the call — the
+     SDK has no primitive for it (toVoicemail() sends an INCOMING call to
+     voicemail, a different thing), so it swaps the outgoing audio track
+     itself; see kdVmDrop. */
   const ctl = (key, label, icon, on, tone) =>
     `<div class="kd-ctl">
        <button data-ctl="${key}" class="${tone || ""}" aria-pressed="${on ? "true" : "false"}"
@@ -3338,6 +3565,8 @@ function kdRenderControls(live) {
     ctl("hold", KD.held ? "Resume" : "Hold", KD.held ? KD_IC.play : KD_IC.pause, KD.held, "gold"),
     ctl("rec", KD.rec ? "Stop rec" : "Record", KD_IC.rec, KD.rec, "red"),
     ctl("transfer", "Transfer", KD_IC.transfer, false),
+    ctl("vmdrop", VM.drop ? "Stop · " + vmClock(Math.max(0, (VM.drop.ends - Date.now()) / 1000)) : "VM drop",
+      KD_IC.vm, !!VM.drop, "gold"),
     ctl("more", "More", KD_IC.more, false),
   ].join("");
 }
@@ -4033,6 +4262,8 @@ function kdRenderSettings() {
     return;
   }
 
+  if (tab === "vm") return vmRenderSettings(box);
+
   const p = kdAudioPrefs();
   const dv = KD.devices || { inputs: [], outputs: [], labeled: false };
   const sinkOk = typeof HTMLMediaElement !== "undefined" && "setSinkId" in HTMLMediaElement.prototype;
@@ -4068,6 +4299,7 @@ function kdRenderSettings() {
 }
 
 function kdSetting(which) {
+  if (String(which).startsWith("vm-")) return vmSettingAction(which);
   if (which === "theme") { kdEl("theme-toggle")?.click(); return kdRenderSettings(); }
   if (which === "retry") return rcRetry().then(kdRenderSettings);
   if (which === "perm") return kdAskMic();
@@ -4203,7 +4435,11 @@ function kdDial() {
 
 function kdHangup() {
   if (!KD.session) return;
-  kdGuard(() => KD.session.hangup(), "hang up").catch(() => {});
+  /* Before the far end answers there is no call to hang up yet, only an
+     invitation: SIP withdraws that with CANCEL, and a BYE is refused. */
+  const s = KD.session;
+  const ringing = KD.phase === "calling" && typeof s.cancel === "function";
+  kdGuard(() => (ringing ? s.cancel() : s.hangup()), ringing ? "cancel the call" : "hang up").catch(() => {});
 }
 
 function kdControl(which) {
@@ -4231,13 +4467,24 @@ function kdControl(which) {
     /* On-demand recording is an account setting in RingCentral, not something
        the SDK can turn on. If it is off this rejects, and the message says so
        rather than leaving a button that silently does nothing. */
-    kdGuard(() => (want ? s.startRecording() : s.stopRecording()),
-      want ? "start recording" : "stop recording")
-      .then(() => { KD.rec = want; kdRender(); })
-      .catch(() => kdToast("Call recording is off for this RingCentral account"));
+    /* RingCentral answers a refused request with a result code rather than
+       an error, so a resolved promise is not success — code 0 is. */
+    (want ? s.startRecording() : s.stopRecording())
+      .then((r) => {
+        if (r && r.code !== undefined && +r.code !== 0)
+          throw new Error(r.description || r.message || "code " + r.code);
+        KD.rec = want; kdRender();
+        kdToast(want ? "Recording this call" : "Recording stopped");
+      })
+      .catch((e) => {
+        console.warn("[karma] recording:", e);
+        kdToast("Couldn't " + (want ? "start" : "stop") + " recording — " + (describeErr(e)
+          || "on-demand recording may be off for this RingCentral account"));
+      });
     return;
   }
   if (which === "keypad") { KD.view = "keypad"; return kdRender(); }
+  if (which === "vmdrop") return kdVmDrop();
   if (which === "transfer") return kdOpenTransfer();
   if (which === "more") return kdOpenMenu();
 }
@@ -4596,14 +4843,26 @@ async function rcCall(digits, name, leadId) {
     callbackExt: camp?.callback?.ext || null, campaign: camp?.name || null };
   KD.callAs = camp?.callback?.number || null;
 
-  const session = await VOICE.rc.call(digits, callAs);
-  VOICE.rcSession = session;
+  /* RingCentral's call() does not return until the far end ANSWERS (or the
+     call fails), and it fires "answered" just before returning. Listening
+     after the await therefore missed every answer: the dialler sat on
+     "calling", the in-call controls stayed disabled, a ringing call could
+     not be hung up, and every call was logged as no-answer. The session is
+     handed out by the phone's "outboundCall" event the moment it exists,
+     before anything is sent — so everything is wired there instead. */
+  let session = null;
   const started = Date.now();
+  const adopt = (s) => {
+    session = s;
+    VOICE.rcSession = s;
+    KD.session = s;
+    wire(s);
+  };
+  const onOutbound = (s) => { VOICE.rc.off("outboundCall", onOutbound); adopt(s); };
 
-  KD.session = session;
   KD.phase = "calling";
   KD.number = digits;
-  KD.muted = false; KD.held = false; KD.rec = false;
+  KD.muted = false; KD.held = false; KD.rec = false; KD.vmDropped = false;
   KD.elapsed = 0; KD.started = started;
   KD.lastOutcome = null;
   KD.view = "lead";
@@ -4621,26 +4880,40 @@ async function rcCall(digits, name, leadId) {
   KD.dialAt = started; KD.answerAt = null;
   kdLive("ringing");
 
-  session.on("ringing", () => { KD.phase = "calling"; kdRender(); });
-  session.on("answered", () => {
-    VOICE.call.connected = true;
-    KD.phase = "live";
-    /* The clock restarts on answer so it reads talk time rather than time
-       since dialling — the number a rep glances at mid-call is "how long have
-       I had this person", not "how long ago did I press the button". */
-    KD.started = Date.now(); KD.elapsed = 0;
-    KD.answerAt = KD.started;
-    kdLive("live");
-    kdRender();
-    kdToast("Connected to " + (name || kdFmtNum(digits)));
-  });
+  const wire = (session) => {
+    session.on("ringing", () => { KD.phase = "calling"; kdRender(); });
+    session.on("answered", () => {
+      VOICE.call.connected = true;
+      KD.phase = "live";
+      /* The clock restarts on answer so it reads talk time rather than time
+         since dialling — the number a rep glances at mid-call is "how long have
+         I had this person", not "how long ago did I press the button". */
+      KD.started = Date.now(); KD.elapsed = 0;
+      KD.answerAt = KD.started;
+      kdLive("live");
+      kdRender();
+      kdToast("Connected to " + (name || kdFmtNum(digits)));
+    });
+    /* A refused call fires "failed" and then "disposed"; finish runs once. */
+    session.on("disposed", () => finish(VOICE.call.connected ? "connected" : "no-answer"));
+    /* RingCentral says why an unanswered call ended: busy, nobody picked up
+       (or the rep cancelled while it rang), or a real failure such as a bad
+       number. Each is logged as what it was rather than all as "failed". */
+    session.on("failed", (why) => finish(
+      /486|600|busy/i.test(why) ? "busy"
+        : /487|480|408|terminated|unavailable|timeout/i.test(why) ? "no-answer" : "failed"));
+  };
 
   /* RingCentral has no timer event, so the duration is measured here. It is
      wall-clock from dial to hang-up, which includes ringing — the honest
      label for it is "call length", not "talk time". */
+  let finished = false;
   const finish = (state) => {
+    if (finished) return;
+    finished = true;
     VOICE.call.seconds = Math.max(0, Math.round((Date.now() - started) / 1000));
-    reportCall(null, state);
+    kdVmDropCleanup();
+    const logged = reportCall(null, state);
     kdLive("ended");
     KD.dialAt = KD.answerAt = null;
     KD.callAs = null;
@@ -4657,11 +4930,31 @@ async function rcCall(digits, name, leadId) {
        outcome buttons and an automatic one after a few seconds. Opening the
        panel's sheet as well would ask the rep the same question twice. */
     const inSession = S.tab === "camp" && CAMP.s?.current;
-    if (KD.lead && !inSession) { kdOpenWrap(); kdLoadLead(KD.lead.id); }
+    /* A voicemail drop is its own disposition: log "Voicemail" straight away
+       (after the call row exists, so it lands on it — and from there into
+       Zoho CRM) instead of asking the rep what just happened. */
+    if (KD.vmDropped && KD.lead && !inSession) {
+      const L = KD.lead;
+      KD.vmDropped = false;
+      Promise.resolve(logged).catch(() => {}).then(() => api("/api/leads/" + L.id + "/disposition", {
+        method: "POST", body: JSON.stringify({ disposition: "Voicemail", note: "Voicemail drop left" }) }))
+        .then((r) => kdToast(r?.crm?.sent ? "Voicemail left · logged and sent to Zoho CRM" : "Voicemail left · logged"))
+        .catch((e) => kdToast("Voicemail left, but couldn't log it — " + (describeErr(e) || "unknown")));
+      kdLoadLead(L.id);
+    } else if (KD.lead && !inSession) { kdOpenWrap(); kdLoadLead(KD.lead.id); }
     if (VOICE.rcSession === session) VOICE.rcSession = null;
   };
-  session.on("disposed", () => finish(VOICE.call.connected ? "connected" : "no-answer"));
-  session.on("failed", () => finish("failed"));
+
+  VOICE.rc.on("outboundCall", onOutbound);
+  try {
+    await VOICE.rc.call(digits, callAs);
+  } catch (e) {
+    if (session) finish("failed");
+    else { KD.phase = "idle"; kdStopClock(); kdLive("ended"); kdRender(); }
+    throw e;
+  } finally {
+    VOICE.rc.off("outboundCall", onOutbound);
+  }
   return session;
 }
 
@@ -9326,6 +9619,7 @@ async function boot() {
   pdRepStart();
   crmStart();
   crmMeLoad();
+  vmLoad();
 }
 
 async function init() {

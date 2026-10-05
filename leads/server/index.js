@@ -116,6 +116,8 @@ function mount(app, opts = {}) {
   app.use(require("./zoho-crm").router);
   /* each person's own Zoho CRM sign-in, so what they create there is theirs */
   app.use(require("./crm-identity").router);
+  /* each rep's recorded voicemail, for voicemail drop */
+  app.use(require("./vm-drop").router);
   /* recording calls, and the manager's report built from them. After leads.js
      so its requireOwnLead guard has already run for /api/leads/:id paths. */
   app.use(require("./calls").router);

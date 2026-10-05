@@ -4,7 +4,7 @@
 
 # API
 
-**175 routes**, generated from the source on 2026-10-05.
+**179 routes**, generated from the source on 2026-10-05.
 
 Every path is absolute. That is deliberate: Karma Leads' API paths are the same
 whether it runs standalone or mounted into Connect, which is what let its front
@@ -47,13 +47,13 @@ declared once for the group.
 
 ---
 
-## Karma Leads — 113 routes
+## Karma Leads — 117 routes
 
 ### `/api/activity`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/activity` | admin | [leads/server/index.js:146](../../leads/server/index.js#L146) |  |
+| GET | `/api/activity` | admin | [leads/server/index.js:148](../../leads/server/index.js#L148) |  |
 
 ### `/api/alerts`
 
@@ -301,6 +301,10 @@ declared once for the group.
 | GET | `/api/voice/rc/team` | admin | [leads/server/ringcentral.js:323](../../leads/server/ringcentral.js#L323) | Who on the team has a working phone. |
 | GET | `/api/voice/rc/users` | admin | [leads/server/users-dir.js:197](../../leads/server/users-dir.js#L197) |  |
 | POST | `/api/voice/token` | signed in | [leads/server/voice.js:199](../../leads/server/voice.js#L199) | The SDK's oAuthCallBack fetches this. |
+| GET | `/api/voice/vmdrop` | signed in | [leads/server/vm-drop.js:29](../../leads/server/vm-drop.js#L29) |  |
+| PUT | `/api/voice/vmdrop` | signed in | [leads/server/vm-drop.js:50](../../leads/server/vm-drop.js#L50) |  |
+| DELETE | `/api/voice/vmdrop` | signed in | [leads/server/vm-drop.js:73](../../leads/server/vm-drop.js#L73) |  |
+| GET | `/api/voice/vmdrop/audio` | signed in | [leads/server/vm-drop.js:39](../../leads/server/vm-drop.js#L39) |  |
 
 ---
 
