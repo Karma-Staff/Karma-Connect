@@ -108,6 +108,23 @@ function readState(state) {
   return Number(id);
 }
 
+/* Why readState refused, in words — for a sign-in that bounced. "Expired" was
+   the only thing it could say, and it was said for a signature from a
+   different server just as for a slow login, which sent people retrying the
+   wrong thing. */
+function stateProblem(state) {
+  const parts = String(state || "").split(".");
+  if (!state) return "no sign-in state came back";
+  if (parts.length !== 4) return `the sign-in state came back altered (${parts.length} parts)`;
+  const [id, ts, nonce, mac] = parts;
+  const want = crypto.createHmac("sha256", stateSecret()).update(`${id}.${ts}.${nonce}`)
+    .digest("base64url").slice(0, 32);
+  if (mac !== want) return "the sign-in was started on a different server (or before a restart with new settings)";
+  const age = Math.round((Date.now() - Number(ts)) / 60000);
+  if (age > 15) return `the sign-in took ${age} minutes — it must finish within 15`;
+  return "";
+}
+
 router.get("/api/voice/rc/connect", requireUser, (req, res) => {
   if (!ENABLED) return res.status(503).json({
     error: "RingCentral is not configured — set RINGCENTRAL_CLIENT_ID and RINGCENTRAL_CLIENT_SECRET" });
@@ -374,4 +391,4 @@ router.get("/api/voice/rc/extensions", requireUser, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-module.exports = { router, ENABLED, SANDBOX, SERVER, accessFor, identity, signState, readState };
+module.exports = { router, ENABLED, SANDBOX, SERVER, accessFor, identity, signState, readState, stateProblem };

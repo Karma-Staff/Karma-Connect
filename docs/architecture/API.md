@@ -138,11 +138,11 @@ declared once for the group.
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
 | GET | `/api/crm/dedupe` | admin | [leads/server/zoho-crm.js:234](../../leads/server/zoho-crm.js#L234) | GET /api/crm/dedupe — which worked leads the CRM already holds, so a sync attaches to those r… |
-| GET | `/api/crm/me` | signed in | [leads/server/crm-identity.js:222](../../leads/server/crm-identity.js#L222) |  |
+| GET | `/api/crm/me` | signed in | [leads/server/crm-identity.js:235](../../leads/server/crm-identity.js#L235) |  |
 | GET | `/api/crm/me/connect` | signed in | [leads/server/crm-identity.js:87](../../leads/server/crm-identity.js#L87) |  |
-| DELETE | `/api/crm/me/connect` | signed in | [leads/server/crm-identity.js:236](../../leads/server/crm-identity.js#L236) |  |
+| DELETE | `/api/crm/me/connect` | signed in | [leads/server/crm-identity.js:251](../../leads/server/crm-identity.js#L251) |  |
 | GET | `/api/crm/oauth/callback` | — | [leads/server/crm-identity.js:101](../../leads/server/crm-identity.js#L101) |  |
-| GET | `/api/crm/people` | admin | [leads/server/crm-identity.js:246](../../leads/server/crm-identity.js#L246) | Who has connected — the manager's answer to "why are this rep's calls still under the shared… |
+| GET | `/api/crm/people` | admin | [leads/server/crm-identity.js:261](../../leads/server/crm-identity.js#L261) | Who has connected — the manager's answer to "why are this rep's calls still under the shared… |
 | GET | `/api/crm/preview` | admin | [leads/server/zoho-crm.js:152](../../leads/server/zoho-crm.js#L152) | How much of our own base would ever reach the CRM. |
 | GET | `/api/crm/status` | admin | [leads/server/zoho-crm.js:102](../../leads/server/zoho-crm.js#L102) | GET /api/crm/status — is it connected, and what is actually in there. |
 | GET | `/api/crm/sync` | admin | [leads/server/crm-sync.js:223](../../leads/server/crm-sync.js#L223) |  |
@@ -288,17 +288,17 @@ declared once for the group.
 | GET | `/api/voice/config` | signed in | [leads/server/voice.js:160](../../leads/server/voice.js#L160) |  |
 | GET | `/api/voice/providers` | signed in | [leads/server/voice.js:234](../../leads/server/voice.js#L234) | GET/PUT /api/voice/providers — which telephony providers are on offer. |
 | PUT | `/api/voice/providers` | owner | [leads/server/voice.js:251](../../leads/server/voice.js#L251) |  |
-| GET | `/api/voice/rc/callback` | — | [leads/server/ringcentral.js:122](../../leads/server/ringcentral.js#L122) |  |
+| GET | `/api/voice/rc/callback` | — | [leads/server/ringcentral.js:139](../../leads/server/ringcentral.js#L139) |  |
 | GET | `/api/voice/rc/calllog` | admin | [leads/server/calllogs.js:188](../../leads/server/calllogs.js#L188) |  |
-| GET | `/api/voice/rc/connect` | signed in | [leads/server/ringcentral.js:111](../../leads/server/ringcentral.js#L111) |  |
-| DELETE | `/api/voice/rc/connect` | signed in | [leads/server/ringcentral.js:296](../../leads/server/ringcentral.js#L296) |  |
+| GET | `/api/voice/rc/connect` | signed in | [leads/server/ringcentral.js:128](../../leads/server/ringcentral.js#L128) |  |
+| DELETE | `/api/voice/rc/connect` | signed in | [leads/server/ringcentral.js:313](../../leads/server/ringcentral.js#L313) |  |
 | GET | `/api/voice/rc/dashboard` | admin | [leads/server/rc-dashboard.js:285](../../leads/server/rc-dashboard.js#L285) |  |
-| GET | `/api/voice/rc/extensions` | signed in | [leads/server/ringcentral.js:361](../../leads/server/ringcentral.js#L361) | GET /api/voice/rc/extensions — who a rep can transfer a live call to. |
-| GET | `/api/voice/rc/me` | signed in | [leads/server/ringcentral.js:329](../../leads/server/ringcentral.js#L329) | GET /api/voice/rc/me — what this rep's own seat is, for the dialler header. |
+| GET | `/api/voice/rc/extensions` | signed in | [leads/server/ringcentral.js:378](../../leads/server/ringcentral.js#L378) | GET /api/voice/rc/extensions — who a rep can transfer a live call to. |
+| GET | `/api/voice/rc/me` | signed in | [leads/server/ringcentral.js:346](../../leads/server/ringcentral.js#L346) | GET /api/voice/rc/me — what this rep's own seat is, for the dialler header. |
 | GET | `/api/voice/rc/recording/:id` | admin | [leads/server/calllogs.js:257](../../leads/server/calllogs.js#L257) |  |
-| POST | `/api/voice/rc/session` | signed in | [leads/server/ringcentral.js:258](../../leads/server/ringcentral.js#L258) | POST /api/voice/rc/session — everything the browser needs to register a softphone, and nothin… |
-| GET | `/api/voice/rc/status` | signed in | [leads/server/ringcentral.js:240](../../leads/server/ringcentral.js#L240) |  |
-| GET | `/api/voice/rc/team` | admin | [leads/server/ringcentral.js:306](../../leads/server/ringcentral.js#L306) | Who on the team has a working phone. |
+| POST | `/api/voice/rc/session` | signed in | [leads/server/ringcentral.js:275](../../leads/server/ringcentral.js#L275) | POST /api/voice/rc/session — everything the browser needs to register a softphone, and nothin… |
+| GET | `/api/voice/rc/status` | signed in | [leads/server/ringcentral.js:257](../../leads/server/ringcentral.js#L257) |  |
+| GET | `/api/voice/rc/team` | admin | [leads/server/ringcentral.js:323](../../leads/server/ringcentral.js#L323) | Who on the team has a working phone. |
 | GET | `/api/voice/rc/users` | admin | [leads/server/users-dir.js:197](../../leads/server/users-dir.js#L197) |  |
 | POST | `/api/voice/token` | signed in | [leads/server/voice.js:199](../../leads/server/voice.js#L199) | The SDK's oAuthCallBack fetches this. |
 

@@ -35,9 +35,9 @@
 
 const express = require("express");
 const { query } = require("./db");
-const { requireUser, requireAdmin } = require("./auth");
+const { requireUser, requireAdmin, rankOf, RANK } = require("./auth");
 const zoho = require("./zoho-crm");
-const { signState, readState } = require("./ringcentral");
+const { signState, readState, stateProblem } = require("./ringcentral");
 
 const router = express.Router();
 
@@ -105,7 +105,11 @@ router.get("/api/crm/oauth/callback", async (req, res) => {
     if (req.query.error) return back(req.query.error === "access_denied"
       ? "Zoho sign-in was cancelled" : String(req.query.error));
     const userId = readState(req.query.state);
-    if (!userId) return back("that sign-in link has expired — try again");
+    if (!userId) {
+      const why = stateProblem(req.query.state) || "the sign-in could not be verified";
+      console.warn("[karma] zoho crm sign-in refused:", why);
+      return back(why + " — open Karma Connect again and click Connect Zoho CRM");
+    }
     const code = clean(req.query.code);
     if (!code) return back("Zoho sent no code back");
     const accounts = clean(req.query["accounts-server"]) || zoho.ACCOUNTS;
@@ -219,10 +223,21 @@ async function writeAs(userId, path, opts = {}) {
 
 /* ---------------- status ---------------- */
 
+/* The settings both halves need, by name — so "isn't set up" can say which
+   is missing instead of leaving someone to compare variable lists by eye. */
+const missing = () => [
+  ["ZOHO_CRM_OAUTH_CLIENT_ID", CLIENT_ID], ["ZOHO_CRM_OAUTH_CLIENT_SECRET", CLIENT_SECRET],
+  ["ZOHO_CRM_CLIENT_ID", process.env.ZOHO_CRM_CLIENT_ID],
+  ["ZOHO_CRM_CLIENT_SECRET", process.env.ZOHO_CRM_CLIENT_SECRET],
+  ["ZOHO_CRM_REFRESH_TOKEN", process.env.ZOHO_CRM_REFRESH_TOKEN],
+].filter(([, v]) => !clean(v)).map(([k]) => k);
+
 router.get("/api/crm/me", requireUser, async (req, res, next) => {
   try {
     const id = ENABLED ? await identity(req.user.id) : null;
+    const isAdmin = rankOf(req.user.role) >= RANK.admin;
     res.json({
+      ...(isAdmin ? { missing: missing() } : {}),
       enabled: ENABLED && zoho.ENABLED,
       connected: !!id,
       name: id?.zoho_name || null, email: id?.zoho_email || null,

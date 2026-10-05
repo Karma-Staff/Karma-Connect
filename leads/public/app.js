@@ -8547,7 +8547,8 @@ function crmMeBar() {
   if (!c) return `<div id="crm-me-bar" hidden></div>`;
   if (!c.enabled) return isAdmin()
     ? `<div id="crm-me-bar" class="rc-bar"><span>Personal Zoho CRM sign-in isn't set up on this server yet,
-        so every call and Lead goes into Zoho under the shared account.</span></div>`
+        so every call and Lead goes into Zoho under the shared account.${c.missing && c.missing.length
+          ? ` Missing on the server: <b>${c.missing.map(esc).join(", ")}</b>.` : ""}</span></div>`
     : `<div id="crm-me-bar" hidden></div>`;
   if (c.connected && c.lastError) return `<div id="crm-me-bar" class="rc-bar">
       <b>Zoho CRM refused your sign-in.</b> ${esc(c.lastError)} — your calls are going in under the shared account.
