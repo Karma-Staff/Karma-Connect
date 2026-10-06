@@ -207,6 +207,10 @@
           <button class="nav-item admin-only hidden" data-tab="dash" title="Dashboard">
             <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="9" rx="1.6"/><rect x="13.5" y="3.5" width="7" height="5" rx="1.6"/><rect x="13.5" y="11.5" width="7" height="9" rx="1.6"/><rect x="3.5" y="15.5" width="7" height="5" rx="1.6"/></svg>
             <span class="nav-label">Dashboard</span></button>
+          <!-- each outbound number: carrier status where verifiable, and our own risk score -->
+          <button class="nav-item admin-only hidden" data-tab="reputation" title="Caller reputation">
+            <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 5 6.2v5.3c0 4.3 2.9 7.6 7 9 4.1-1.4 7-4.7 7-9V6.2L12 3.5Z"/><path d="m9 12 2.2 2.2L15.5 10"/></svg>
+            <span class="nav-label">Caller reputation</span></button>
         </div>
       </div>
 
@@ -563,6 +567,32 @@
 
     <!-- Users: the team directory. Read-only for RingCentral; Karma Connect
          access is managed in the existing users dialog, linked from here. -->
+    <section class="stats-pane hidden" id="rep-pane">
+      <div class="stats-head dash-head">
+        <div class="list-title-wrap">
+          <div class="seg-eyebrow">Calling · Phone numbers</div>
+          <h2>Caller reputation <button type="button" class="rep-info" id="rep-info" aria-label="About this status" title="About this status">i</button></h2>
+          <div class="dash-sub" id="rep-sub"></div>
+        </div>
+        <div class="cl-actions">
+          <button id="rep-settings" class="btn-ghost" title="When to warn, and who is emailed">Alert settings</button>
+          <button id="rep-check" class="btn-primary" title="Check every number now">Check now</button>
+        </div>
+      </div>
+      <div class="cl-filters rep-filters" id="rep-filters">
+        <button class="rep-chip" data-rep-f="all" aria-pressed="true">All <em></em></button>
+        <button class="rep-chip" data-rep-f="good" aria-pressed="false">Good <em></em></button>
+        <button class="rep-chip" data-rep-f="at_risk" aria-pressed="false">At risk <em></em></button>
+        <button class="rep-chip" data-rep-f="flagged" aria-pressed="false">Flagged <em></em></button>
+        <button class="rep-chip" data-rep-f="unknown" aria-pressed="false">Unknown <em></em></button>
+        <label class="cl-chip">Karma Connect risk<select id="rep-risk-f">
+          <option value="">All</option><option value="low">Low</option><option value="moderate">Moderate</option>
+          <option value="high">High</option><option value="critical">Critical</option></select></label>
+      </div>
+      <div class="rep-body" id="rep-body"></div>
+      <div class="dash-tip hidden" id="rep-tip" role="tooltip"></div>
+    </section>
+
     <section class="stats-pane hidden" id="team-pane">
       <div class="stats-head dash-head">
         <div class="list-title-wrap">

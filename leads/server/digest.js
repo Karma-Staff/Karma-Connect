@@ -129,8 +129,10 @@ router.post("/api/cron/daily", express.json({ limit: "2kb" }), async (req, res) 
   if (got !== want) return res.status(403).json({ error: "bad token" });
 
   const out = { at: new Date().toISOString(), tz: TZ, localHour: localHour(TZ) };
+  /* Read once, out here: it was declared inside the storm digest's try, so the
+     call report below threw "b is not defined" on every knock and never sent. */
+  const b = req.body || {};
   try {
-    const b = req.body || {};
     out.digest = await runDigest({ force: b.force === true, only: b.only || "" });
   } catch (e) {
     console.error("[karma] digest:", e.message);
@@ -146,6 +148,12 @@ router.post("/api/cron/daily", express.json({ limit: "2kb" }), async (req, res) 
     console.error("[karma] call digest:", e.message);
     out.calls = { error: e.message };
   }
+
+  /* Caller reputation: the half-hourly sweep cannot run while the service
+     sleeps, so the morning knock brings the numbers up to date too. */
+  try {
+    out.reputation = await require("./reputation").tickIfDue();
+  } catch (e) { out.reputation = { error: e.message }; }
 
   /* Whatever the digest did, the knock has woken the process — so flush any
      follow-back reminders that fell due while it was asleep. This is the

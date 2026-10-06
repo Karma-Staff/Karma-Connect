@@ -56,6 +56,9 @@ const TABS = {
   team:      { title: "Users", team: true, admin: true },
   // admin-only: power-dialer campaigns — build, assign, start, pause, end
   power:     { title: "Power dialer", power: true, admin: true },
+  // admin-only: each outbound number's reputation — carrier status where a
+  // provider is connected, and the Karma Connect Risk Score
+  reputation: { title: "Caller reputation", reputation: true, admin: true },
   // everyone's own queue — not a filter over the base, so it is a pane of its
   // own like the ones above, and it is where a member lands
   tasks:     { title: "My tasks", tasks: true },
@@ -283,6 +286,7 @@ const PANES = {
   calllog: "calllog-pane",
   team:   "team-pane",
   power:  "power-pane",
+  reputation: "rep-pane",
   tasks:  "tasks-pane",
   research: "research-pane",
   storm: "storm-pane",
@@ -496,6 +500,7 @@ async function loadList(resetPage = false) {
   if (cfg.live) return loadLive();
   if (cfg.calllog) return loadCallLog();
   if (cfg.team) return loadTeam();
+  if (cfg.reputation) return loadRep();
   if (cfg.power) return loadPower();
   if (cfg.tasks) return loadTasks();
   if (cfg.research) return loadResearchCenter();
@@ -7258,14 +7263,15 @@ function showUndo(msg, anchorId, ids) {
 
 /* ---------------- boot + events ---------------- */
 /* ---------------- world clocks ----------------
-   Three clocks in the top bar, each with its own time zone. The floor sits
+   Five clocks in the top bar, each with its own time zone. The floor sits
    in India and rings the US, so "is it a decent hour in Texas?" is asked all
    day. Click a clock to change its zone; choices live in this browser.
 
    Everything comes from Intl — the abbreviation (EDT/EST, BST/GMT, IST)
    and the offset follow daylight saving by themselves. */
 const CLOCK_KEY = "kl_clocks";
-const CLOCK_DEFAULT = ["Asia/Kolkata", "America/New_York", "Europe/London"];
+const CLOCK_DEFAULT = ["Asia/Kolkata", "America/New_York", "America/Chicago", "America/Los_Angeles", "Europe/London"];
+const CLOCK_COUNT = CLOCK_DEFAULT.length;
 const CLOCK_COMMON = [
   ["Asia/Kolkata", "India"], ["America/New_York", "US Eastern"], ["America/Chicago", "US Central"],
   ["America/Denver", "US Mountain"], ["America/Phoenix", "Arizona"], ["America/Los_Angeles", "US Pacific"],
@@ -7280,7 +7286,13 @@ const CLOCK_COMMON = [
 function clockZones() {
   try {
     const z = JSON.parse(localStorage.getItem(CLOCK_KEY) || "null");
-    if (Array.isArray(z) && z.length === 3 && z.every(clockValid)) return z;
+    if (Array.isArray(z) && z.length && z.every(clockValid)) {
+      /* Saved from when there were three: keep those picks, in their places,
+         and fill the new slots with defaults not already showing. */
+      const out = z.slice(0, CLOCK_COUNT);
+      for (const d of CLOCK_DEFAULT) if (out.length < CLOCK_COUNT && !out.includes(d)) out.push(d);
+      return out;
+    }
   } catch (e) { /* defaults */ }
   return CLOCK_DEFAULT.slice();
 }
@@ -7479,6 +7491,7 @@ function setTab(tab) {
   if (pane !== "dash") dashStopLive();
   if (pane !== "live") liveStop();
   if (pane !== "power") pdStop();
+  if (pane !== "reputation") clearTimeout(REP.poll);
   // a countdown running behind another screen would ring somebody unseen
   if (pane !== "camp") { cancelAutoDial(); cancelWrap(); }
   document.querySelector(".list-pane")?.classList.toggle("hidden", wide);
@@ -8597,7 +8610,8 @@ function dashMapSeg() {
 
 /* The world: Natural Earth countries, Equal Earth projection (world-geo.js).
    Tibet is its own region, drawn over China with its own outline, tint and
-   a "Tibet" label that is always on — see build-world-geo.mjs. */
+   a "Tibet" label that is always on — see build-world-geo.mjs. India, where
+   the floor sits, is picked out the same way in its own colour (orange). */
 function dashWorldMap(d, W, table) {
   const g = window.WORLD_GEO;
   const rows = (d.byCountry || []).slice().sort((a, b) => b.count - a.count);
@@ -8608,10 +8622,16 @@ function dashWorldMap(d, W, table) {
   }
   const max = rows[0]?.count || 0;
   const by = new Map(rows.map((r) => [r.code, r.count]));
-  const shapes = (g.order || Object.keys(g.shapes)).map((code) => {
+  /* India and Tibet last, Tibet on top: their highlighted borders meet, and
+     Tibet's must not be painted over. */
+  const order = (g.order || Object.keys(g.shapes)).filter((c) => c !== "IN" && c !== "TIB");
+  if (g.shapes.IN) order.push("IN");
+  if (g.shapes.TIB || g.parts?.TIB) order.push("TIB");
+  const shapes = order.map((code) => {
     const n = by.get(code) || 0, c = dashClass(n, max);
-    const tibet = code === "TIB";
-    const fill = tibet && !n ? "color-mix(in srgb, var(--gold) 30%, var(--surface))" : dashShade(c);
+    const tibet = code === "TIB", india = code === "IN";
+    const fill = tibet && !n ? "color-mix(in srgb, var(--gold) 30%, var(--surface))"
+      : india ? `color-mix(in srgb, var(--cat-2) ${n ? 55 : 32}%, var(--surface))` : dashShade(c);
     const tip = dashTip(`<div class="dash-tip-h">${esc(nameOf(code))}</div>${
       tibet ? `<div class="dash-tip-row dash-mute">Ü-Tsang · Kham · Amdo</div>` : ""}<div class="dash-tip-row">${
       n ? dashN(n) + " call" + (n === 1 ? "" : "s") : "No calls"}</div>`);
@@ -8626,8 +8646,8 @@ function dashWorldMap(d, W, table) {
         ${p.map((d) => `<path class="dash-tib-o" d="${d}" fill="${fill}"/>`).join("")}
         ${p.map((d) => `<path class="dash-tib-f" d="${d}" fill="${fill}" stroke="${fill}"/>`).join("")}</g>`;
     }
-    return `<path class="dash-reg${n ? " lit" : ""}${tibet ? " dash-tibet" : ""}" d="${g.shapes[code]}"
-      fill="${fill}" data-tip="${tip}"${n || tibet ? ' tabindex="0"' : ""}/>`;
+    return `<path class="dash-reg${n ? " lit" : ""}${tibet ? " dash-tibet" : ""}${india ? " dash-india" : ""}" d="${g.shapes[code]}"
+      fill="${fill}" data-tip="${tip}"${n || tibet || india ? ' tabindex="0"' : ""}/>`;
   }).join("");
   const lab = (code, text, sub, cls = "") => {
     const p = g.labels[code];
@@ -8635,8 +8655,9 @@ function dashWorldMap(d, W, table) {
     return `<text class="dash-wlab ${cls}" x="${p[0]}" y="${p[1]}" text-anchor="middle">${esc(text)}${
       sub ? `<tspan class="n" x="${p[0]}" dy="9">${esc(sub)}</tspan>` : ""}</text>`;
   };
-  const labels = rows.filter((r) => r.code !== "TIB").slice(0, 8)
+  const labels = rows.filter((r) => r.code !== "TIB" && r.code !== "IN").slice(0, 8)
     .map((r) => lab(r.code, r.code, dashN(r.count), dashClass(r.count, max) >= 3 ? "on-dark" : "")).join("")
+    + lab("IN", "INDIA", by.get("IN") ? dashN(by.get("IN")) : "", "dash-inlab")
     + lab("TIB", "TIBET", by.get("TIB") ? dashN(by.get("TIB")) : "", "dash-tiblab");
   const top = rows.slice(0, 6).map((r) => `<li><span>${esc(nameOf(r.code))}</span>
     <i style="width:${(r.count / max) * 100}%"></i><b>${dashN(r.count)}</b></li>`).join("");
@@ -8649,7 +8670,7 @@ function dashWorldMap(d, W, table) {
       <h4>Top countries</h4>
       ${rows.length ? `<ul>${top}</ul>` : `<p class="dash-mute">No calls with a recognisable country yet.</p>`}
       ${scale}
-      <p class="dash-mute dash-fine">From the other party's country code. Tibet — Ü-Tsang, Kham and Amdo — is shown as its own country.</p>
+      <p class="dash-mute dash-fine">From the other party's country code. Tibet — Ü-Tsang, Kham and Amdo — is shown as its own country; India is picked out in orange.</p>
     </aside></div>`;
 }
 
@@ -9276,6 +9297,368 @@ function pdBanner(c) {
       <span>${dashN(left)} lead${left === 1 ? "" : "s"} to call — join and they ring one after another</span></div>
     <button class="btn-primary" id="pd-banner-go">Join</button>
     <button class="pd-banner-x" id="pd-banner-x" aria-label="Dismiss">✕</button>`;
+}
+
+/* ================= Caller reputation =================
+
+   Two questions, never blended into one score (server/reputation.js):
+     "Is my number flagged?"  — only a carrier / caller-ID analytics provider
+       knows. Without one connected, the answer is "Unable to determine", in
+       those words — never "not flagged".
+     "How risky does our calling look?" — the Karma Connect Risk Score, from
+       the call log, always labelled as ours.
+   One row per outbound number; a row opens into the full breakdown: every
+   signal with its state, the score's history, and review requests. */
+
+const REP = { data: null, error: null, filter: "all", risk: "", open: null, detail: {}, tables: new Set(),
+  checking: false, wired: false, seq: 0, poll: null };
+
+const REP_STATUS = {
+  good: { label: "Good", tone: "good", ic: "●" },
+  at_risk: { label: "At risk", tone: "warn", ic: "▲" },
+  potentially_flagged: { label: "Potentially flagged", tone: "serious", ic: "◆" },
+  flagged: { label: "Flagged as spam", tone: "bad", ic: "■" },
+  unknown: { label: "Unable to determine", tone: "none", ic: "○" },
+};
+const REP_BAND = { low: "good", moderate: "warn", high: "serious", critical: "bad" };
+const REP_SIGNAL = {
+  verified: { label: "Verified", tone: "info" }, detected: { label: "Detected", tone: "bad" },
+  not_detected: { label: "Not detected", tone: "good" }, unknown: { label: "Unknown", tone: "none" },
+};
+const repDigits = (n) => String(n || "").replace(/\D/g, "");
+const repBadge = (st) => { const s = REP_STATUS[st] || REP_STATUS.unknown;
+  return `<span class="rep-badge ${s.tone}"><i aria-hidden="true">${s.ic}</i>${esc(s.label)}</span>`; };
+const repRisk = (r) => r ? `<span class="rep-risk"><b>${r.score}</b><span>/100</span>
+    <span class="rep-band ${REP_BAND[r.band] || "none"}">${esc(r.label)}</span></span>` : `<span class="dash-mute">Not checked</span>`;
+const repSpam = (rep) => !rep.verified ? `<span class="dash-mute">Unknown</span>`
+  : rep.spamFlag === true ? `<b class="rep-yes">Yes</b>` : rep.spamFlag === false ? "No" : `<span class="dash-mute">Unknown</span>`;
+
+async function loadRep() {
+  repWire();
+  const body = $("rep-body");
+  if (!REP.data) body.innerHTML = `<div class="dash-empty"><div class="dash-spin"></div>Reading your numbers…</div>`;
+  const seq = ++REP.seq;
+  try {
+    const d = await api("/api/reputation");
+    if (seq !== REP.seq) return;
+    REP.data = d; REP.error = null;
+  } catch (e) { if (seq === REP.seq) REP.error = e.message || String(e); }
+  renderRep();
+  /* The first visit starts a check in the background: look again shortly. */
+  clearTimeout(REP.poll);
+  if (REP.data?.checking && S.tab === "reputation") REP.poll = setTimeout(loadRep, 4000);
+}
+
+function repWire() {
+  if (REP.wired) return;
+  REP.wired = true;
+  on("rep-check", "click", repCheckNow);
+  on("rep-info", "click", repAbout);
+  on("rep-settings", "click", repSettings);
+  $("rep-filters").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-rep-f]");
+    if (!b) return;
+    REP.filter = b.dataset.repF;
+    renderRep();
+  });
+  on("rep-risk-f", "change", (e) => { REP.risk = e.target.value; renderRep(); });
+  const body = $("rep-body");
+  body.addEventListener("click", (e) => {
+    const t = e.target.closest("[data-rep-tbl]");
+    if (t) { const k = t.dataset.repTbl; if (REP.tables.has(k)) REP.tables.delete(k); else REP.tables.add(k); return renderRep(); }
+    if (e.target.closest("[data-rep-review]")) return repRequestReview(e.target.closest("[data-rep-review]").dataset.repReview);
+    if (e.target.closest("[data-rep-about]")) return repAbout();
+    const row = e.target.closest("[data-rep-num]");
+    if (!row || e.target.closest("a, select, button")) return;
+    const n = row.dataset.repNum;
+    REP.open = REP.open === n ? null : n;
+    renderRep();
+    if (REP.open) repLoadDetail(REP.open);
+  });
+  body.addEventListener("keydown", (e) => {
+    if ((e.key === "Enter" || e.key === " ") && e.target.matches("[data-rep-num]")) { e.preventDefault(); e.target.click(); }
+  });
+  body.addEventListener("change", async (e) => {
+    const sel = e.target.closest("[data-rev-id]");
+    if (!sel) return;
+    try {
+      await api(`/api/reputation/reviews/${sel.dataset.revId}`, { method: "PATCH", body: JSON.stringify({ status: sel.value }) });
+      toast("Review status updated");
+      repLoadDetail(REP.open, true);
+    } catch (err) { toast("Couldn't update: " + err.message, 6000); }
+  });
+  /* the chart's hover read-out, as on the Dashboard */
+  const tip = $("rep-tip");
+  const show = (e) => {
+    const t = e.target.closest?.("[data-rep-tip]");
+    if (!t || !body.contains(t)) return tip.classList.add("hidden");
+    tip.innerHTML = t.dataset.repTip;
+    tip.classList.remove("hidden");
+    const pane = $("rep-pane").getBoundingClientRect(), r = t.getBoundingClientRect();
+    const x = (e.clientX ?? (r.left + r.width / 2)) - pane.left, y = (e.clientY ?? r.top) - pane.top;
+    tip.style.left = Math.min(Math.max(8, x + 14), pane.width - tip.offsetWidth - 8) + "px";
+    tip.style.top = (y - tip.offsetHeight - 12 < 8 ? y + 18 : y - tip.offsetHeight - 12) + "px";
+  };
+  body.addEventListener("mousemove", show);
+  body.addEventListener("focusin", show);
+  body.addEventListener("mouseleave", () => tip.classList.add("hidden"));
+}
+
+async function repCheckNow() {
+  if (REP.checking) return;
+  REP.checking = true;
+  const b = $("rep-check");
+  b.disabled = true; b.textContent = "Checking…";
+  try {
+    const r = await api("/api/reputation/check", { method: "POST", body: "{}" });
+    toast(`Checked ${r.checked} number${r.checked === 1 ? "" : "s"}${r.alerts ? ` · ${r.alerts} alert${r.alerts === 1 ? "" : "s"}` : ""}`);
+    REP.detail = {};
+    await loadRep();
+    if (REP.open) repLoadDetail(REP.open);
+  } catch (e) { toast("Check failed: " + e.message, 8000); }
+  REP.checking = false;
+  b.disabled = false; b.textContent = "Check now";
+}
+
+async function repLoadDetail(num, force) {
+  if (REP.detail[num] && !force) return renderRep();
+  try { REP.detail[num] = await api("/api/reputation/number/" + repDigits(num)); }
+  catch (e) { REP.detail[num] = { error: e.message }; }
+  if (REP.open === num) renderRep();
+}
+
+function renderRep() {
+  const d = REP.data, body = $("rep-body");
+  if (!d) { body.innerHTML = `<div class="dash-empty"><b>Caller reputation couldn't load</b><span>${esc(REP.error || "")}</span></div>`; return; }
+  const nums = d.numbers;
+  const last = nums.map((n) => n.checkedAt).filter(Boolean).sort().pop();
+  $("rep-sub").textContent = nums.length
+    ? `${nums.length} outbound number${nums.length === 1 ? "" : "s"} · last checked ${last ? tmSince(last) : "never"}`
+    : d.checking ? "Running the first check…" : "No numbers checked yet";
+
+  /* filters: the verified status, and separately our own risk band */
+  const vs = (n) => n.reputation.status;
+  const counts = { all: nums.length, good: nums.filter((n) => vs(n) === "good").length,
+    at_risk: nums.filter((n) => ["at_risk", "potentially_flagged"].includes(vs(n))).length,
+    flagged: nums.filter((n) => vs(n) === "flagged").length, unknown: nums.filter((n) => vs(n) === "unknown").length };
+  $("rep-filters").querySelectorAll("[data-rep-f]").forEach((b) => {
+    b.classList.toggle("on", b.dataset.repF === REP.filter);
+    b.setAttribute("aria-pressed", String(b.dataset.repF === REP.filter));
+    const c = b.querySelector("em"); if (c) c.textContent = counts[b.dataset.repF];
+  });
+  const shown = nums.filter((n) =>
+    (REP.filter === "all" || (REP.filter === "at_risk" ? ["at_risk", "potentially_flagged"].includes(vs(n)) : vs(n) === REP.filter))
+    && (!REP.risk || n.risk?.band === REP.risk));
+
+  const notice = d.sources.carrier ? "" : `<div class="rep-notice">
+      <div class="rep-notice-ic" aria-hidden="true">i</div>
+      <div><b>Carrier spam status can't currently be verified.</b>
+        RingCentral doesn't share spam labels, and no caller-reputation provider is connected — so every number shows
+        <b>Unable to determine</b> rather than a guess. The scores are <b>Karma Connect's own risk assessment</b> of how
+        each number has been used, not a carrier spam label.
+        <span class="rep-notice-links"><button class="rep-link" data-rep-about>About this status</button> ·
+        <a href="${esc(d.registry)}" target="_blank" rel="noopener">Register your numbers free with the carriers' analytics engines →</a></span></div>
+    </div>`;
+  const alerts = (d.alerts || []).slice(0, 3).map((a) => `<div class="rep-alert ${a.kind === "warning" ? "bad" : "good"}">
+      <b>${a.kind === "warning" ? "Number reputation warning" : "Number reputation healthy"}</b>
+      <span>${esc(dashPhone(a.number))} — ${esc(a.text)} <em>${esc(tmSince(a.at))}</em></span></div>`).join("");
+
+  if (!nums.length) {
+    body.innerHTML = notice + `<div class="dash-empty">${d.checking ? `<div class="dash-spin"></div>Checking your RingCentral numbers — this takes a few seconds…`
+      : `<b>No numbers checked yet</b><span>Press Check now.</span>`}</div>`;
+    return;
+  }
+  const rows = shown.map((n) => {
+    const open = REP.open === n.number;
+    const who = [n.ext && "x" + n.ext, n.usage === "MainCompanyNumber" ? "Main number" : "", n.callerIdName && `“${n.callerIdName}”`]
+      .filter(Boolean).join(" · ");
+    return `<tr class="tm-row rep-row${open ? " open" : ""}" data-rep-num="${esc(n.number)}" tabindex="0" aria-expanded="${open}">
+      <td><div class="cl-party"><b>${esc(dashPhone(n.number))}</b><span>${esc(who || "—")}</span></div></td>
+      <td>${repBadge(n.reputation.status)}${n.reputation.verified ? `<span class="rep-src">${esc(n.reputation.source)}</span>` : ""}</td>
+      <td>${repSpam(n.reputation)}</td>
+      <td>${repRisk(n.risk)}</td>
+      <td class="rep-why">${n.risk?.reasons?.length ? esc(n.risk.reasons.join(" · ")) : `<span class="dash-mute">No risk signals</span>`}</td>
+      <td class="rep-when">${n.checkedAt ? esc(tmSince(n.checkedAt)) : "—"}${n.stale ? ` <span class="rep-stale" title="Due for a fresh check">due</span>` : ""}</td>
+      <td class="tm-chev"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></td>
+    </tr>${open ? `<tr class="tm-detail"><td colspan="7">${repDetail(n)}</td></tr>` : ""}`;
+  }).join("");
+  body.innerHTML = notice + alerts + `<div class="cl-tablewrap"><table class="cl-table rep-table">
+    <thead><tr><th>Number</th><th>Reputation <span class="rep-th-sub">carrier / provider</span></th><th>Spam flag</th>
+      <th>Karma Connect risk</th><th>Why</th><th>Last checked</th><th></th></tr></thead>
+    <tbody>${rows || `<tr><td colspan="7"><div class="dash-empty"><b>No numbers match</b><span>Try another filter.</span></div></td></tr>`}</tbody>
+  </table></div>`;
+}
+
+function repDetail(n) {
+  const x = REP.detail[n.number];
+  if (!x) return `<div class="tm-card"><div class="dash-empty"><div class="dash-spin"></div>Loading…</div></div>`;
+  if (x.error) return `<div class="tm-card"><div class="dash-warn">${esc(x.error)}</div></div>`;
+  const rep = x.reputation, risk = x.risk;
+  const srcLine = (label, on, onText, offText) => `<div class="rep-srcrow"><span>${esc(label)}</span>
+    <b class="${on ? "" : "dash-mute"}">${esc(on ? onText : offText)}</b></div>`;
+  const flags = rep.verified ? (rep.spamFlag ? "1 detected" : "0 detected") : "Unknown";
+
+  const verifiedCard = `<section class="rep-card">
+      <h4>Is this number flagged? <span>verified sources only</span></h4>
+      <div class="rep-big">${repBadge(rep.status)}</div>
+      ${rep.verified ? "" : `<p class="rep-unv"><b>Reputation status cannot currently be verified.</b>
+        Karma Connect has analysed the available calling signals, but carrier-level spam labelling is not accessible for this number.</p>`}
+      <div class="tm-grid tm-grid2">
+        <div class="tm-f"><span>Spam flags</span><b>${esc(flags)}</b></div>
+        <div class="tm-f"><span>Last updated</span><b>${esc(tmSince(rep.checkedAt || x.checkedAt))}</b></div>
+      </div>
+      <h5>Status sources</h5>
+      ${srcLine("Carrier reputation", x.sources.carrier, "Available (Hiya)", "Not connected")}
+      ${srcLine("Caller ID reputation", x.sources.callerIdentity, "Available", "Unknown — no provider")}
+      ${srcLine("Spam databases", x.sources.carrier, "Available (Hiya)", "Unknown — no provider")}
+      ${srcLine("RingCentral", true, "Connected — no spam data in its API", "")}
+      ${srcLine("Karma Connect risk score", !!risk, risk ? `${risk.score}/100` : "", "Not checked")}
+      ${rep.verified && ["flagged", "potentially_flagged"].includes(rep.status)
+        ? `<button class="btn-primary rep-review-btn" data-rep-review="${esc(n.number)}">Request reputation review</button>` : ""}
+    </section>`;
+
+  const riskCard = risk ? `<section class="rep-card">
+      <h4>Karma Connect Risk Assessment: ${esc(risk.label)} <span>our analysis — not a carrier spam label</span></h4>
+      <div class="rep-gauge" role="img" aria-label="Risk score ${risk.score} of 100, ${esc(risk.label)}">
+        <div class="rep-gauge-track"><i class="${REP_BAND[risk.band]}" style="width:${Math.max(2, risk.score)}%"></i></div>
+        <div class="rep-gauge-ticks"><span>0</span><span style="left:30%">30</span><span style="left:60%">60</span><span style="left:80%">80</span><span style="left:100%">100</span></div>
+      </div>
+      <div class="tm-grid tm-grid2">
+        <div class="tm-f"><span>Risk score</span><b>${risk.score} / 100</b></div>
+        <div class="tm-f"><span>Confidence</span><b>${risk.confidence >= 0.8 ? "High" : risk.confidence >= 0.6 ? "Medium" : "Low"}</b></div>
+        <div class="tm-f"><span>Calls (7 days)</span><b>${dashN(risk.volume?.recent)}</b></div>
+        <div class="tm-f"><span>Answered</span><b>${dashN(risk.volume?.answered)}</b></div>
+        <div class="tm-f"><span>Previous 7 days</span><b>${dashN(risk.volume?.previous)}</b></div>
+        <div class="tm-f"><span>Share of company calls</span><b>${x.share === null ? "—" : Math.round(x.share * 100) + "%"}</b></div>
+      </div>
+      <p class="rep-fine">0–29 Low · 30–59 Moderate · 60–79 High · 80–100 Critical. Built from this number's calls in RingCentral's call log and the dispositions reps record.</p>
+    </section>` : "";
+
+  const sigRows = x.signals.map((s) => { const t = REP_SIGNAL[s.state] || REP_SIGNAL.unknown;
+    return `<tr><td><b>${esc(s.label)}</b><div class="rep-sig-d">${esc(s.detail || "")}</div></td>
+      <td><span class="rep-sig ${t.tone}">${esc(t.label)}</span></td>
+      <td>${esc(s.value || "")}</td><td class="n">${s.points ? "+" + s.points : `<span class="dash-mute">0</span>`}</td></tr>`; }).join("");
+
+  const reviews = x.reviews.length ? `<table class="cl-table rep-rev"><thead><tr><th>Submitted</th><th>Provider</th><th>Reason</th><th>Status</th><th>Resolved</th></tr></thead>
+    <tbody>${x.reviews.map((r) => `<tr><td>${esc(new Date(r.submitted_at).toLocaleDateString())}<div class="rep-sig-d">${esc(r.submitted_by)}</div></td>
+      <td>${esc(x.reviewLinks[r.provider]?.name || r.provider)}</td><td>${esc(r.reason || "—")}</td>
+      <td><select data-rev-id="${r.id}" aria-label="Review status">${["submitted", "under_review", "resolved", "rejected"].map((s) =>
+        `<option value="${s}"${s === r.status ? " selected" : ""}>${{ submitted: "Submitted", under_review: "Under review", resolved: "Resolved", rejected: "Rejected" }[s]}</option>`).join("")}</select></td>
+      <td>${r.resolved_at ? esc(new Date(r.resolved_at).toLocaleDateString()) : "—"}</td></tr>`).join("")}</tbody></table>`
+    : `<p class="dash-mute rep-fine">No review requests. A review can be requested only when a provider reports this number as flagged —
+        there's nothing to dispute in Karma Connect's own score.</p>`;
+
+  const tblKey = "hist:" + n.number;
+  return `<div class="tm-card rep-detail">
+    <div class="rep-cards">${verifiedCard}${riskCard}</div>
+    <section class="rep-sec"><header><h4>Reputation history</h4>
+      <button class="dash-tbl" data-rep-tbl="${esc(tblKey)}" aria-pressed="${REP.tables.has(tblKey)}">Table</button></header>
+      ${repHistory(x.history, REP.tables.has(tblKey))}</section>
+    <section class="rep-sec"><h4>Reputation signals</h4>
+      <table class="cl-table rep-sigs"><thead><tr><th>Signal</th><th>Status</th><th>Reading</th><th class="n">Points</th></tr></thead>
+        <tbody>${sigRows}</tbody></table></section>
+    <section class="rep-sec"><h4>Reputation review requests</h4>${reviews}</section>
+  </div>`;
+}
+
+/* The Karma Connect Risk Score per day — one series, so no legend box; the
+   band edges are drawn as recessive reference lines with their names. */
+function repHistory(hist, table) {
+  const pts = hist.filter((h) => h.provider === "internal" && h.score !== null);
+  const carrier = hist.filter((h) => h.provider === "carrier");
+  const statusOn = (day) => carrier.find((c) => c.day === day)?.status || null;
+  const fmtDay = (day) => new Date(day + "T12:00").toLocaleDateString([], { month: "short", day: "numeric" });
+  if (!pts.length) return `<div class="dash-none">History builds up as checks run — one point per day.</div>`;
+  if (table) return `<table class="cl-table rep-hist-t"><thead><tr><th>Date</th><th class="n">Risk score</th><th>Band</th><th>Carrier status</th></tr></thead>
+    <tbody>${pts.slice().reverse().map((p) => `<tr><td>${esc(fmtDay(p.day))}</td><td class="n"><b>${p.score}</b></td>
+      <td>${esc(bandLabel(p.score))}</td><td>${statusOn(p.day) ? esc(REP_STATUS[statusOn(p.day)]?.label || statusOn(p.day)) : `<span class="dash-mute">Unknown</span>`}</td></tr>`).join("")}</tbody></table>`;
+
+  const W = Math.max(320, Math.min(860, ($("rep-body")?.clientWidth || 900) - 80)), H = 190, L = 34, R = 74, T = 12, B = 26;
+  const x = (i) => pts.length === 1 ? L + (W - L - R) / 2 : L + (i * (W - L - R)) / (pts.length - 1);
+  const y = (v) => T + (H - T - B) * (1 - v / 100);
+  const grid = [0, 50, 100].map((v) => `<line class="dash-grid-l" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/>
+    <text class="dash-ax" x="${L - 8}" y="${y(v) + 3.5}" text-anchor="end">${v}</text>`).join("");
+  const bands = [[30, "Moderate"], [60, "High"], [80, "Critical"]].map(([v, l]) =>
+    `<line class="rep-ref" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/>
+     <text class="dash-ax rep-ref-t" x="${W - R + 6}" y="${y(v) + 3.5}">${l} ${v}</text>`).join("");
+  const line = pts.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(p.score).toFixed(1)}`).join(" ");
+  const every = Math.ceil(pts.length / 8);
+  const marks = pts.map((p, i) => {
+    const st = statusOn(p.day);
+    const tip = `<div class="dash-tip-h">${esc(fmtDay(p.day))}</div>
+      <div class="dash-tip-row"><i style="background:var(--cat-1)"></i>Karma Connect risk<b>${p.score} · ${esc(bandLabel(p.score))}</b></div>
+      <div class="dash-tip-row">Carrier status<b>${esc(st ? REP_STATUS[st]?.label || st : "Unknown")}</b></div>`;
+    return `<g class="dash-hit" data-rep-tip="${esc(tip)}" tabindex="0">
+      <rect x="${x(i) - (W - L - R) / Math.max(2, pts.length) / 2}" y="${T}" width="${(W - L - R) / Math.max(2, pts.length)}" height="${H - T - B}" fill="transparent"/>
+      <circle cx="${x(i)}" cy="${y(p.score)}" r="4" class="rep-dot"/>
+      ${i % every === 0 || i === pts.length - 1 ? `<text class="dash-ax" x="${x(i)}" y="${H - 7}" text-anchor="middle">${esc(fmtDay(p.day))}</text>` : ""}
+    </g>`;
+  }).join("");
+  const lastP = pts[pts.length - 1];
+  return `<svg class="dash-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img"
+      aria-label="Karma Connect Risk Score by day; latest ${lastP.score}">${grid}${bands}
+    <path d="${line}" class="rep-line"/>${marks}
+    <text class="dash-cap" x="${x(pts.length - 1)}" y="${y(lastP.score) - 10}" text-anchor="middle">${lastP.score}</text></svg>
+    <p class="rep-fine">Karma Connect Risk Score, the last check of each day. Hover a point for that day's carrier status.</p>`;
+}
+const bandLabel = (s) => s >= 80 ? "Critical" : s >= 60 ? "High" : s >= 30 ? "Moderate" : "Low";
+
+function repAbout() {
+  $("modal-title").textContent = "About this status";
+  $("modal-body").innerHTML = `
+    <p class="modal-sub">Carrier spam labels ("Spam Likely", "Scam Likely") are controlled by telecom carriers and the
+      caller-ID analytics providers behind them — Hiya for AT&amp;T, First Orion for T-Mobile, TNS for Verizon.
+      Karma Connect can only show a verified status where an authorised data source provides it.
+      RingCentral's API does not expose one.</p>
+    <p class="modal-sub">Otherwise the score shown is <b>Karma Connect's own analysis</b> of how each number has been
+      used — answer rate, calls hung up within seconds, bursts of volume, repeat dialling, opt-outs, caller-ID set-up.
+      Those are the behaviours the providers' engines react to, so a rising score is worth acting on. But it is
+      <b>not a carrier spam label</b>, and a low score does not mean a number is unflagged.</p>
+    <p class="modal-sub">To see real labels, a provider such as Hiya's Number Reputation service (paid; your business and
+      numbers registered first) can be connected. Registering your numbers is free at
+      <a href="https://www.freecallerregistry.com/" target="_blank" rel="noopener">freecallerregistry.com</a>,
+      which reaches all three engines.</p>
+    <div class="modal-actions"><button type="button" class="btn-secondary" id="modal-cancel">Close</button></div>`;
+  $("modal-backdrop").classList.remove("hidden");
+  $("modal-cancel").addEventListener("click", closeModal);
+}
+
+async function repSettings() {
+  let s;
+  try { s = await api("/api/reputation/settings"); } catch (e) { return toast(e.message, 6000); }
+  $("modal-title").textContent = "Reputation alerts";
+  $("modal-body").innerHTML = `
+    <p class="modal-sub">Alerts are sent when something changes: a number's Karma Connect Risk Score rises to the
+      threshold or above, a reputation provider newly flags a number, or a number recovers.
+      They appear at the top of Caller reputation and, if switched on, are emailed to admins and owners.</p>
+    <label class="rep-set"><span>Warn when the risk score reaches</span>
+      <input type="number" id="rep-at" min="10" max="100" step="1" value="${s.alertAt}"> <em>/ 100</em></label>
+    <label class="rep-set rep-set-cb"><input type="checkbox" id="rep-email"${s.email ? " checked" : ""}>
+      <span>Email admins and owners</span></label>
+    <div id="rep-set-err" class="login-error hidden"></div>
+    <div class="modal-actions"><button type="button" class="btn-secondary" id="modal-cancel">Cancel</button>
+      <button type="button" class="btn-primary" id="rep-save">Save</button></div>`;
+  $("modal-backdrop").classList.remove("hidden");
+  $("modal-cancel").addEventListener("click", closeModal);
+  $("rep-save").addEventListener("click", async () => {
+    try {
+      await api("/api/reputation/settings", { method: "PUT",
+        body: JSON.stringify({ alertAt: +$("rep-at").value, email: $("rep-email").checked }) });
+      closeModal(); toast("Alert settings saved"); loadRep();
+    } catch (e) { const el = $("rep-set-err"); el.textContent = e.message; el.classList.remove("hidden"); }
+  });
+}
+
+async function repRequestReview(num) {
+  const reason = prompt(`Request a reputation review for ${dashPhone(num)}.\n\nWhy is the label wrong? (e.g. "Legitimate business calls to our own customers")`);
+  if (reason === null) return;
+  try {
+    const r = await api("/api/reputation/number/" + repDigits(num) + "/reviews", { method: "POST",
+      body: JSON.stringify({ provider: "carrier", reason }) });
+    toast(`Review recorded — opening ${r.submitTo.name}'s request form to submit it`, 7000);
+    window.open(r.submitTo.url, "_blank", "noopener");
+    repLoadDetail(num, true);
+  } catch (e) { toast("Couldn't record the review: " + e.message, 8000); }
 }
 
 /* ================= Users — the team directory =================

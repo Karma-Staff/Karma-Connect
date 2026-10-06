@@ -151,6 +151,7 @@ call log.
 
 | Variable | Notes |
 |---|---|
+| `HIYA_APP_ID` / `HIYA_APP_SECRET` / `HIYA_API_BASE` | optional, paid. Hiya Number Reputation — the only source of real carrier spam labels (RingCentral exposes none). Needs a Hiya service agreement and registered numbers. Unset: Caller reputation shows carrier status as "Unable to determine" and only the Karma Connect Risk Score |
 | `ZOHO_CRM_OAUTH_CLIENT_ID` / `ZOHO_CRM_OAUTH_CLIENT_SECRET` | optional. A **Server-based Application** in the Zoho API console, redirect URI `<APP_URL>/api/crm/oauth/callback`. Lets each rep connect their own Zoho CRM (Calls tab) so their calls and Leads are owned by them in Zoho; anyone not connected, or refused, goes through the shared `ZOHO_CRM_*` account |
 | `RINGCENTRAL_CLIENT_ID` / `RINGCENTRAL_CLIENT_SECRET` | from a **Private**, **server-side web app** at developers.ringcentral.com. API access is included with a RingEX subscription — sign in with the RingEX admin account rather than creating a separate $10/month developer account |
 | `RINGCENTRAL_SERVER_URL` | defaults to `https://platform.ringcentral.com`. A `devtest` host is the sandbox and can only reach RingCentral test numbers |

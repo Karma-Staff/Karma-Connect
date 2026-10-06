@@ -303,6 +303,39 @@ async function sendCallDigestEmail(to, d, idempotencyKey) {
     html, { idempotencyKey });
 }
 
+/* Caller reputation alerts (leads/server/reputation.js) — sent only when
+   something changed: a number crossed the alert threshold, a provider newly
+   flagged it, or it recovered. Says plainly whether the warning comes from a
+   reputation provider or from Karma Connect's own score, because the two
+   mean different things and must never be read as one. */
+async function sendReputationAlertEmail(to, d, idempotencyKey) {
+  const hi = d.name ? "Hi " + escapeHtml(d.name) + "," : "Hi,";
+  const fmt = (n) => { const m = String(n).replace(/\D/g, "").slice(-10);
+    return m.length === 10 ? `+1 (${m.slice(0, 3)}) ${m.slice(3, 6)}-${m.slice(6)}` : escapeHtml(n); };
+  const warn = d.alerts.filter((a) => a.kind === "warning");
+  const ok = d.alerts.filter((a) => a.kind === "healthy");
+  const card = (a) => `<div style="border:1px solid #e6e9f0;border-left:4px solid ${a.kind === "warning" ? "#c0392b" : "#1e8e5a"};border-radius:10px;padding:12px 14px;margin:0 0 10px">
+      <div style="font-size:15px"><b>${fmt(a.number)}</b></div>
+      <div style="font-size:13px;margin-top:4px">${escapeHtml(a.text)}</div>
+      ${a.source === "internal" ? `<div style="font-size:11px;color:#8a93a3;margin-top:4px">Karma Connect's own risk assessment from your calling — not a carrier spam label.</div>`
+        : `<div style="font-size:11px;color:#8a93a3;margin-top:4px">Reported by a caller-reputation provider.</div>`}
+      ${a.kind === "warning" && a.reasons && a.reasons.length ? `<ul style="margin:8px 0 0;padding-left:18px;font-size:12px;color:#445">${
+        a.reasons.slice(0, 4).map((r) => `<li>${escapeHtml(r)}</li>`).join("")}</ul>` : ""}
+    </div>`;
+  const html = `<div style="font-family:Inter,Segoe UI,Arial,sans-serif;max-width:540px;margin:0 auto;color:#0b2545">
+    <h2 style="margin-bottom:4px">${warn.length ? "Number reputation warning" : "Number reputation healthy"}</h2>
+    <p style="color:#667;margin-top:0">${warn.length ? `${warn.length} number${warn.length === 1 ? "" : "s"} need${warn.length === 1 ? "s" : ""} a look` : "No significant reputation issues in the latest check"}${
+      ok.length && warn.length ? ` · ${ok.length} recovered` : ""}</p>
+    <p>${hi}</p>
+    ${warn.map(card).join("")}${ok.map(card).join("")}
+    ${d.link ? `<p style="margin:22px 0"><a href="${d.link}" style="background:#0b2545;color:#fff;text-decoration:none;font-weight:700;padding:12px 22px;border-radius:10px;display:inline-block">Review number reputation</a></p>` : ""}
+    <p style="font-size:12px;color:#667">Carrier spam labels are controlled by carriers and caller-ID analytics providers.
+      Karma Connect shows a verified label only where an authorised provider supplies one.</p>
+  </div>`;
+  await send(to, warn.length ? `Number reputation warning: ${warn.map((a) => fmt(a.number)).join(", ")}`
+    : "Number reputation healthy", html, { idempotencyKey });
+}
+
 /* Being added to the team (leads/server/users.js).
 
    This email is the whole invite. Adding somebody only creates their row —
@@ -354,4 +387,4 @@ async function sendOutreachEmail({ fromName, fromEmail, to, subject, text }) {
   throw new Error("Email gateway " + r.status + ": " + t);
 }
 
-module.exports = { emailVerifyOn, VERIFY_TTL_HOURS, RESET_TTL_HOURS, escapeHtml, sendVerificationEmail, sendResetEmail, sendApprovalRequestEmail, sendApprovalDecisionEmail, sendOutreachEmail, sendFollowupEmail, sendStormDigestEmail, sendCallDigestEmail, sendTeamInviteEmail };
+module.exports = { emailVerifyOn, VERIFY_TTL_HOURS, RESET_TTL_HOURS, escapeHtml, sendVerificationEmail, sendResetEmail, sendApprovalRequestEmail, sendApprovalDecisionEmail, sendOutreachEmail, sendFollowupEmail, sendStormDigestEmail, sendCallDigestEmail, sendReputationAlertEmail, sendTeamInviteEmail };

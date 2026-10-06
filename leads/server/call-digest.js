@@ -220,4 +220,4 @@ async function runCallDigest({ force = false, only = "", day = "" } = {}) {
     callers: rows.length, ...(force ? { forced: true } : {}) };
 }
 
-module.exports = { runCallDigest, JOB };
+module.exports = { runCallDigest, JOB, recipients };

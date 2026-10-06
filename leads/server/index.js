@@ -118,6 +118,11 @@ function mount(app, opts = {}) {
   app.use(require("./crm-identity").router);
   /* each rep's recorded voicemail, for voicemail drop */
   app.use(require("./vm-drop").router);
+  /* caller reputation: carrier status where a provider is connected, and the
+     Karma Connect Risk Score from the call log (migration 018) */
+  const reputation = require("./reputation");
+  app.use(reputation.router);
+  reputation.startSweeper();
   /* recording calls, and the manager's report built from them. After leads.js
      so its requireOwnLead guard has already run for /api/leads/:id paths. */
   app.use(require("./calls").router);

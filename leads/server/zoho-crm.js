@@ -82,7 +82,8 @@ async function crm(path, opts = {}) {
   const r = await fetch(`${API}/crm/${VERSION}${path}`, {
     ...opts,
     headers: { Authorization: "Zoho-oauthtoken " + token,
-      "Content-Type": "application/json", ...(opts.headers || {}) },
+      /* a file upload (FormData) brings its own multipart boundary */
+      ...(opts.body instanceof FormData ? {} : { "Content-Type": "application/json" }), ...(opts.headers || {}) },
   });
   if (r.status === 204) return null;            // Zoho's "no records"
   const d = await r.json().catch(() => ({}));

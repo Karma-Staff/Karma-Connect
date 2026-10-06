@@ -49,10 +49,13 @@ const ENABLED = !!(CLIENT_ID && CLIENT_SECRET);
 const VERSION = clean(process.env.ZOHO_CRM_VERSION) || "v8";
 
 /* Only what the writes need. Leads and Calls to create; Accounts and Contacts
-   are read so a Call can be attached to one; users.READ to learn who signed
-   in. No delete, no settings, no other module. */
+   are read so a Call can be attached to one; attachments to put the call
+   recording on the Call; users.READ to learn who signed in. No delete, no
+   settings, no other module. A rep who connected before a scope was added
+   is told to reconnect (see asPerson) rather than silently losing the write. */
 const SCOPES = [
   "ZohoCRM.modules.calls.ALL",
+  "ZohoCRM.modules.attachments.CREATE",
   "ZohoCRM.modules.leads.ALL",
   "ZohoCRM.modules.accounts.READ",
   "ZohoCRM.modules.contacts.READ",
@@ -180,13 +183,17 @@ async function asPerson(id, path, opts) {
   const r = await fetch(`${id.api_domain}/crm/${VERSION}${path}`, {
     ...opts,
     headers: { Authorization: "Zoho-oauthtoken " + token,
-      "Content-Type": "application/json", ...(opts.headers || {}) },
+      ...(opts.body instanceof FormData ? {} : { "Content-Type": "application/json" }), ...(opts.headers || {}) },
   });
   const d = r.status === 204 ? null : await r.json().catch(() => ({}));
   const code = d?.code || d?.data?.[0]?.code;
   if (r.status === 401 || r.status === 403 || REFUSED.has(code)) {
-    const e = new Error((d?.data?.[0]?.message || d?.message || code || `Zoho ${r.status}`)
-      + " (your own Zoho sign-in)");
+    /* A permission added after this person connected (attachments, for the
+       call recording) reads as a scope error: say what to do about it. */
+    const scope = /OAUTH_?SCOPE/i.test(code || "") || /oauth ?scope/i.test(d?.message || "");
+    const e = new Error(scope
+      ? "Reconnect Zoho CRM to allow this (a permission was added since you connected) — your own Zoho sign-in"
+      : (d?.data?.[0]?.message || d?.message || code || `Zoho ${r.status}`) + " (your own Zoho sign-in)");
     e.refused = true; e.status = r.status; e.zoho = d;
     throw e;
   }
