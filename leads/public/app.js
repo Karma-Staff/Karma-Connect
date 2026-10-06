@@ -4426,7 +4426,7 @@ function kdPickLead(id) {
   kdLoadLead(id);
 }
 
-function kdDial(fromPad) {
+async function kdDial(fromPad) {
   /* The keypad dials what is typed on it. KD.lead outlives the call it came
      from, so preferring its phone here rang the last lead again whatever the
      rep had just typed. It stays only when the typed number is that lead's —
@@ -4435,7 +4435,25 @@ function kdDial(fromPad) {
   if (fromPad && KD.lead && last10(KD.lead.phone) !== last10(KD.number)) KD.lead = null;
   const num = fromPad ? KD.number : KD.lead?.phone || KD.number;
   if (!num) return kdToast("Type a number first");
-  if (kdActive()) return;
+  if (kdActive() || KD.lookingUp) return;
+  /* A typed number is often a lead's. Without the lead the call is neither
+     logged (reportCall needs one) nor offered a wrap-up, so a keypad call
+     left no trace and no disposition. Ask the same whois the incoming pop-up
+     uses; a failed lookup still dials, just without the lead. */
+  if (fromPad && !KD.lead) {
+    KD.lookingUp = true;
+    try {
+      const l = (await api("/api/calls/whois?number=" + encodeURIComponent(num))).lead;
+      if (l) {
+        KD.lead = { id: l.id, name: l.name || l.company, company: l.company, phone: num,
+          status: l.status, city: l.city, state: l.state, industry: l.industry, owner: l.owner };
+        KD.ptab = "history";
+        kdLoadLead(l.id);
+      }
+    } catch (e) { /* dial anyway */ }
+    finally { KD.lookingUp = false; }
+    if (kdActive()) return;
+  }
   const sent = kdEl("kd-dtmf-sent"); if (sent) sent.textContent = "";
   KD.view = "lead";
   /* dialInPage is the same path the lead table's Call button uses, so the
