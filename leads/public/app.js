@@ -5197,6 +5197,16 @@ function normalizeNumber(raw) {
   if (!cc) return d;
   if (d.length === 10) return cc + d;                    // 7028343440 -> +17028343440
   if (cc === "+1" && d.length === 11 && d[0] === "1") return "+" + d;  // already has the 1
+  /* More than 11 digits with no "+" is almost always an extension typed
+     without "ext": 941 234 5678 1234 is not Sri Lanka (+94). Dial the North
+     American number in front when there is one (area code and exchange both
+     start 2-9); a real foreign number is written with its "+". The lead's
+     stored number is repaired by Manage → Assignments → Phone numbers. */
+  if (cc === "+1" && d.length > 11) {
+    const nanp = /^[2-9]\d{2}[2-9]\d{6}/;
+    if (d[0] === "1" && nanp.test(d.slice(1))) return "+" + d.slice(0, 11);
+    if (nanp.test(d)) return "+1" + d.slice(0, 10);
+  }
   return d.length > 11 ? "+" + d : d;                    // long = already international
 }
 
@@ -5416,6 +5426,8 @@ function renderAssignments(d) {
       <div id="asg-msg" class="asg-msg hidden"></div>
     </div>
 
+    <div id="phone-check"></div>
+
     <div class="act-card">
       <h4>Workload — ${d.totals.assigned.toLocaleString()} of
         ${d.totals.leads.toLocaleString()} leads assigned across
@@ -5455,10 +5467,53 @@ function renderAssignments(d) {
     e.preventDefault();
     distribute(pool.total);
   });
+  loadPhoneCheck();
   el.querySelectorAll("[data-asg-un]").forEach((b) => b.addEventListener("click", () => {
     const p = people.find((x) => x.value === b.dataset.asgUn);
     if (p) openUnassignPerson(p);
   }));
+}
+
+/* Phone numbers with extension digits glued on — dialled as international
+   (941 234 5678 1234 rang Sri Lanka). Shown only when there is something to
+   fix; the server recomputes every change, and moves the extra digits into
+   the lead's notes (phonefix.js). */
+async function loadPhoneCheck() {
+  const el = $("phone-check");
+  if (!el) return;
+  let c;
+  try { c = await api("/api/phones/check"); } catch (e) { el.innerHTML = ""; return; }
+  if (!c.fixable && !c.unreadable) { el.innerHTML = ""; return; }
+  const row = (f) => `<tr><td>${esc(f.name || "")}</td><td class="ph-from">${esc(f.from)}</td>
+    <td>${f.to ? `${esc(f.to)} <span class="dash-mute">· ext ${esc(f.ext)} to notes</span>` : `<span class="dash-mute">can't be read — fix by hand</span>`}</td></tr>`;
+  el.innerHTML = `<div class="act-card ph-card">
+    <h4>Phone numbers</h4>
+    <p class="ph-sum">${c.fixable ? `<b>${c.fixable.toLocaleString()}</b> number${c.fixable === 1 ? " has" : "s have"} extra digits on the end,
+      so the dialler reads ${c.fixable === 1 ? "it" : "them"} as international and the call fails.
+      Fixing keeps the real number and moves the extra digits into the lead's notes.` : ""}
+      ${c.dnc ? ` <b>${c.dnc}</b> of the fixed numbers ${c.dnc === 1 ? "is" : "are"} on the DNC list and will be removed, as an import would.` : ""}
+      ${c.unreadable ? ` <span class="dash-mute">${c.unreadable.toLocaleString()} more can't be read automatically (too short, or no area code) — listed below to fix by hand.</span>` : ""}</p>
+    <details class="ph-list"><summary>See them</summary>
+      <table class="asg-table"><thead><tr><th>Lead</th><th>Now</th><th>After</th></tr></thead>
+        <tbody>${c.fixes.map(row).join("")}${c.bad.map(row).join("")}</tbody></table>
+      ${c.fixable > c.fixes.length || c.unreadable > c.bad.length ? `<p class="asg-foot">Showing the first ${c.fixes.length + c.bad.length}.</p>` : ""}
+    </details>
+    ${c.fixable ? `<button type="button" class="btn-primary" id="ph-fix">Fix ${c.fixable.toLocaleString()} number${c.fixable === 1 ? "" : "s"}</button>` : ""}
+    <div id="ph-msg" class="asg-msg hidden"></div>
+  </div>`;
+  $("ph-fix")?.addEventListener("click", async (e) => {
+    const b = e.currentTarget, msg = $("ph-msg");
+    b.disabled = true; b.textContent = "Fixing…";
+    try {
+      const r = await api("/api/phones/fix", { method: "POST", body: "{}" });
+      toast(`${r.fixed.toLocaleString()} phone number${r.fixed === 1 ? "" : "s"} fixed${r.removed ? ` · ${r.removed} on the DNC list removed` : ""}`, 6000);
+      runCounts();
+      loadPhoneCheck();
+    } catch (ex) {
+      msg.textContent = "Couldn't fix them: " + ex.message; msg.classList.remove("hidden"); msg.classList.add("bad");
+      b.disabled = false; b.textContent = "Try again";
+    }
+  });
 }
 
 /* Unassign one person's leads back to the pool: the ones not yet worked

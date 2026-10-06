@@ -36,6 +36,7 @@ const { requireScope } = require("./service-auth");
 const activity = require("./activity");
 const counts = require("./counts");
 const D = require("./dedupe");
+const { fix: fixPhone, extNote } = require("./phonefix");
 
 const router = express.Router();
 const gate = requireScope("imports:write", requireAdmin);
@@ -165,6 +166,20 @@ router.post("/api/import-jobs/:id/records", gate,
       for (let i = 0; i < records.length; i++) {
         const bad = validateRecord(records[i]);
         if (bad) return res.status(422).json({ error: `record ${seqStart + i}: ${bad}` });
+      }
+      /* Extension digits glued onto a number make it dial abroad and key
+         the wrong DNC entry; split them off before the row is staged, and
+         key it from the repaired number (phonefix.js). */
+      for (const r of records) {
+        if (typeof r.fields.phone !== "string") continue;
+        const f = fixPhone(r.fields.phone);
+        if (f.status !== "fixed") continue;
+        const was = r.fields.phone;
+        r.fields.phone = f.phone;
+        r.fields.phone_key = D.pk(f.phone);
+        const note = extNote({ ext: f.ext, phone: was });
+        r.fields.notes = r.fields.notes ? `${r.fields.notes}
+${note}` : note;
       }
       await stageBatch(j.id, seqStart, records);
       res.json({ ok: true, staged: records.length });

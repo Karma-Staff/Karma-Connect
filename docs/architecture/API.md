@@ -4,7 +4,7 @@
 
 # API
 
-**192 routes**, generated from the source on 2026-10-06.
+**194 routes**, generated from the source on 2026-10-06.
 
 Every path is absolute. That is deliberate: Karma Leads' API paths are the same
 whether it runs standalone or mounted into Connect, which is what let its front
@@ -47,13 +47,13 @@ declared once for the group.
 
 ---
 
-## Karma Leads — 130 routes
+## Karma Leads — 132 routes
 
 ### `/api/activity`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/activity` | admin | [leads/server/index.js:153](../../leads/server/index.js#L153) |  |
+| GET | `/api/activity` | admin | [leads/server/index.js:156](../../leads/server/index.js#L156) |  |
 
 ### `/api/alerts`
 
@@ -175,7 +175,7 @@ declared once for the group.
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| POST | `/api/dnc-import` | service token (imports:write) or admin | [leads/server/imports.js:374](../../leads/server/imports.js#L374) |  |
+| POST | `/api/dnc-import` | service token (imports:write) or admin | [leads/server/imports.js:389](../../leads/server/imports.js#L389) |  |
 
 ### `/api/followups`
 
@@ -188,17 +188,17 @@ declared once for the group.
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/identity-lookup` | service token (imports:write) or admin | [leads/server/imports.js:357](../../leads/server/imports.js#L357) |  |
+| GET | `/api/identity-lookup` | service token (imports:write) or admin | [leads/server/imports.js:372](../../leads/server/imports.js#L372) |  |
 
 ### `/api/import-jobs`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| POST | `/api/import-jobs` | service token (imports:write) or admin | [leads/server/imports.js:79](../../leads/server/imports.js#L79) |  |
-| GET | `/api/import-jobs/:id` | service token (imports:write) or admin | [leads/server/imports.js:186](../../leads/server/imports.js#L186) |  |
-| POST | `/api/import-jobs/:id/abort` | service token (imports:write) or admin | [leads/server/imports.js:191](../../leads/server/imports.js#L191) |  |
-| POST | `/api/import-jobs/:id/commit` | service token (imports:write) or admin | [leads/server/imports.js:174](../../leads/server/imports.js#L174) |  |
-| POST | `/api/import-jobs/:id/records` | service token (imports:write) or admin | [leads/server/imports.js:152](../../leads/server/imports.js#L152) |  |
+| POST | `/api/import-jobs` | service token (imports:write) or admin | [leads/server/imports.js:80](../../leads/server/imports.js#L80) |  |
+| GET | `/api/import-jobs/:id` | service token (imports:write) or admin | [leads/server/imports.js:201](../../leads/server/imports.js#L201) |  |
+| POST | `/api/import-jobs/:id/abort` | service token (imports:write) or admin | [leads/server/imports.js:206](../../leads/server/imports.js#L206) |  |
+| POST | `/api/import-jobs/:id/commit` | service token (imports:write) or admin | [leads/server/imports.js:189](../../leads/server/imports.js#L189) |  |
+| POST | `/api/import-jobs/:id/records` | service token (imports:write) or admin | [leads/server/imports.js:153](../../leads/server/imports.js#L153) |  |
 
 ### `/api/job-search`
 
@@ -249,6 +249,13 @@ declared once for the group.
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
 | POST | `/api/phone-refresh` | admin *(inherited)* | [leads/server/webphone.js:125](../../leads/server/webphone.js#L125) |  |
+
+### `/api/phones`
+
+| Method | Path | Guard | Source | |
+|---|---|---|---|---|
+| GET | `/api/phones/check` | admin | [leads/server/phonefix.js:70](../../leads/server/phonefix.js#L70) | GET /api/phones/check — what a fix would change, before anything does. |
+| POST | `/api/phones/fix` | admin | [leads/server/phonefix.js:93](../../leads/server/phonefix.js#L93) | POST /api/phones/fix — apply every fix the check shows. |
 
 ### `/api/recents`
 

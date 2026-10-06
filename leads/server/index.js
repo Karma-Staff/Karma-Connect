@@ -98,6 +98,9 @@ function mount(app, opts = {}) {
   /* the assignments board (admin): read-only workload per person — assigning
      itself still goes through bulk.js, mounted above */
   app.use(require("./assignments").router);
+  /* phone numbers with extension digits glued on (dialled as international):
+     the check and the one-time fix (admin) */
+  app.use(require("./phonefix").router);
   /* click-to-call config + the OAuth token the in-page softphone asks for */
   app.use(require("./voice").router);
   /* RingCentral sits alongside Zoho rather than replacing it: both can be
