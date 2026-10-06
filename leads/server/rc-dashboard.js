@@ -153,6 +153,7 @@ async function fetchDay(userId, ymd, tz, scope, fresh = false) {
           fromExt: r.from?.extensionNumber || "",
           toNum: r.to?.phoneNumber || "", toName: r.to?.name || "",
           toExt: r.to?.extensionNumber || "",
+          vm: r.message && /voice/i.test(r.message.type || "") ? String(r.message.id) : null,
         });
       }
       if (!d.navigation?.nextPage || (d.records || []).length < PAGE) break;

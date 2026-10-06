@@ -53,6 +53,7 @@ async function rollupDay(day) {
             min(at), max(at), now()
        FROM activity_log
       WHERE action = 'call' AND call_day(at, $2) = $1::date
+        AND actor <> 'ringcentral'          -- missed inbound calls (missed.js) are nobody's call
       GROUP BY 1, 2
      ON CONFLICT (day, actor) DO UPDATE SET
        calls = EXCLUDED.calls, connected = EXCLUDED.connected,
@@ -82,6 +83,7 @@ const LIVE_TODAY = `
          count(DISTINCT lead_id)::int                                    AS leads
     FROM activity_log
    WHERE action = 'call' AND call_day(at, $1) = call_day(now(), $1)
+     AND actor <> 'ringcentral'
    GROUP BY actor`;
 
 /* 'placed' is the honest answer for the hand-off diallers: we opened Zoho's
@@ -876,7 +878,7 @@ async function gatherExtras({ from, to, who }) {
        FROM activity_log
       WHERE action = 'call'
         AND call_day(at, $4) BETWEEN $1::date AND $2::date
-        AND ($3::text IS NULL OR lower(actor) = $3)
+        AND ($3::text IS NULL OR lower(actor) = $3) AND actor <> 'ringcentral'
       GROUP BY 1 ORDER BY n DESC`, [from, to, who, TZ])).rows;
 
   /* Where the calling went. Both spellings of a state, as everywhere else. */
@@ -885,7 +887,7 @@ async function gatherExtras({ from, to, who }) {
        FROM activity_log a JOIN leads l ON l.id = a.lead_id
       WHERE a.action = 'call'
         AND call_day(a.at, $4) BETWEEN $1::date AND $2::date
-        AND ($3::text IS NULL OR lower(a.actor) = $3)
+        AND ($3::text IS NULL OR lower(a.actor) = $3) AND a.actor <> 'ringcentral'
         AND nullif(btrim(l.state), '') IS NOT NULL
       GROUP BY 1 ORDER BY n DESC LIMIT 8`, [from, to, who, TZ])).rows;
 

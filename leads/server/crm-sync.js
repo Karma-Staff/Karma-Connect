@@ -91,6 +91,9 @@ async function recordingFor(row) {
      RingCentral record for this call (same number, start within 3 minutes)
      through the rep's own connection. Optional — a call without one is
      still logged. */
+  /* A missed call has no recording; what it can have is the voicemail the
+     caller left (missed.js), which goes on the Zoho call the same way. */
+  if (row.meta?.missed) return row.meta.vm_msg ? `vm:${row.meta.vm_ext || "~"}:${row.meta.vm_msg}` : null;
   try {
     if (!row.user_id) return null;
     const w = dash.wall(new Date(row.at).getTime(), TZ);
@@ -109,6 +112,35 @@ async function recordingFor(row) {
     return hit ? hit.recId : null;
   } catch (e) { return null; }
 }
+/* A voicemail, from RingCentral's message store: its audio, and the
+   text when RingCentral transcribed it. Needs the RingCentral app's Read
+   Messages permission; without it this throws and the call still goes to
+   Zoho, with the reason shown in the Zoho CRM panel. Read through whoever
+   read the call log (missed.js), since a missed call is nobody's call. */
+async function vmMessage(row) {
+  const m = row.meta || {};
+  if (!m.missed || !m.vm_msg) return null;
+  const ext = m.vm_ext || "~", msg = m.vm_msg;
+  const tok = await rc.accessFor(row.user_id || row.meta?.reader_uid);
+  const r = await fetch(`${rc.SERVER}/restapi/v1.0/account/~/extension/${ext}/message-store/${msg}`,
+    { headers: { Authorization: "Bearer " + tok.access_token } });
+  if (!r.ok) throw new Error(r.status === 403
+    ? "RingCentral refused the voicemail — the app needs the Read Messages permission"
+    : r.status === 404 ? "RingCentral has no such voicemail" : `RingCentral voicemail ${r.status}`);
+  return { msg: await r.json(), tok };
+}
+
+/* The voicemail's text, when RingCentral made one — best-effort. */
+async function vmText(row) {
+  try {
+    const v = await vmMessage(row);
+    const a = (v?.msg.attachments || []).find((x) => x.type === "AudioTranscription");
+    if (!a) return null;
+    const r = await fetch(a.uri, { headers: { Authorization: "Bearer " + v.tok.access_token } });
+    return r.ok ? (await r.text()).trim().slice(0, 4000) || null : null;
+  } catch (e) { return null; }
+}
+
 /* The link Zoho's Voice Recording player can actually play — signed, no
    login needed (calllogs.js). The admin-only proxy would answer it with an
    error instead of audio. */
@@ -132,24 +164,34 @@ const MAX_ATTACH = 20 * 1024 * 1024;
    note instead of making a second one. Throws on failure; the caller keeps
    it pending and tries again. */
 async function attachRecording(row, zohoCallId, recId) {
-  const tok = await rc.accessFor(row.user_id);
-  const r = await fetch(`${rc.SERVER.replace("platform.", "media.")}/restapi/v1.0/account/~/recording/${recId}/content`,
-    { headers: { Authorization: "Bearer " + tok.access_token } });
-  if (!r.ok) throw new Error(r.status === 404 ? "RingCentral has no such recording"
-    : r.status === 403 ? "RingCentral refused the recording download (call-recording access)" : `RingCentral recording ${r.status}`);
+  const vm = String(recId).startsWith("vm:");
+  let url = `${rc.SERVER.replace("platform.", "media.")}/restapi/v1.0/account/~/recording/${recId}/content`;
+  let tok;
+  if (vm) {
+    const v = await vmMessage(row);
+    const a = (v?.msg.attachments || []).find((x) => x.type === "AudioRecording");
+    if (!a) throw Object.assign(new Error("RingCentral has no audio for this voicemail"), { final: true });
+    url = a.uri; tok = v.tok;
+  } else tok = await rc.accessFor(row.user_id);
+  const r = await fetch(url, { headers: { Authorization: "Bearer " + tok.access_token } });
+  if (!r.ok) throw new Error(r.status === 404 ? `RingCentral has no such ${vm ? "voicemail" : "recording"}`
+    : r.status === 403 ? (vm ? "RingCentral refused the voicemail download (Read Messages permission)"
+      : "RingCentral refused the recording download (call-recording access)") : `RingCentral ${vm ? "voicemail" : "recording"} ${r.status}`);
   const buf = Buffer.from(await r.arrayBuffer());
   if (buf.length > MAX_ATTACH) throw Object.assign(new Error("Recording is larger than Zoho's attachment limit"), { final: true });
   const type = (r.headers.get("content-type") || "audio/mpeg").split(";")[0];
   const ext = /wav/.test(type) ? "wav" : "mp3";
   const when = new Date(row.at).toISOString().slice(0, 16).replace("T", "_").replace(":", "");
-  const name = `call-recording_${when}_${zoho.digits10(row.meta?.number) || "unknown"}.${ext}`;
+  const name = `${vm ? "voicemail" : "call-recording"}_${when}_${zoho.digits10(row.meta?.number) || "unknown"}.${ext}`;
 
   let noteId = row.meta?.crm_rec_note || null;
   if (!noteId) {
     const secs = +row.meta?.seconds || 0;
     const n = await people.writeAs(row.user_id, "/Notes", { method: "POST", body: JSON.stringify({ data: [{
-      Note_Title: "Call recording",
-      Note_Content: `Recording of this call — ${row.rep_name || row.actor}, ${Math.floor(secs / 60)}m ${secs % 60}s. `
+      Note_Title: vm ? "Voicemail" : "Call recording",
+      Note_Content: vm
+        ? `The voicemail the caller left on this missed call. The audio is attached to this note (saved by Karma Connect).`
+        : `Recording of this call — ${row.rep_name || row.actor}, ${Math.floor(secs / 60)}m ${secs % 60}s. `
         + `The MP3 is attached to this note (saved by Karma Connect; kept in Zoho after RingCentral deletes its copy at 90 days).`,
       Parent_Id: { module: { api_name: "Calls" }, id: String(zohoCallId) } }] }) });
     const nd = n.d?.data?.[0];
@@ -202,11 +244,19 @@ async function buildCall(row, known = {}) {
 
   const link = m.crm_link || (await zoho.findInCrm(m.number || row.phone));
   const recId = known.recId || await recordingFor(row);
-  const recording = recUrl(recId);
+  const recording = recId && !String(recId).startsWith("vm:") ? recUrl(recId) : null;
+  const missed = !!m.missed;
+  const vmSaid = missed && m.voicemail ? await vmText(row) : null;
   const rep = row.rep_name || row.actor;
   const who = row.lead_name || row.company || m.number || "a lead";
 
-  const lines = [
+  const lines = missed ? [
+    `Missed call — ${m.voicemail ? "the caller left a voicemail" : "nobody answered and no voicemail was left"}`,
+    m.agent ? `Rang: ${m.agent}` : null,
+    vmSaid ? `Voicemail (RingCentral's transcript): ${vmSaid}` : null,
+    m.voicemail && recId ? `Voicemail audio: saved in this call's Notes ("Voicemail")` : null,
+    `Logged by Karma Connect (RingCentral).`,
+  ].filter(Boolean) : [
     `Called by: ${rep} (${row.actor})`,
     `Outcome: ${OUTCOME[m.outcome] || m.outcome || "—"}`,
     m.disposition ? `Disposition: ${m.disposition}` : null,
@@ -226,8 +276,10 @@ async function buildCall(row, known = {}) {
   const pretty = us ? `(${us.slice(0, 3)}) ${us.slice(3, 6)}-${us.slice(6)}` : raw;
   const e164 = us ? "+1" + us : raw;
   const call = {
-    Subject: `${inbound ? "Incoming call from" : "Outgoing call to"} ${who}${pretty && who !== raw ? " " + pretty : ""} — ${rep}`,
-    Call_Type: inbound ? "Inbound" : "Outbound",
+    Subject: missed
+      ? `Missed call from ${who}${pretty && who !== raw ? " " + pretty : ""}${m.voicemail ? " — voicemail" : ""}`
+      : `${inbound ? "Incoming call from" : "Outgoing call to"} ${who}${pretty && who !== raw ? " " + pretty : ""} — ${rep}`,
+    Call_Type: missed ? "Missed" : inbound ? "Inbound" : "Outbound",
     ...(raw ? (inbound ? { From_Number__s: e164 } : { To_Number__s: e164 }) : {}),
     Call_Start_Time: zIso(start),
     Call_Duration: mmss(seconds),

@@ -116,6 +116,9 @@ function mount(app, opts = {}) {
   const crmSync = require("./crm-sync");
   app.use(crmSync.router);
   crmSync.startSweeper();
+  /* inbound calls nobody answered, and voicemails: logged, sent to Zoho as
+     Missed, and a call-back reminder for the lead's owner */
+  require("./missed").startSweeper();
   app.use(require("./zoho-crm").router);
   /* each person's own Zoho CRM sign-in, so what they create there is theirs */
   app.use(require("./crm-identity").router);
