@@ -3073,6 +3073,24 @@ label.check input[type="checkbox"] { width: auto; margin: 0; accent-color: var(-
   transition: background-color .15s ease, color .15s ease; }
 .kd-fu-done svg { width: 16px; height: 16px; stroke-width: 2.2; }
 .kd-fu-done:hover { background: color-mix(in srgb, var(--kd-live) 18%, transparent); color: var(--kd-live); }
+/* the inbox's two tabs, and the missed-call rows */
+.kd-itabs { grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0 0 10px; }
+.kd-itab-n { font-style: normal; margin-left: 4px; padding: 0 6px; border-radius: 10px; font-size: 10.5px;
+  background: color-mix(in srgb, var(--kd-gold) 22%, transparent); color: var(--gold); }
+.kd-miss { align-items: flex-start; }
+.kd-miss .kd-fu-main { align-items: flex-start; cursor: default; }
+.kd-miss .kd-fu-done { margin-top: 8px; }
+.kd-miss.done { opacity: .7; }
+.kd-vm-chip { margin-left: 6px; padding: 1px 7px; border-radius: 10px; font-size: 10.5px; font-weight: 600;
+  background: var(--accent-soft); color: var(--accent-ink); vertical-align: 1px; }
+.kd-vm-text { display: block; margin-top: 4px; font-size: 12px; line-height: 1.4; color: var(--kd-ink); font-style: italic; }
+.kd-miss-acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+.kd-miss-btn { height: 26px; padding: 0 10px; border-radius: 13px; border: 1px solid var(--kd-line, var(--border));
+  background: transparent; color: var(--kd-ink); font-size: 12px; display: inline-flex; align-items: center; gap: 5px; }
+.kd-miss-btn svg { width: 13px; height: 13px; }
+.kd-miss-btn.call { background: var(--kd-live); border-color: var(--kd-live); color: #062014; font-weight: 600; }
+.kd-miss-audio audio { width: 100%; height: 32px; margin-top: 6px; }
+.kd-miss-err { display: block; margin-top: 6px; font-size: 11.5px; color: #ffb4ab; }
 .kd-allclear { display: flex; flex-direction: column; align-items: center; gap: 6px;
   padding: 40px 16px; text-align: center; }
 .kd-allclear i { width: 44px; height: 44px; margin-bottom: 4px; border-radius: 50%;

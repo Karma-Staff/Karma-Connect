@@ -3942,6 +3942,7 @@ function kdStartReminders() {
 
 async function kdLoadFollowups() {
   if (!S.me?.email) return;
+  kdLoadMissed();
   try {
     const d = await api("/api/followups");
     const me = String(S.me?.email || "").trim().toLowerCase();
@@ -3957,7 +3958,7 @@ async function kdLoadFollowups() {
 const kdDue = (f) => new Date(f.due_at).getTime() <= Date.now();
 
 function kdBadge() {
-  const n = (KD.fus || []).filter(kdDue).length;
+  const n = (KD.fus || []).filter(kdDue).length + (KD.missed || []).filter((m) => m.open).length;
   const txt = n > 99 ? "99+" : String(n);
   const nav = kdEl("kd-badge");
   if (nav) { nav.textContent = txt; nav.classList.toggle("hidden", !n); }
@@ -4000,9 +4001,147 @@ function kdFuWhen(iso) {
   return d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }) + " · " + time;
 }
 
+/* ---------------- missed calls ----------------
+   Callers nobody picked up, and the voicemails they left (missed.js on the
+   server logs them from RingCentral's call log). Each can be played, read,
+   called back, or ticked off; one that anyone has rung back since clears
+   itself. Polled with the reminders; the bell counts both. */
+async function kdLoadMissed() {
+  try {
+    const d = await api("/api/calls/missed?days=7");
+    const prevText = new Map((KD.missed || []).map((m) => [m.id, m.vm_text]));
+    KD.missed = (d.list || []).map((m) => ({ ...m, vm_text: m.vm_text || prevText.get(m.id) || null }));
+  } catch (e) { KD.missed = KD.missed || []; }
+  kdNotifyMissed();
+  kdBadge();
+  if (KD.view === "inbox" && KD.itab === "missed") kdRenderInbox();
+}
+
+function kdNotifyMissed() {
+  const open = (KD.missed || []).filter((m) => m.open);
+  if (!KD.missedSeen) {
+    KD.missedSeen = new Set((KD.missed || []).map((m) => m.id));
+    if (open.length) toast(`${open.length} missed call${open.length === 1 ? "" : "s"} to call back`, 6000);
+    return;
+  }
+  for (const m of open) {
+    if (KD.missedSeen.has(m.id)) continue;
+    KD.missedSeen.add(m.id);
+    const who = m.lead_name || kdFmtNum(m.number || "") || "Someone";
+    toast(m.voicemail ? `${who} left a voicemail` : `Missed call from ${who}`, 10000);
+  }
+}
+
+function kdRenderMissed(box) {
+  const list = KD.missed;
+  const sum = kdEl("kd-inbox-sum");
+  if (!list) { box.innerHTML = `<div class="kd-empty">Loading…</div>`; return; }
+  const open = list.filter((m) => m.open), done = list.filter((m) => !m.open);
+  if (sum) sum.textContent = list.length ? `${open.length} to call back · last 7 days` : "";
+  if (!list.length) {
+    box.innerHTML = `
+      <div class="kd-allclear">
+        <i>${kdSvg("M20 6L9 17l-5-5")}</i>
+        <b>No missed calls</b>
+        <span>When a lead rings and nobody picks up — or leaves a voicemail — it shows here, and you get a heads-up.</span>
+      </div>`;
+    return;
+  }
+  const row = (m) => {
+    const name = m.lead_name || kdFmtNum(m.number || "") || "Unknown caller";
+    const state = m.called_back_at
+      ? `called back ${relTime(m.called_back_at)}${m.called_back_by ? " by " + m.called_back_by : ""}`
+      : m.handled_at ? `done${m.handled_by ? " · " + m.handled_by : ""}` : "";
+    return `
+      <div class="kd-fu-row kd-miss${m.open ? " due" : " done"}" data-mrow="${m.id}">
+        <div class="kd-fu-main">
+          <div class="kd-ini">${esc(kdInitials(name))}</div>
+          <div class="kd-lrow-t">
+            <b>${esc(name)} ${m.voicemail ? `<span class="kd-vm-chip">Voicemail</span>` : ""}</b>
+            <span class="kd-fu-when">${esc(relTime(m.at))}${m.lead_name && m.number ? " · " + esc(kdFmtNum(m.number)) : ""}${
+              m.agent ? " · rang " + esc(m.agent) : ""}</span>
+            ${state ? `<span class="kd-fu-note">${esc(state)}</span>` : ""}
+            ${m.vm_text ? `<span class="kd-vm-text">“${esc(m.vm_text)}”</span>` : ""}
+            <div class="kd-miss-acts">
+              ${m.number ? `<button class="kd-miss-btn call" data-mcall="${m.id}">${kdSvg(KD_IC.phone)} Call back</button>` : ""}
+              ${m.voicemail ? `<button class="kd-miss-btn" data-mplay="${m.id}">▶ Play</button>` : ""}
+              ${m.voicemail && !m.vm_text ? `<button class="kd-miss-btn" data-mtext="${m.id}">Read it</button>` : ""}
+            </div>
+            <div class="kd-miss-audio" id="kd-maudio-${m.id}"></div>
+          </div>
+        </div>
+        ${m.open ? `<button class="kd-fu-done" data-mdone="${m.id}" title="Mark done" aria-label="Mark ${esc(name)} done">
+          ${kdSvg("M20 6L9 17l-5-5")}</button>` : `<button class="kd-fu-done" data-mundo="${m.id}" title="Put back" aria-label="Put ${esc(name)} back">↺</button>`}
+      </div>`;
+  };
+  box.innerHTML = [
+    open.length ? `<div class="kd-fu-group"><div class="kd-fu-label due">To call back <span>${open.length}</span></div>${open.map(row).join("")}</div>` : "",
+    done.length ? `<div class="kd-fu-group"><div class="kd-fu-label">Dealt with <span>${done.length}</span></div>${done.map(row).join("")}</div>` : "",
+  ].join("");
+}
+
+async function kdMissedDone(id, undo) {
+  const m = (KD.missed || []).find((x) => x.id === id);
+  if (!m) return;
+  m.open = !!undo; m.handled_at = undo ? null : new Date().toISOString(); m.handled_by = undo ? null : S.me?.email;
+  kdBadge(); kdRenderInbox();                      // optimistic: it feels instant
+  try { await api(`/api/calls/missed/${id}/done`, { method: "POST", body: JSON.stringify(undo ? { undo: true } : {}) }); }
+  catch (e) { kdToast("Couldn't save that — " + e.message); kdLoadMissed(); }
+}
+
+/* Ring them back from the dialler, as the lead when it is one — so the
+   call is logged on the lead, and this missed call clears itself. */
+function kdMissedCall(id) {
+  const m = (KD.missed || []).find((x) => x.id === id);
+  if (!m || !m.number) return;
+  if (kdActive()) return kdToast("Finish this call first");
+  if (m.lead_id) {
+    KD.lead = { id: m.lead_id, name: m.lead_name || kdFmtNum(m.number), phone: m.number };
+    KD.ptab = "history";
+    kdLoadLead(m.lead_id);
+    kdDial();
+  } else {
+    KD.lead = null;
+    KD.number = String(m.number).replace(/[^0-9*#+]/g, "");
+    kdDial(true);
+  }
+}
+
+function kdMissedPlay(id) {
+  const slot = kdEl("kd-maudio-" + id);
+  if (!slot) return;
+  if (slot.firstChild) { slot.innerHTML = ""; return; }   // pressed again: hide it
+  slot.innerHTML = `<audio controls autoplay preload="none" src="/api/calls/missed/${id}/voicemail"></audio>`;
+  slot.querySelector("audio").addEventListener("error", async () => {
+    let why = "couldn't play it";
+    try { await api(`/api/calls/missed/${id}/voicemail`); } catch (e) { why = e.message; }
+    slot.innerHTML = `<span class="kd-miss-err">${esc(why)}</span>`;
+  });
+}
+
+async function kdMissedText(id) {
+  const m = (KD.missed || []).find((x) => x.id === id);
+  if (!m) return;
+  try {
+    const r = await api(`/api/calls/missed/${id}/voicemail-text`);
+    m.vm_text = r.text || null;
+    if (!m.vm_text) kdToast("RingCentral has no transcript of this one — press Play");
+  } catch (e) { kdToast("Couldn't read it — " + e.message); }
+  kdRenderInbox();
+}
+
 function kdRenderInbox() {
   const box = kdEl("kd-inbox");
   if (!box) return;
+  const tab = KD.itab || "reminders";
+  const openMissed = (KD.missed || []).filter((m) => m.open).length;
+  const dueFus = (KD.fus || []).filter(kdDue).length;
+  document.querySelectorAll("[data-itab]").forEach((b) => {
+    const n = b.dataset.itab === "missed" ? openMissed : dueFus;
+    b.classList.toggle("on", b.dataset.itab === tab);
+    b.innerHTML = (b.dataset.itab === "missed" ? "Missed calls" : "Reminders") + (n ? ` <i class="kd-itab-n">${n}</i>` : "");
+  });
+  if (tab === "missed") return kdRenderMissed(box);
   if (!KD.fus) { box.innerHTML = `<div class="kd-empty">Loading…</div>`; return; }
 
   const today = new Date(); today.setHours(23, 59, 59, 999);
@@ -4341,6 +4480,12 @@ function rcWireBar() {
     if ((b = t("[data-nav]"))) return kdNav(b.dataset.nav);
     if ((b = t("[data-stab]"))) { KD.stab = b.dataset.stab; if (KD.stab === "audio") kdLoadDevices(); return kdRenderSettings(); }
     if ((b = t("[data-set]"))) return kdSetting(b.dataset.set);
+    if ((b = t("[data-itab]"))) { KD.itab = b.dataset.itab; if (KD.itab === "missed") kdLoadMissed(); return kdRenderInbox(); }
+    if ((b = t("[data-mdone]"))) return kdMissedDone(+b.dataset.mdone);
+    if ((b = t("[data-mundo]"))) return kdMissedDone(+b.dataset.mundo, true);
+    if ((b = t("[data-mcall]"))) return kdMissedCall(+b.dataset.mcall);
+    if ((b = t("[data-mplay]"))) return kdMissedPlay(+b.dataset.mplay);
+    if ((b = t("[data-mtext]"))) return kdMissedText(+b.dataset.mtext);
     if ((b = t("[data-fudone]"))) return kdFollowDone(+b.dataset.fudone);
     if ((b = t("[data-fulead]"))) return kdOpenFollowLead(+b.dataset.fulead);
     if ((b = t("[data-tab]"))) { KD.ptab = b.dataset.tab; return kdRender(); }

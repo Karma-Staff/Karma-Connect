@@ -58,6 +58,7 @@ const rc = require("./ringcentral");
 const people = require("./crm-identity");
 const activity = require("./activity");
 const dash = require("./rc-dashboard");
+const voicemail = require("./voicemail");
 
 const router = express.Router();
 
@@ -112,35 +113,6 @@ async function recordingFor(row) {
     return hit ? hit.recId : null;
   } catch (e) { return null; }
 }
-/* A voicemail, from RingCentral's message store: its audio, and the
-   text when RingCentral transcribed it. Needs the RingCentral app's Read
-   Messages permission; without it this throws and the call still goes to
-   Zoho, with the reason shown in the Zoho CRM panel. Read through whoever
-   read the call log (missed.js), since a missed call is nobody's call. */
-async function vmMessage(row) {
-  const m = row.meta || {};
-  if (!m.missed || !m.vm_msg) return null;
-  const ext = m.vm_ext || "~", msg = m.vm_msg;
-  const tok = await rc.accessFor(row.user_id || row.meta?.reader_uid);
-  const r = await fetch(`${rc.SERVER}/restapi/v1.0/account/~/extension/${ext}/message-store/${msg}`,
-    { headers: { Authorization: "Bearer " + tok.access_token } });
-  if (!r.ok) throw new Error(r.status === 403
-    ? "RingCentral refused the voicemail — the app needs the Read Messages permission"
-    : r.status === 404 ? "RingCentral has no such voicemail" : `RingCentral voicemail ${r.status}`);
-  return { msg: await r.json(), tok };
-}
-
-/* The voicemail's text, when RingCentral made one — best-effort. */
-async function vmText(row) {
-  try {
-    const v = await vmMessage(row);
-    const a = (v?.msg.attachments || []).find((x) => x.type === "AudioTranscription");
-    if (!a) return null;
-    const r = await fetch(a.uri, { headers: { Authorization: "Bearer " + v.tok.access_token } });
-    return r.ok ? (await r.text()).trim().slice(0, 4000) || null : null;
-  } catch (e) { return null; }
-}
-
 /* The link Zoho's Voice Recording player can actually play — signed, no
    login needed (calllogs.js). The admin-only proxy would answer it with an
    error instead of audio. */
@@ -164,19 +136,17 @@ const MAX_ATTACH = 20 * 1024 * 1024;
    note instead of making a second one. Throws on failure; the caller keeps
    it pending and tries again. */
 async function attachRecording(row, zohoCallId, recId) {
+  /* a missed call's "recording" is the voicemail the caller left (voicemail.js) */
   const vm = String(recId).startsWith("vm:");
-  let url = `${rc.SERVER.replace("platform.", "media.")}/restapi/v1.0/account/~/recording/${recId}/content`;
-  let tok;
-  if (vm) {
-    const v = await vmMessage(row);
-    const a = (v?.msg.attachments || []).find((x) => x.type === "AudioRecording");
-    if (!a) throw Object.assign(new Error("RingCentral has no audio for this voicemail"), { final: true });
-    url = a.uri; tok = v.tok;
-  } else tok = await rc.accessFor(row.user_id);
-  const r = await fetch(url, { headers: { Authorization: "Bearer " + tok.access_token } });
-  if (!r.ok) throw new Error(r.status === 404 ? `RingCentral has no such ${vm ? "voicemail" : "recording"}`
-    : r.status === 403 ? (vm ? "RingCentral refused the voicemail download (Read Messages permission)"
-      : "RingCentral refused the recording download (call-recording access)") : `RingCentral ${vm ? "voicemail" : "recording"} ${r.status}`);
+  let r;
+  if (vm) r = await voicemail.audio(row);
+  else {
+    const tok = await rc.accessFor(row.user_id);
+    r = await fetch(`${rc.SERVER.replace("platform.", "media.")}/restapi/v1.0/account/~/recording/${recId}/content`,
+      { headers: { Authorization: "Bearer " + tok.access_token } });
+    if (!r.ok) throw new Error(r.status === 404 ? "RingCentral has no such recording"
+      : r.status === 403 ? "RingCentral refused the recording download (call-recording access)" : `RingCentral recording ${r.status}`);
+  }
   const buf = Buffer.from(await r.arrayBuffer());
   if (buf.length > MAX_ATTACH) throw Object.assign(new Error("Recording is larger than Zoho's attachment limit"), { final: true });
   const type = (r.headers.get("content-type") || "audio/mpeg").split(";")[0];
@@ -246,7 +216,7 @@ async function buildCall(row, known = {}) {
   const recId = known.recId || await recordingFor(row);
   const recording = recId && !String(recId).startsWith("vm:") ? recUrl(recId) : null;
   const missed = !!m.missed;
-  const vmSaid = missed && m.voicemail ? await vmText(row) : null;
+  const vmSaid = missed && m.voicemail ? await voicemail.text(row) : null;
   const rep = row.rep_name || row.actor;
   const who = row.lead_name || row.company || m.number || "a lead";
 

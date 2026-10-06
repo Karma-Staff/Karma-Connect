@@ -261,6 +261,98 @@ router.post("/api/calls/disposition", requireUser, express.json({ limit: "4kb" }
     } catch (e) { next(e); }
   });
 
+/* ---------------- missed calls, for the dialler ----------------
+
+   The rows missed.js logs (actor 'ringcentral', meta.missed), as the
+   dialler's Missed calls list: who rang, when, whether they left a
+   voicemail, and whether anyone has rung them back since — any later call
+   to or from that number by a person counts, so the list clears itself as
+   the floor works it. Done (POST …/done) clears one by hand.
+
+   A rep sees the calls that rang them (meta.agent) or came from a lead they
+   own; an admin sees every one. */
+const missedSeen = (req) => ({
+  all: rankOf(req.user.role) >= RANK.admin,
+  me: String(req.user.email || "").trim().toLowerCase(),
+});
+const MISSED_VISIBLE = `($2::boolean OR lower(coalesce(a.meta->>'agent', '')) = $3
+  OR lower(btrim(coalesce(l.owner, ''))) = $3)`;
+
+router.get("/api/calls/missed", requireUser, async (req, res, next) => {
+  try {
+    const days = Math.max(1, Math.min(30, Math.round(+req.query.days || 7)));
+    const v = missedSeen(req);
+    const { rows } = await query(
+      `SELECT a.id, a.at, a.lead_id, a.lead_name, l.kind AS lead_kind, l.owner AS lead_owner,
+              a.meta->>'number' AS number, coalesce((a.meta->>'voicemail')::boolean, false) AS voicemail,
+              a.meta->>'vm_text' AS vm_text, a.meta->>'agent' AS agent,
+              a.meta->>'handled_at' AS handled_at, a.meta->>'handled_by' AS handled_by,
+              cb.at AS called_back_at, cb.actor AS called_back_by
+         FROM activity_log a
+         LEFT JOIN leads l ON l.id = a.lead_id
+         LEFT JOIN LATERAL (
+           SELECT c.at, c.actor FROM activity_log c
+            WHERE c.action = 'call' AND c.at > a.at AND c.actor <> 'ringcentral'
+              AND right(regexp_replace(coalesce(c.meta->>'number', ''), '\\D', '', 'g'), 10)
+                = right(regexp_replace(coalesce(a.meta->>'number', ''), '\\D', '', 'g'), 10)
+            ORDER BY c.at LIMIT 1) cb ON true
+        WHERE a.action = 'call' AND a.actor = 'ringcentral' AND a.meta->>'missed' = 'true'
+          AND a.at > now() - ($1::int * interval '1 day')
+          AND ${MISSED_VISIBLE}
+        ORDER BY a.at DESC LIMIT 200`, [days, v.all, v.me]);
+    res.json({ list: rows.map((r) => ({ ...r, id: +r.id,
+      open: !r.handled_at && !r.called_back_at })) });
+  } catch (e) { next(e); }
+});
+
+/* One missed call this person may see, or null. */
+async function missedRow(req) {
+  const id = +req.params.id;
+  if (!Number.isInteger(id) || id <= 0) return null;
+  const v = missedSeen(req);
+  return (await query(
+    `SELECT a.* FROM activity_log a LEFT JOIN leads l ON l.id = a.lead_id
+      WHERE a.id = $1 AND a.action = 'call' AND a.actor = 'ringcentral' AND a.meta->>'missed' = 'true'
+        AND ${MISSED_VISIBLE}`, [id, v.all, v.me])).rows[0] || null;
+}
+
+/* POST /api/calls/missed/:id/done — dealt with ({undo:true} puts it back). */
+router.post("/api/calls/missed/:id/done", requireUser, express.json({ limit: "1kb" }), async (req, res, next) => {
+  try {
+    const row = await missedRow(req);
+    if (!row) return res.status(404).json({ error: "no such missed call" });
+    if (req.body?.undo)
+      await query(`UPDATE activity_log SET meta = meta - 'handled_at' - 'handled_by' WHERE id = $1`, [row.id]);
+    else
+      await query(`UPDATE activity_log SET meta = meta || jsonb_build_object('handled_at', now(), 'handled_by', $2::text)
+        WHERE id = $1`, [row.id, req.user.email]);
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+/* GET /api/calls/missed/:id/voicemail — the voicemail audio, passed through
+   from RingCentral (our token never reaches the browser).
+   GET /api/calls/missed/:id/voicemail-text — RingCentral's transcript of it. */
+router.get("/api/calls/missed/:id/voicemail", requireUser, async (req, res, next) => {
+  try {
+    const row = await missedRow(req);
+    if (!row || !row.meta?.vm_msg) return res.status(404).json({ error: "no voicemail on this call" });
+    let r;
+    try { r = await require("./voicemail").audio(row); }
+    catch (e) { return res.status(502).json({ error: e.message }); }
+    res.set("Content-Type", (r.headers.get("content-type") || "audio/mpeg").split(";")[0]);
+    res.set("Cache-Control", "private, max-age=3600");
+    res.send(Buffer.from(await r.arrayBuffer()));
+  } catch (e) { next(e); }
+});
+router.get("/api/calls/missed/:id/voicemail-text", requireUser, async (req, res, next) => {
+  try {
+    const row = await missedRow(req);
+    if (!row || !row.meta?.vm_msg) return res.status(404).json({ error: "no voicemail on this call" });
+    res.json({ text: await require("./voicemail").text(row) });
+  } catch (e) { next(e); }
+});
+
 /* GET /api/calls/whois?number= — who is ringing in. The incoming-call pop-up
    asks this the moment a call arrives, so whoever picks up knows the company
    and why they are calling back before they say hello.

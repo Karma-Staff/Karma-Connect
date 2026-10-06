@@ -4,7 +4,7 @@
 
 # API
 
-**195 routes**, generated from the source on 2026-10-06.
+**199 routes**, generated from the source on 2026-10-06.
 
 Every path is absolute. That is deliberate: Karma Leads' API paths are the same
 whether it runs standalone or mounted into Connect, which is what let its front
@@ -47,7 +47,7 @@ declared once for the group.
 
 ---
 
-## Karma Leads — 133 routes
+## Karma Leads — 137 routes
 
 ### `/api/activity`
 
@@ -101,15 +101,19 @@ declared once for the group.
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
 | POST | `/api/calls/disposition` | signed in | [leads/server/calls.js:234](../../leads/server/calls.js#L234) | POST /api/calls/disposition — the same for a call to a number that is no lead's (POST /api/ca… |
-| GET | `/api/calls/dispositions` | admin | [leads/server/calls.js:318](../../leads/server/calls.js#L318) | GET /api/calls/dispositions — the Dashboard's disposition log. |
-| GET | `/api/calls/export` | admin | [leads/server/calls.js:918](../../leads/server/calls.js#L918) |  |
+| GET | `/api/calls/dispositions` | admin | [leads/server/calls.js:410](../../leads/server/calls.js#L410) | GET /api/calls/dispositions — the Dashboard's disposition log. |
+| GET | `/api/calls/export` | admin | [leads/server/calls.js:1010](../../leads/server/calls.js#L1010) |  |
 | GET | `/api/calls/live` | admin | [leads/server/live.js:116](../../leads/server/live.js#L116) |  |
 | POST | `/api/calls/live` | signed in | [leads/server/live.js:89](../../leads/server/live.js#L89) |  |
 | POST | `/api/calls/log` | signed in | [leads/server/calls.js:118](../../leads/server/calls.js#L118) | POST /api/calls/log — the same, for a number that is no lead's: |
-| GET | `/api/calls/person/:email` | admin | [leads/server/calls.js:556](../../leads/server/calls.js#L556) | GET /api/calls/person/:email — one person, in depth. |
-| GET | `/api/calls/report` | admin | [leads/server/calls.js:429](../../leads/server/calls.js#L429) | GET /api/calls/report — the manager's screen. |
-| POST | `/api/calls/rollup` | admin | [leads/server/calls.js:678](../../leads/server/calls.js#L678) | POST /api/calls/rollup — rebuild stored days. |
-| GET | `/api/calls/whois` | signed in | [leads/server/calls.js:273](../../leads/server/calls.js#L273) | GET /api/calls/whois?number= — who is ringing in. |
+| GET | `/api/calls/missed` | signed in | [leads/server/calls.js:281](../../leads/server/calls.js#L281) |  |
+| POST | `/api/calls/missed/:id/done` | signed in | [leads/server/calls.js:320](../../leads/server/calls.js#L320) | POST /api/calls/missed/:id/done — dealt with ({undo:true} puts it back). |
+| GET | `/api/calls/missed/:id/voicemail` | signed in | [leads/server/calls.js:336](../../leads/server/calls.js#L336) | GET /api/calls/missed/:id/voicemail — the voicemail audio, passed through from RingCentral (o… |
+| GET | `/api/calls/missed/:id/voicemail-text` | signed in | [leads/server/calls.js:348](../../leads/server/calls.js#L348) |  |
+| GET | `/api/calls/person/:email` | admin | [leads/server/calls.js:648](../../leads/server/calls.js#L648) | GET /api/calls/person/:email — one person, in depth. |
+| GET | `/api/calls/report` | admin | [leads/server/calls.js:521](../../leads/server/calls.js#L521) | GET /api/calls/report — the manager's screen. |
+| POST | `/api/calls/rollup` | admin | [leads/server/calls.js:770](../../leads/server/calls.js#L770) | POST /api/calls/rollup — rebuild stored days. |
+| GET | `/api/calls/whois` | signed in | [leads/server/calls.js:365](../../leads/server/calls.js#L365) | GET /api/calls/whois?number= — who is ringing in. |
 
 ### `/api/campaign`
 
@@ -149,11 +153,11 @@ declared once for the group.
 | GET | `/api/crm/people` | admin | [leads/server/crm-identity.js:269](../../leads/server/crm-identity.js#L269) | Who has connected — the manager's answer to "why are this rep's calls still under the shared… |
 | GET | `/api/crm/preview` | admin | [leads/server/zoho-crm.js:153](../../leads/server/zoho-crm.js#L153) | How much of our own base would ever reach the CRM. |
 | GET | `/api/crm/status` | admin | [leads/server/zoho-crm.js:103](../../leads/server/zoho-crm.js#L103) | GET /api/crm/status — is it connected, and what is actually in there. |
-| GET | `/api/crm/sync` | admin | [leads/server/crm-sync.js:457](../../leads/server/crm-sync.js#L457) |  |
-| PUT | `/api/crm/sync` | owner | [leads/server/crm-sync.js:503](../../leads/server/crm-sync.js#L503) |  |
-| GET | `/api/crm/sync/on` | signed in | [leads/server/crm-sync.js:499](../../leads/server/crm-sync.js#L499) | Just "is it on" — for a rep's wrap-up, which offers "Create CRM lead" only when there is some… |
-| GET | `/api/crm/sync/preview` | admin | [leads/server/crm-sync.js:542](../../leads/server/crm-sync.js#L542) |  |
-| POST | `/api/crm/sync/recordings/retry` | admin | [leads/server/crm-sync.js:525](../../leads/server/crm-sync.js#L525) | POST /api/crm/sync/recordings/retry — look again for the recordings of calls already in Zoho… |
+| GET | `/api/crm/sync` | admin | [leads/server/crm-sync.js:427](../../leads/server/crm-sync.js#L427) |  |
+| PUT | `/api/crm/sync` | owner | [leads/server/crm-sync.js:473](../../leads/server/crm-sync.js#L473) |  |
+| GET | `/api/crm/sync/on` | signed in | [leads/server/crm-sync.js:469](../../leads/server/crm-sync.js#L469) | Just "is it on" — for a rep's wrap-up, which offers "Create CRM lead" only when there is some… |
+| GET | `/api/crm/sync/preview` | admin | [leads/server/crm-sync.js:512](../../leads/server/crm-sync.js#L512) |  |
+| POST | `/api/crm/sync/recordings/retry` | admin | [leads/server/crm-sync.js:495](../../leads/server/crm-sync.js#L495) | POST /api/crm/sync/recordings/retry — look again for the recordings of calls already in Zoho… |
 
 ### `/api/cron`
 
@@ -218,7 +222,7 @@ declared once for the group.
 | POST | `/api/leads/:id/call` | signed in, own lead *(inherited)* | [leads/server/calls.js:101](../../leads/server/calls.js#L101) | POST /api/leads/:id/call — the softphone reporting how a call went. |
 | GET | `/api/leads/:id/comments` | own lead *(inherited)* | [leads/server/leads.js:442](../../leads/server/leads.js#L442) |  |
 | POST | `/api/leads/:id/comments` | own lead *(inherited)* | [leads/server/leads.js:453](../../leads/server/leads.js#L453) |  |
-| POST | `/api/leads/:id/crm-lead` | signed in, own lead *(inherited)* | [leads/server/crm-sync.js:630](../../leads/server/crm-sync.js#L630) |  |
+| POST | `/api/leads/:id/crm-lead` | signed in, own lead *(inherited)* | [leads/server/crm-sync.js:600](../../leads/server/crm-sync.js#L600) |  |
 | GET | `/api/leads/:id/delete-preview` | admin, own lead *(inherited)* | [leads/server/trash.js:94](../../leads/server/trash.js#L94) | what the confirm modal shows before the click: |
 | POST | `/api/leads/:id/disposition` | signed in, own lead *(inherited)* | [leads/server/calls.js:178](../../leads/server/calls.js#L178) |  |
 | GET | `/api/leads/:id/followup` | signed in, own lead *(inherited)* | [leads/server/followups.js:104](../../leads/server/followups.js#L104) | What is set on this lead right now — the reading pane asks on every open. |
@@ -229,7 +233,7 @@ declared once for the group.
 | GET | `/api/leads/:id/research` | signed in, own lead *(inherited)* | [leads/server/research.js:49](../../leads/server/research.js#L49) | GET — whatever we already hold. |
 | POST | `/api/leads/:id/research` | signed in, own lead *(inherited)* | [leads/server/research.js:90](../../leads/server/research.js#L90) | POST — buy a briefing. |
 | POST | `/api/leads/:id/restore` | own lead *(inherited)* | [leads/server/leads.js:410](../../leads/server/leads.js#L410) |  |
-| GET | `/api/leads/:id/timeline` | signed in, own lead *(inherited)* | [leads/server/calls.js:382](../../leads/server/calls.js#L382) | GET /api/leads/:id/timeline — everything that ever happened to ONE lead. |
+| GET | `/api/leads/:id/timeline` | signed in, own lead *(inherited)* | [leads/server/calls.js:474](../../leads/server/calls.js#L474) | GET /api/leads/:id/timeline — everything that ever happened to ONE lead. |
 | GET | `/api/leads/:key` | signed in | [leads/server/demo.js:310](../../leads/server/demo.js#L310) | Opening a lead. |
 | GET | `/api/leads/:key` | signed in *(inherited)* | [leads/server/leads.js:202](../../leads/server/leads.js#L202) | one lead plus everything the reading pane shows beside it |
 
