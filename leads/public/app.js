@@ -4355,8 +4355,8 @@ function rcWireBar() {
 
     if (e.target.closest("#kd-return")) { KD.view = "lead"; return kdRender(); }
     if (e.target.closest("#kd-del")) { KD.number = KD.number.slice(0, -1); return kdRender(); }
-    if (e.target.closest("#kd-go") || e.target.closest("#kd-call")) return kdDial();
-    if (e.target.closest("#kd-again")) return kdDial();
+    if (e.target.closest("#kd-go")) return kdDial(true);
+    if (e.target.closest("#kd-call") || e.target.closest("#kd-again")) return kdDial();
     if (e.target.closest("#kd-end")) return kdHangup();
     if (e.target.closest("#kd-answer")) return kdAnswer();
     if (e.target.closest("#kd-decline")) return kdDecline();
@@ -4370,7 +4370,7 @@ function rcWireBar() {
   kdEl("kd-num")?.addEventListener("input", (e) => {
     KD.number = e.target.value.replace(/[^0-9*#+]/g, "").slice(0, 18);
   });
-  kdEl("kd-num")?.addEventListener("keydown", (e) => { if (e.key === "Enter") kdDial(); });
+  kdEl("kd-num")?.addEventListener("keydown", (e) => { if (e.key === "Enter") kdDial(true); });
   kdEl("kd-q")?.addEventListener("input", (e) => kdRenderQueue(KD.queue, e.target.value));
   root.addEventListener("change", (e) => {
     if (e.target.id !== "kd-in" && e.target.id !== "kd-out") return;
@@ -4426,8 +4426,14 @@ function kdPickLead(id) {
   kdLoadLead(id);
 }
 
-function kdDial() {
-  const num = KD.lead?.phone || KD.number;
+function kdDial(fromPad) {
+  /* The keypad dials what is typed on it. KD.lead outlives the call it came
+     from, so preferring its phone here rang the last lead again whatever the
+     rep had just typed. It stays only when the typed number is that lead's —
+     then the call is still logged against them. */
+  const last10 = (s) => String(s || "").replace(/\D/g, "").slice(-10);
+  if (fromPad && KD.lead && last10(KD.lead.phone) !== last10(KD.number)) KD.lead = null;
+  const num = fromPad ? KD.number : KD.lead?.phone || KD.number;
   if (!num) return kdToast("Type a number first");
   if (kdActive()) return;
   const sent = kdEl("kd-dtmf-sent"); if (sent) sent.textContent = "";
