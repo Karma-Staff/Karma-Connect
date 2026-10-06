@@ -4372,6 +4372,11 @@ function rcWireBar() {
 
   kdEl("kd-num")?.addEventListener("input", (e) => {
     KD.number = e.target.value.replace(/[^0-9*#+]/g, "").slice(0, 18);
+    /* The Call button is enabled by kdRender, so without this a pasted (or
+       typed) number left it greyed out until some other click repainted the
+       panel. Safe under the caret: the field's digits now match KD.number,
+       so kdRender leaves the field alone. */
+    kdRender();
   });
   kdEl("kd-num")?.addEventListener("keydown", (e) => { if (e.key === "Enter") kdDial(true); });
   kdEl("kd-q")?.addEventListener("input", (e) => kdRenderQueue(KD.queue, e.target.value));
