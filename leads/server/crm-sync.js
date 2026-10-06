@@ -105,16 +105,28 @@ async function recordingFor(row) {
     return hit ? hit.recId : null;
   } catch (e) { return null; }
 }
-const recUrl = (recId) => recId && APP_URL ? `${APP_URL}/api/voice/rc/recording/${recId}` : null;
+/* The link Zoho's Voice Recording player can actually play — signed, no
+   login needed (calllogs.js). The admin-only proxy would answer it with an
+   error instead of audio. */
+const recUrl = (recId) => require("./calllogs").recordingLink(recId);
+const LINK_V = "v2";                         // bump to re-send links already on Zoho calls
 
 /* Zoho's attachment limit is about 20 MB; a recording past it (an hour-plus
    call) keeps its link and is not uploaded. */
 const MAX_ATTACH = 20 * 1024 * 1024;
 
-/* The recording itself onto the Zoho Call, as a file anyone in the CRM can
-   play — the link above only opens for someone signed in to Karma Connect.
-   Downloaded from RingCentral through the rep's own connection. Throws on
-   any failure so the caller can keep it pending and try again. */
+/* The recording itself, kept IN Zoho CRM so it outlives RingCentral, which
+   deletes recordings after 90 days. Zoho refuses file uploads on Call
+   records ("The http request method type is not a valid one" — tried on
+   every API version), but takes them on Notes: so the Call gets a note,
+   "Call recording", and the MP3 is attached to that note. It shows in the
+   call's Notes, playable and downloadable by anyone with access to the call.
+
+   Downloaded from RingCentral through the rep's own connection. Written as
+   the rep where their Zoho sign-in allows it, else the service account. The
+   note's id is kept on the row first, so a retry adds the file to the same
+   note instead of making a second one. Throws on failure; the caller keeps
+   it pending and tries again. */
 async function attachRecording(row, zohoCallId, recId) {
   const tok = await rc.accessFor(row.user_id);
   const r = await fetch(`${rc.SERVER.replace("platform.", "media.")}/restapi/v1.0/account/~/recording/${recId}/content`,
@@ -127,12 +139,26 @@ async function attachRecording(row, zohoCallId, recId) {
   const ext = /wav/.test(type) ? "wav" : "mp3";
   const when = new Date(row.at).toISOString().slice(0, 16).replace("T", "_").replace(":", "");
   const name = `call-recording_${when}_${zoho.digits10(row.meta?.number) || "unknown"}.${ext}`;
+
+  let noteId = row.meta?.crm_rec_note || null;
+  if (!noteId) {
+    const secs = +row.meta?.seconds || 0;
+    const n = await people.writeAs(row.user_id, "/Notes", { method: "POST", body: JSON.stringify({ data: [{
+      Note_Title: "Call recording",
+      Note_Content: `Recording of this call — ${row.rep_name || row.actor}, ${Math.floor(secs / 60)}m ${secs % 60}s. `
+        + `The MP3 is attached to this note (saved by Karma Connect; kept in Zoho after RingCentral deletes its copy at 90 days).`,
+      Parent_Id: { module: { api_name: "Calls" }, id: String(zohoCallId) } }] }) });
+    const nd = n.d?.data?.[0];
+    if (!nd || nd.code !== "SUCCESS") throw new Error("Zoho refused the recording note: " + (nd?.message || nd?.code || "unknown"));
+    noteId = String(nd.details.id);
+    await query(`UPDATE activity_log SET meta = meta || jsonb_build_object('crm_rec_note', $2::text) WHERE id = $1`, [row.id, noteId]);
+  }
   const form = new FormData();
   form.append("file", new Blob([buf], { type }), name);
-  const w = await people.writeAs(row.user_id, `/Calls/${zohoCallId}/Attachments`, { method: "POST", body: form });
+  const w = await people.writeAs(row.user_id, `/Notes/${noteId}/Attachments`, { method: "POST", body: form });
   const d = w.d?.data?.[0];
-  if (!d || d.code !== "SUCCESS") throw new Error(d?.message || d?.code || "Zoho refused the attachment");
-  return { id: String(d.details?.id || ""), name, bytes: buf.length, as: w.as };
+  if (!d || d.code !== "SUCCESS") throw new Error("Zoho refused the recording file: " + (d?.message || w.d?.message || d?.code || "unknown"));
+  return { id: String(d.details?.id || ""), noteId, name, bytes: buf.length, as: w.as };
 }
 
 /* Attach, and record what happened on the call's row. */
@@ -177,7 +203,7 @@ async function buildCall(row, known = {}) {
     `Outcome: ${OUTCOME[m.outcome] || m.outcome || "—"}`,
     m.disposition ? `Disposition: ${m.disposition}` : null,
     notes.length ? `Notes:\n${notes.map((n) => "• " + n).join("\n")}` : null,
-    recId ? `Recording: attached to this call as an audio file${recording ? ` (also at ${recording})` : ""}` : null,
+    recId ? `Recording: saved in this call's Notes as an MP3 ("Call recording")${recording ? `; also playable at ${recording} until RingCentral removes it after 90 days` : ""}` : null,
     `Logged by Karma Connect (RingCentral).`,
   ].filter(Boolean);
 
@@ -258,7 +284,10 @@ async function sendClaimed(id) {
         WHERE id = $1`, [id, String(d.details.id), JSON.stringify(link), w.as, !recId && young]);
     /* The recording is already published: put the file on the Call now. A
        failure here never undoes the Call — it stays pending and is retried. */
-    if (recId) await attachAndMark(row, String(d.details.id), recId);
+    if (recId) {
+      await query(`UPDATE activity_log SET meta = meta || jsonb_build_object('crm_rec_linked', $2::text) WHERE id = $1`, [id, LINK_V]);
+      await attachAndMark(row, String(d.details.id), recId);
+    }
     return { sent: true, as: w.as, zohoId: String(d.details.id), link };
   } catch (e) {
     await query(
@@ -308,11 +337,11 @@ async function backfillRecordings() {
     try {
       const recId = await recordingFor(row);
       if (!recId) continue;                  // not published yet; next minute
-      if (!row.meta.crm_rec_linked) {
+      if (row.meta.crm_rec_linked !== LINK_V) {
         const { call, recording } = await buildCall(row, { recId });
         await people.writeAs(row.user_id, "/Calls", { method: "PUT", body: JSON.stringify({ data: [{
           id: row.meta.crm_call_id, ...(recording ? { Voice_Recording__s: recording } : {}), Description: call.Description }] }) });
-        await query(`UPDATE activity_log SET meta = meta || '{"crm_rec_linked": true}'::jsonb WHERE id = $1`, [row.id]);
+        await query(`UPDATE activity_log SET meta = meta || jsonb_build_object('crm_rec_linked', $2::text) WHERE id = $1`, [row.id, LINK_V]);
       }
       await attachAndMark(row, row.meta.crm_call_id, recId);
     } catch (e) { console.warn("[karma] crm recording update:", e.message); }

@@ -282,4 +282,80 @@ router.get("/api/voice/rc/recording/:id", requireAdmin, async (req, res, next) =
   }
 });
 
-module.exports = { router };
+/* ---------------- a recording link Zoho CRM can play ----------------
+
+   Zoho's Calls record has a Voice Recording field with its own audio player,
+   and that player fetches the URL directly — no Karma Connect login, so the
+   admin-only route above answers it with an error ("doesn't have a playable
+   audio URL"). This link plays without a login, but only with its signature:
+   an HMAC of the recording id under a server secret, so a link cannot be
+   guessed or altered to reach another recording. It does not expire, because
+   Zoho keeps it on the record for good; changing RECORDING_LINK_SECRET (or,
+   without it, AUTH_JWT_SECRET) revokes every link at once.
+
+   The path ends in .mp3 and answers audio/mpeg with byte ranges, which is
+   what a browser audio player — Zoho's included — expects.
+
+   The recording is fetched with whichever connected RingCentral login can
+   read it: an admin's first (they can read every extension's recordings),
+   then anyone's. */
+const crypto = require("crypto");
+const recSecret = () => String(process.env.RECORDING_LINK_SECRET || process.env.AUTH_JWT_SECRET || "dev-only");
+const recSig = (id) => crypto.createHmac("sha256", recSecret()).update("rec:" + id).digest("base64url").slice(0, 32);
+const APP_URL = String(process.env.APP_URL || "").replace(/\/+$/, "");
+const recordingLink = (id) => id && APP_URL ? `${APP_URL}/api/voice/rec/${id}/${recSig(id)}.mp3` : null;
+
+let recUser = null;                          // the last login that could read a recording
+async function recordingFetch(id, range) {
+  const ids = (await query(
+    `SELECT v.user_id FROM voice_identities v
+       JOIN app_users u ON u.id = v.user_id
+       LEFT JOIN organization_memberships m ON m.user_id = u.id
+      WHERE v.provider = 'ringcentral' AND NOT u.disabled
+      ORDER BY (v.user_id = $1) DESC, (m.role IN ('owner','admin')) DESC, v.last_used_at DESC NULLS LAST`,
+    [recUser || 0])).rows.map((r) => r.user_id);
+  let last = null;
+  for (const uid of ids) {
+    try {
+      const tok = await rc.accessFor(uid);
+      const headers = { Authorization: "Bearer " + tok.access_token };
+      if (range) headers.Range = range;
+      const r = await fetch(`${rc.SERVER.replace("platform.", "media.")}/restapi/v1.0/account/~/recording/${id}/content`, { headers });
+      if (r.ok || r.status === 206) { recUser = uid; return r; }
+      last = r;
+      if (r.status === 404) return r;        // gone for everyone, not just this login
+    } catch (e) { last = null; }
+  }
+  return last;
+}
+
+async function servePublicRecording(req, res, next) {
+  try {
+    const id = String(req.params.id);
+    const sig = String(req.params.sig || "");
+    const want = recSig(id);
+    if (!/^\d{1,24}$/.test(id) || sig.length !== want.length
+        || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(want)))
+      return res.status(404).type("text/plain").send("Not found");
+    const r = await recordingFetch(id, req.headers.range);
+    if (!r || (!r.ok && r.status !== 206))
+      return res.status(r && r.status === 404 ? 404 : 502).type("text/plain")
+        .send(r && r.status === 404 ? "That recording no longer exists." : "The recording couldn't be fetched from RingCentral.");
+    res.status(r.status);
+    res.setHeader("Content-Type", (r.headers.get("content-type") || "audio/mpeg").split(";")[0] || "audio/mpeg");
+    for (const h of ["content-length", "content-range", "accept-ranges"]) {
+      const v = r.headers.get(h);
+      if (v) res.setHeader(h, v);
+    }
+    if (!r.headers.get("accept-ranges")) res.setHeader("Accept-Ranges", "bytes");
+    res.setHeader("Cache-Control", "private, max-age=3600");
+    res.setHeader("X-Robots-Tag", "noindex");
+    if (req.method === "HEAD") { r.body?.cancel?.(); return res.end(); }
+    const { Readable } = require("stream");
+    Readable.fromWeb(r.body).pipe(res);
+  } catch (e) { next(e); }
+}
+router.get("/api/voice/rec/:id/:sig.mp3", servePublicRecording);
+router.head("/api/voice/rec/:id/:sig.mp3", servePublicRecording);
+
+module.exports = { router, recordingLink, _test: { recSig } };

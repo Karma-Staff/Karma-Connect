@@ -49,13 +49,14 @@ const ENABLED = !!(CLIENT_ID && CLIENT_SECRET);
 const VERSION = clean(process.env.ZOHO_CRM_VERSION) || "v8";
 
 /* Only what the writes need. Leads and Calls to create; Accounts and Contacts
-   are read so a Call can be attached to one; attachments to put the call
-   recording on the Call; users.READ to learn who signed in. No delete, no
+   are read so a Call can be attached to one; notes and attachments to keep
+   the call recording on the Call (a note carrying the MP3); users.READ to learn who signed in. No delete, no
    settings, no other module. A rep who connected before a scope was added
    is told to reconnect (see asPerson) rather than silently losing the write. */
 const SCOPES = [
   "ZohoCRM.modules.calls.ALL",
   "ZohoCRM.modules.attachments.CREATE",
+  "ZohoCRM.modules.notes.CREATE",
   "ZohoCRM.modules.leads.ALL",
   "ZohoCRM.modules.accounts.READ",
   "ZohoCRM.modules.contacts.READ",
