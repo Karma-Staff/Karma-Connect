@@ -8994,7 +8994,9 @@ async function openCrmSync() {
         <div><b>${dashN(st.today)}</b><span>in the last 24h</span></div>
         <div><b>${dashN(st.pending)}</b><span>waiting</span></div>
         <div class="${st.errors ? "bad" : ""}"><b>${dashN(st.errors)}</b><span>failed</span></div>
-      </div>${st.lastError ? `<p class="login-error">Last error: ${esc(st.lastError)}</p>` : ""}` : ""}
+      </div>${st.lastError ? `<p class="login-error">Last error: ${esc(st.lastError)}</p>` : ""}
+      <p class="dash-mute">Recordings: ${dashN(st.recAttached || 0)} attached in Zoho${st.recPending ? ` · ${dashN(st.recPending)} waiting for RingCentral` : ""}</p>${
+        st.lastRecError ? `<p class="login-error">Last recording problem (${esc(relTime(st.lastRecError.at))}): ${esc(st.lastRecError.error)}</p>` : ""}` : ""}
       <h4 class="crm-h">Preview — what the next calls would look like in the CRM</h4>
       ${prev.error ? `<p class="login-error">${esc(prev.error)}</p>`
         : !prev.items.length ? `<p class="dash-mute">No RingCentral calls waiting to be sent${s.since ? "" : " in the last 7 days"}.</p>`

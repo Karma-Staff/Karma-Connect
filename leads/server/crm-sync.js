@@ -100,7 +100,11 @@ async function recordingFor(row) {
     catch (e) { recs = await dash.fetchDay(row.user_id, ymd, TZ, "extension"); }
     const want = zoho.digits10(row.meta?.number);
     const end = new Date(row.at).getTime();
-    const hit = recs.find((c) => c.recId && zoho.digits10(c.toNum) === want
+    /* row.meta.number is the OTHER party: the To of a call we placed, but
+       the From of one we answered. Matching To alone meant no answered
+       call ever found its recording. */
+    const inbound = row.meta?.direction === "inbound";
+    const hit = recs.find((c) => c.recId && zoho.digits10(inbound ? c.fromNum : c.toNum) === want
       && Math.abs(c.t + c.dur * 1000 - end) < 3 * 60e3);
     return hit ? hit.recId : null;
   } catch (e) { return null; }
@@ -330,8 +334,11 @@ async function backfillRecordings() {
   for (const row of rows) {
     const old = Date.now() - new Date(row.at).getTime() > REC_WINDOW_MIN * 60e3;
     if (old || +(row.meta.crm_rec_tries || 0) >= 6) {
-      await query(`UPDATE activity_log SET meta = meta || jsonb_build_object('crm_rec_pending', false)
-        WHERE id = $1`, [row.id]);
+      /* Say why it stopped, so the Zoho CRM panel can show it: usually the
+         call was simply not recorded in RingCentral. */
+      await query(`UPDATE activity_log SET meta = meta || jsonb_build_object('crm_rec_pending', false,
+          'crm_rec_error', coalesce(meta->>'crm_rec_error', $2::text)) WHERE id = $1`,
+        [row.id, `RingCentral had no recording of this call ${REC_WINDOW_MIN} minutes after it ended — was it recorded?`]);
       continue;
     }
     try {
@@ -403,6 +410,8 @@ router.get("/api/crm/sync", requireAdmin, async (req, res, next) => {
                count(*) FILTER (WHERE meta ? 'crm_call_id' AND (meta->>'crm_synced_at')::timestamptz > now() - interval '24 hours')::int AS today,
                count(*) FILTER (WHERE NOT (meta ? 'crm_call_id') AND coalesce((meta->>'crm_attempts')::int, 0) < ${MAX_ATTEMPTS})::int AS pending,
                count(*) FILTER (WHERE meta->>'crm_state' = 'error')::int AS errors,
+               count(*) FILTER (WHERE meta ? 'crm_rec_attached')::int AS rec_attached,
+               count(*) FILTER (WHERE meta->>'crm_rec_pending' = 'true')::int AS rec_pending,
                max((meta->>'crm_synced_at')::timestamptz) AS last_synced_at
           FROM activity_log
          WHERE action = 'call' AND meta->>'provider' = 'ringcentral' AND at >= $1`, [since])).rows[0];
@@ -410,8 +419,16 @@ router.get("/api/crm/sync", requireAdmin, async (req, res, next) => {
         SELECT meta->>'crm_error' AS e FROM activity_log
          WHERE action = 'call' AND meta->>'crm_state' = 'error' AND at >= $1
          ORDER BY at DESC LIMIT 1`, [since])).rows[0];
+      /* Recordings travel separately (attachRecording), and their failures
+         were kept on the row with nowhere to see them. */
+      const re = (await query(`
+        SELECT meta->>'crm_rec_error' AS e, at FROM activity_log
+         WHERE action = 'call' AND meta ? 'crm_rec_error' AND NOT (meta ? 'crm_rec_attached') AND at >= $1
+         ORDER BY at DESC LIMIT 1`, [since])).rows[0];
       stats = { synced: s.synced, today: s.today, pending: s.pending, errors: s.errors,
-        lastError: le?.e || null, lastSyncedAt: s.last_synced_at };
+        lastError: le?.e || null, lastSyncedAt: s.last_synced_at,
+        recAttached: s.rec_attached, recPending: s.rec_pending,
+        lastRecError: re ? { error: re.e, at: re.at } : null };
     }
     res.json({ configured: zoho.ENABLED, on: !!cfg.on, since,
       changedBy: meta?.updated_by || null, changedAt: meta?.updated_at || null, stats });
