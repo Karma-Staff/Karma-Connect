@@ -265,6 +265,8 @@ a:hover { text-decoration: underline; }
   background: var(--accent); opacity: .75; min-width: 2px; }
 .asg-ghost .asg-bar { background: var(--ink-3); opacity: .5; }
 .asg-foot { color: var(--ink-3); font-size: 12.5px; margin-top: 14px; }
+.asg-act { width: 1%; text-align: right; white-space: nowrap; }
+.asg-un { height: 28px; padding: 0 10px; font-size: 12px; }
 
 
 /* ---------- the Zoho softphone, and getting it out of the way ----------

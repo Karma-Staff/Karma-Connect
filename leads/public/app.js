@@ -5423,7 +5423,7 @@ function renderAssignments(d) {
       <table class="asg-table">
         <thead><tr>
           <th>Person</th><th class="n">Total</th><th class="n">Ready</th>
-          <th class="n">Worked</th><th class="n">Needs info</th><th>Share</th>
+          <th class="n">Worked</th><th class="n">Needs info</th><th>Share</th><th></th>
         </tr></thead>
         <tbody>
           ${people.map((p) => `
@@ -5440,18 +5440,64 @@ function renderAssignments(d) {
               <td class="asg-bar-cell">
                 <span class="asg-bar" style="width:${Math.round((p.total / peak) * 100)}%"></span>
               </td>
+              <td class="asg-act">${p.total ? `<button type="button" class="btn-ghost asg-un"
+                data-asg-un="${esc(p.value)}">Unassign</button>` : ""}</td>
             </tr>`).join("")}
         </tbody>
       </table>
       ${people.some((p) => !p.team) ? `<p class="asg-foot">Rows marked
         <b>no account</b> hold leads under an owner name that is nobody's
-        account — an old import, or someone who has left. Reassign them from
-        the list using the owner filter.</p>` : ""}
+        account — an old import, or someone who has left. Unassign them to put
+        them back in the pool, or reassign them from the list using the owner filter.</p>` : ""}
     </div>`;
 
   $("asg-give")?.addEventListener("submit", (e) => {
     e.preventDefault();
     distribute(pool.total);
+  });
+  el.querySelectorAll("[data-asg-un]").forEach((b) => b.addEventListener("click", () => {
+    const p = people.find((x) => x.value === b.dataset.asgUn);
+    if (p) openUnassignPerson(p);
+  }));
+}
+
+/* Unassign one person's leads back to the pool: the ones not yet worked
+   (still New), or all of them. POST /api/assignments/unassign does it in one
+   statement with one log row, whatever the count. */
+function openUnassignPerson(p) {
+  const unworked = Math.max(0, p.total - p.worked);
+  $("modal-title").textContent = `Unassign leads — ${p.label}`;
+  $("modal-body").innerHTML = `
+    <p class="modal-sub">The leads go back to <b>Unassigned</b>, off ${esc(p.label)}'s list, ready to give to someone else
+      or to use in a power-dialer campaign. Nothing else about them changes.</p>
+    <form id="asg-un-form" class="pd-form">
+      <label class="pd-choice"><input type="radio" name="asg-un" value="unworked" ${unworked ? "checked" : "disabled"}>
+        <span><b>Not yet worked</b> · ${unworked.toLocaleString()} lead${unworked === 1 ? "" : "s"} still New</span></label>
+      <label class="pd-choice"><input type="radio" name="asg-un" value="all" ${unworked ? "" : "checked"}>
+        <span><b>All their leads</b> · ${p.total.toLocaleString()}, including the ${p.worked.toLocaleString()} already worked</span></label>
+      <div id="asg-un-err" class="login-error hidden"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="modal-cancel">Cancel</button>
+        <button type="submit" class="btn-primary" id="asg-un-go">Unassign</button>
+      </div>
+    </form>`;
+  $("modal-backdrop").classList.remove("hidden");
+  $("modal-cancel").addEventListener("click", closeModal);
+  $("asg-un-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = $("asg-un-go"), err = $("asg-un-err");
+    btn.disabled = true; btn.textContent = "Unassigning…";
+    try {
+      const which = document.querySelector('input[name="asg-un"]:checked').value;
+      const r = await api("/api/assignments/unassign", { method: "POST", body: JSON.stringify({ owner: p.value, which }) });
+      closeModal();
+      toast(`${r.unassigned.toLocaleString()} lead${r.unassigned === 1 ? "" : "s"} unassigned from ${p.label}`, 5000);
+      await loadAssignments();
+      runCounts();                    // the Unassigned tile just changed
+    } catch (ex) {
+      err.textContent = ex.message; err.classList.remove("hidden");
+      btn.disabled = false; btn.textContent = "Unassign";
+    }
   });
 }
 

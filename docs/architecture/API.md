@@ -4,7 +4,7 @@
 
 # API
 
-**191 routes**, generated from the source on 2026-10-06.
+**192 routes**, generated from the source on 2026-10-06.
 
 Every path is absolute. That is deliberate: Karma Leads' API paths are the same
 whether it runs standalone or mounted into Connect, which is what let its front
@@ -47,7 +47,7 @@ declared once for the group.
 
 ---
 
-## Karma Leads — 129 routes
+## Karma Leads — 130 routes
 
 ### `/api/activity`
 
@@ -71,8 +71,9 @@ declared once for the group.
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/assignments` | admin | [leads/server/assignments.js:29](../../leads/server/assignments.js#L29) |  |
+| GET | `/api/assignments` | admin | [leads/server/assignments.js:30](../../leads/server/assignments.js#L30) |  |
 | GET | `/api/assignments` | admin | [leads/server/demo.js:241](../../leads/server/demo.js#L241) |  |
+| POST | `/api/assignments/unassign` | admin | [leads/server/assignments.js:106](../../leads/server/assignments.js#L106) | Unassign a person's leads — back to the pool, the reverse of Give. |
 
 ### `/api/auth`
 
