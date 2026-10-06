@@ -53,6 +53,7 @@ router.get("/api/users", async (req, res, next) => {
               (SELECT max(at) FROM activity_log a WHERE a.user_id = u.id) AS last_active
        FROM app_users u
        LEFT JOIN organization_memberships m ON m.user_id = u.id
+       WHERE u.deleted_at IS NULL
        ORDER BY u.email`)).rows;
     /* Report the rank the person will actually get, not just the row: an
        email in OWNER_EMAILS is an owner whatever the table says, and a team
@@ -77,7 +78,7 @@ router.post("/api/users", express.json({ limit: "4kb" }), async (req, res, next)
     const row = await tx(async (client) => {
       const u = (await client.query(
         `INSERT INTO app_users (email, display_name) VALUES ($1, $2)
-         ON CONFLICT (email) DO UPDATE SET disabled = false
+         ON CONFLICT (email) DO UPDATE SET disabled = false, deleted_at = NULL
          RETURNING *`, [email, req.body?.display_name || null])).rows[0];
       const org = (await client.query(
         "SELECT id FROM organizations ORDER BY id LIMIT 1")).rows[0];
@@ -179,6 +180,72 @@ router.patch("/api/users/:id", express.json({ limit: "4kb" }), async (req, res, 
     res.json({ ok: true, ...(stillOwner ? { warning:
       `${target.email} is listed in OWNER_EMAILS and keeps owner access. `
       + "Change that setting to hand ownership over." } : {}) });
+  } catch (e) { next(e); }
+});
+
+/* DELETE /api/users/:id — take someone off the team for good.
+
+   The same rules as disabling — you act only on someone below you, never
+   on yourself, never on the last owner or admin — plus one: an address in
+   OWNER_EMAILS is an owner whatever this table says, so it is refused here
+   rather than "deleted" and still able to sign in.
+
+   The row stays, disabled and marked deleted (migration 019): it is what
+   stops a company-domain address being enrolled again on its next sign-in,
+   and the history (calls, notes, activity) keeps pointing at it. Everything
+   that would act for them goes — their access, their RingCentral, Zoho CRM
+   and voicemail-drop connections, any dialling session still open, their
+   unsent reminders — and their leads go back to Unassigned so none sit
+   under an owner who no longer exists. One transaction. */
+router.delete("/api/users/:id", async (req, res, next) => {
+  try {
+    const id = +req.params.id;
+    const target = await targetOf(id);
+    if (!target) return res.status(404).json({ error: "no such user" });
+    const role = isOwnerEmail(target.email) ? "owner" : (target.role || "member");
+    if (id === req.user.id)
+      return res.status(400).json({ error: "You can't delete your own account." });
+    if (isOwnerEmail(target.email))
+      return res.status(400).json({ error:
+        `${target.email} is listed in OWNER_EMAILS and stays an owner. Change that setting first.` });
+    if (rankOf(role) >= rankOf(req.user.role))
+      return res.status(403).json({ error: `Only the owner can delete ${target.email}.` });
+    for (const [name, rank] of [["owner", RANK.owner], ["admin", RANK.admin]]) {
+      if (rankOf(role) !== rank || target.disabled) continue;
+      const left = (await query(
+        `SELECT count(*)::int n FROM organization_memberships m
+         JOIN app_users u ON u.id = m.user_id
+         WHERE m.role = $1 AND NOT u.disabled`, [name])).rows[0].n;
+      if (left <= 1) return res.status(400).json({ error: `cannot delete the last ${name}` });
+    }
+
+    const email = String(target.email).trim().toLowerCase();
+    const out = await tx(async (client) => {
+      await client.query("UPDATE app_users SET disabled = true, deleted_at = now() WHERE id = $1", [id]);
+      await client.query("DELETE FROM organization_memberships WHERE user_id = $1", [id]);
+      for (const t of ["voice_identities", "crm_identities", "voicemail_drops"])
+        await client.query(`DELETE FROM ${t} WHERE user_id = $1`, [id]);
+      const sessions = (await client.query(
+        `UPDATE call_sessions SET ended_at = now(), filters = coalesce(filters, '{}'::jsonb) || '{"status":"ended"}'::jsonb
+          WHERE lower(actor) = $1 AND ended_at IS NULL`, [email])).rowCount;
+      const reminders = (await client.query(
+        `UPDATE lead_followups SET cancelled_at = now()
+          WHERE lower(btrim(owner)) = $1 AND sent_at IS NULL AND done_at IS NULL AND cancelled_at IS NULL`,
+        [email])).rowCount;
+      const leads = (await client.query(
+        `UPDATE leads SET owner = NULL, updated_at = now()
+          WHERE lower(btrim(owner)) = $1 AND deleted_at IS NULL RETURNING id`, [email])).rows.map((r) => r.id);
+      if (leads.length)
+        await client.query(
+          `INSERT INTO activity_log (actor, user_id, action, lead_name, from_value, to_value, meta)
+           VALUES ($1, $2, 'owner', $3, $4, 'unassigned', $5)`,
+          [req.user.email, req.user.id, `${leads.length} lead${leads.length === 1 ? "" : "s"}`, email,
+            JSON.stringify({ bulk: true, count: leads.length, owner: null, from: email, account_deleted: true,
+              ...(leads.length <= 500 ? { ids: leads } : {}) })]);
+      return { leads: leads.length, sessions, reminders };
+    });
+    if (out.leads) require("./counts").invalidate();
+    res.json({ ok: true, email, ...out });
   } catch (e) { next(e); }
 });
 

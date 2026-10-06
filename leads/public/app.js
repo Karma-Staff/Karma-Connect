@@ -1476,10 +1476,20 @@ async function openUsersModal() {
     </form>
     <div id="users-error" class="login-error hidden"></div>
     <div class="modal-actions">
+      <span id="users-pending" class="users-pending"></span>
+      <button type="button" class="btn-ghost hidden" id="users-discard">Discard</button>
       <button type="button" class="btn-secondary" id="modal-cancel">Close</button>
+      <button type="button" class="btn-primary" id="users-save" disabled>Save changes</button>
     </div>`;
+  USR.pending = new Map();
   $("modal-backdrop").classList.remove("hidden");
-  $("modal-cancel").addEventListener("click", closeModal);
+  $("modal-cancel").addEventListener("click", () => {
+    if (USR.pending.size && !confirm("You have changes that aren't saved. Close without saving them?")) return;
+    USR.pending.clear();
+    closeModal();
+  });
+  $("users-discard").addEventListener("click", () => { USR.pending.clear(); paintUsers(); });
+  $("users-save").addEventListener("click", saveUsers);
   $("user-add-row").addEventListener("submit", async (e) => {
     e.preventDefault();
     const who = $("user-add-email").value.trim();
@@ -1516,10 +1526,25 @@ async function usersCall(path, method, body) {
   }
 }
 
+/* Changes on this screen are held until Save: a role picked, an account
+   disabled or restored, an account marked for deletion. Each row shows what
+   will change; Save applies them one by one and says how it went. */
+const USR = { list: [], pending: new Map() };
+
 async function renderUsersList() {
-  const { list } = await api("/api/users");
+  USR.list = (await api("/api/users")).list;
+  paintUsers();
+}
+
+const roleLabelOr = (r) => roleLabel(r || "member");
+
+function paintUsers() {
+  const list = USR.list;
   const rows = list.map((u) => {
     const me = u.id === S.me.id;
+    const p = USR.pending.get(u.id) || {};
+    const role = p.role ?? u.role;
+    const disabled = p.disabled ?? u.disabled;
     /* A manager may build their own team but not change its shape: they can
        grant member, and they cannot touch anyone who already outranks one.
        Locked here as well as on the route so the control reads as
@@ -1529,34 +1554,112 @@ async function renderUsersList() {
       ? ["sales_rep", "member", "admin", "owner"]
       : ["sales_rep", "member"];
     const who = esc(u.display_name || u.email.split("@")[0]);
+    /* Delete: not yourself, not an owner fixed by OWNER_EMAILS, and only
+       someone below you — the server holds the same rules. */
+    const canDelete = !me && !locked && !u.ownerByConfig;
+    const changes = [
+      p.role && p.role !== u.role ? `${roleLabelOr(u.role)} → ${roleLabelOr(p.role)}` : "",
+      "disabled" in p && p.disabled !== u.disabled ? (p.disabled ? "will be disabled" : "will be restored") : "",
+    ].filter(Boolean);
+    if (p.delete) return `
+    <div class="user-row user-deleting">
+      <span class="avatar" style="background:${avColor(u.display_name || u.email)}">${initials(u.display_name || u.email)}</span>
+      <div class="user-id">
+        <div class="user-name">${who}</div>
+        <div class="user-sub">${esc(u.email)} · <b>will be deleted</b> when you save</div>
+      </div>
+      <button type="button" class="btn-ghost user-undo" data-id="${u.id}">Undo</button>
+    </div>`;
     return `
-    <div class="user-row${u.disabled ? " user-disabled" : ""}">
+    <div class="user-row${disabled ? " user-disabled" : ""}${changes.length ? " user-changed" : ""}">
       <span class="avatar" style="background:${avColor(u.display_name || u.email)}">${initials(u.display_name || u.email)}</span>
       <div class="user-id">
         <div class="user-name">${who}${me ? " <span class='user-you'>(you)</span>" : ""}</div>
-        <div class="user-sub">${esc(u.email)}${u.disabled ? " · disabled"
-          : u.last_active ? " · active " + relTime(u.last_active) : ""}</div>
+        <div class="user-sub">${changes.length ? `<b class="user-change">${esc(changes.join(" · "))}</b>`
+          : esc(u.email) + (u.disabled ? " · disabled" : u.last_active ? " · active " + relTime(u.last_active) : "")}</div>
       </div>
       <select class="user-role" data-id="${u.id}"
-              ${u.disabled || locked ? "disabled" : ""}
+              ${disabled || locked ? "disabled" : ""}
               title="${locked ? "Only the owner can change this" : "Set this person's access"}">
         ${(grantable.includes(u.role) ? grantable : [u.role, ...grantable]).map((r) =>
-          `<option value="${esc(r)}"${r === u.role ? " selected" : ""}>${esc(roleLabel(r))}</option>`).join("")}
+          `<option value="${esc(r)}"${r === role ? " selected" : ""}>${esc(roleLabel(r))}</option>`).join("")}
       </select>
-      ${u.ownerByConfig ? `<span class="asg-tag" title="Listed in OWNER_EMAILS — this holds whatever the table says">by config</span>` : ""}
-      <button type="button" class="btn-ghost user-toggle" data-id="${u.id}" data-disable="${!u.disabled}"
+      <button type="button" class="btn-ghost user-toggle" data-id="${u.id}"
               ${locked ? "disabled" : ""}>
-        ${u.disabled ? "Restore" : "Disable"}</button>
+        ${disabled ? "Restore" : "Disable"}</button>
+      ${canDelete ? `<button type="button" class="btn-ghost user-delete" data-id="${u.id}" title="Delete this account">Delete</button>` : ""}
     </div>`;
   }).join("");
   $("users-list").innerHTML = rows || `<div class="modal-sub">No accounts yet.</div>`;
+  const stage = (id, change) => {
+    const u = USR.list.find((x) => x.id === id);
+    const p = { ...(USR.pending.get(id) || {}), ...change };
+    for (const k of Object.keys(p)) if (p[k] === undefined) delete p[k];
+    // a change back to how it was is no change
+    if (p.role === u.role) delete p.role;
+    if (p.disabled === u.disabled) delete p.disabled;
+    if (!p.delete) delete p.delete;
+    if (Object.keys(p).length) USR.pending.set(id, p); else USR.pending.delete(id);
+    paintUsers();
+  };
   $("users-list").querySelectorAll(".user-role").forEach((sel) =>
-    sel.addEventListener("change", () =>
-      usersCall(`/api/users/${sel.dataset.id}`, "PATCH", { role: sel.value })));
+    sel.addEventListener("change", () => stage(+sel.dataset.id, { role: sel.value })));
   $("users-list").querySelectorAll(".user-toggle").forEach((btn) =>
-    btn.addEventListener("click", () =>
-      usersCall(`/api/users/${btn.dataset.id}`, "PATCH",
-        { disabled: btn.dataset.disable === "true" })));
+    btn.addEventListener("click", () => {
+      const u = USR.list.find((x) => x.id === +btn.dataset.id);
+      const now = USR.pending.get(u.id)?.disabled ?? u.disabled;
+      stage(u.id, { disabled: !now });
+    }));
+  $("users-list").querySelectorAll(".user-delete").forEach((btn) =>
+    btn.addEventListener("click", () => stage(+btn.dataset.id, { delete: true, role: undefined, disabled: undefined })));
+  $("users-list").querySelectorAll(".user-undo").forEach((btn) =>
+    btn.addEventListener("click", () => stage(+btn.dataset.id, { delete: false })));
+
+  const n = USR.pending.size;
+  if ($("users-save")) {
+    $("users-save").disabled = !n;
+    $("users-save").textContent = n ? `Save changes (${n})` : "Save changes";
+    $("users-discard").classList.toggle("hidden", !n);
+    $("users-pending").textContent = n ? `${n} unsaved change${n === 1 ? "" : "s"}` : "";
+  }
+}
+
+async function saveUsers() {
+  const err = $("users-error"), btn = $("users-save");
+  const todo = [...USR.pending.entries()];
+  if (!todo.length) return;
+  const deleting = todo.filter(([, p]) => p.delete).map(([id]) => USR.list.find((u) => u.id === id));
+  if (deleting.length && !confirm(`Delete ${deleting.map((u) => u.email).join(", ")}?\n\n`
+    + "They lose access and can't sign back in unless you add them again. Their leads go back to "
+    + "Unassigned, their reminders are cancelled and their RingCentral and Zoho connections are removed. "
+    + "Their call history and notes stay.")) return;
+  err.classList.add("hidden");
+  btn.disabled = true; btn.textContent = "Saving…";
+  const failed = [], notes = [];
+  for (const [id, p] of todo) {
+    const u = USR.list.find((x) => x.id === id);
+    try {
+      if (p.delete) {
+        const r = await api(`/api/users/${id}`, { method: "DELETE" });
+        notes.push(`${u.email} deleted${r.leads ? ` · ${r.leads} lead${r.leads === 1 ? "" : "s"} back in Unassigned` : ""}`);
+      } else {
+        const body = {};
+        if ("role" in p) body.role = p.role;
+        if ("disabled" in p) body.disabled = p.disabled;
+        const r = await api(`/api/users/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+        if (r?.warning) notes.push(r.warning);
+      }
+      USR.pending.delete(id);
+    } catch (e) { failed.push(`${u.email}: ${e.message}`); }
+  }
+  await renderUsersList();
+  if (failed.length) {
+    err.textContent = "Not saved — " + failed.join(" · ");
+    err.classList.remove("hidden");
+  }
+  const saved = todo.length - failed.length;
+  if (saved) toast(`Saved ${saved} change${saved === 1 ? "" : "s"}${notes.length ? " — " + notes.join(" · ") : ""}`, 8000);
+  if (deleting.length) runCounts();
 }
 
 /* ---------------- job search (Apify) ----------------

@@ -1420,7 +1420,13 @@ body.resizing .lead-row, body.resizing .splitter { pointer-events: none; }
 .user-row .user-role, .user-add-row select {
   width: auto; flex: 0 0 auto; margin-top: 0; padding: 6px 9px; font-size: 12.5px;
 }
-.user-row .user-toggle { flex-shrink: 0; white-space: nowrap; }
+.user-row .user-toggle, .user-row .user-delete, .user-row .user-undo { flex-shrink: 0; white-space: nowrap; }
+.user-row .user-delete { color: #ffb4ab; }
+.user-changed { background: color-mix(in srgb, var(--gold) 9%, transparent); }
+.user-change { color: var(--gold); font-weight: 600; }
+.user-deleting { background: color-mix(in srgb, #ff6b5e 10%, transparent); }
+.user-deleting .user-id { opacity: .75; }
+.users-pending { margin-right: auto; align-self: center; font-size: 12.5px; color: var(--gold); }
 .user-add-row { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
 .user-add-row input { flex: 1; min-width: 0; margin-top: 0; padding: 7px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-2); }
 .modal-field { margin-top: 14px; }

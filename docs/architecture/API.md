@@ -4,7 +4,7 @@
 
 # API
 
-**199 routes**, generated from the source on 2026-10-06.
+**200 routes**, generated from the source on 2026-10-06.
 
 Every path is absolute. That is deliberate: Karma Leads' API paths are the same
 whether it runs standalone or mounted into Connect, which is what let its front
@@ -47,7 +47,7 @@ declared once for the group.
 
 ---
 
-## Karma Leads — 137 routes
+## Karma Leads — 138 routes
 
 ### `/api/activity`
 
@@ -307,8 +307,9 @@ declared once for the group.
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
 | GET | `/api/users` | admin *(inherited)* | [leads/server/users.js:49](../../leads/server/users.js#L49) |  |
-| POST | `/api/users` | admin *(inherited)* | [leads/server/users.js:67](../../leads/server/users.js#L67) |  |
-| PATCH | `/api/users/:id` | admin *(inherited)* | [leads/server/users.js:118](../../leads/server/users.js#L118) |  |
+| POST | `/api/users` | admin *(inherited)* | [leads/server/users.js:68](../../leads/server/users.js#L68) |  |
+| PATCH | `/api/users/:id` | admin *(inherited)* | [leads/server/users.js:119](../../leads/server/users.js#L119) |  |
+| DELETE | `/api/users/:id` | admin *(inherited)* | [leads/server/users.js:200](../../leads/server/users.js#L200) | DELETE /api/users/:id — take someone off the team for good. |
 
 ### `/api/voice`
 
