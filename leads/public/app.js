@@ -1442,7 +1442,7 @@ function wireGlobalDrop() {
 
 function closeModal() {
   $("modal-backdrop").classList.add("hidden");
-  document.querySelector(".modal")?.classList.remove("wide", "js-panel");
+  document.querySelector(".modal")?.classList.remove("wide", "js-panel", "team-panel");
 }
 
 /* ---------------- manage team (admin) ----------------
@@ -1452,17 +1452,19 @@ function closeModal() {
    holds the real rules — last-admin lockout etc. — we just show its errors. */
 async function openUsersModal() {
   $("modal-title").textContent = "Manage team";
+  /* Wide, with the explanation folded away: the list is what this screen
+     is for, and at 420px every name and email was cut off. */
+  document.querySelector(".modal")?.classList.add("team-panel");
   $("modal-body").innerHTML = `
-    <p class="modal-sub">Anyone with a company email joins as a <b>member</b> the
-      first time they sign in — they work the leads assigned to them.
-      <b>Admins</b> run the floor: assigning, imports, job search, the call
-      report and Team activity. <b>Sales reps</b> have a member's access and are
-      who the morning call report is about; a <b>member</b> who is not on the phones
-      is left out of it. <b>Owners</b> hold what cannot be undone —
-      appointing admins, emptying the bin, lifting a do-not-call ban.
-      ${isOwner() ? "" : "Only the owner can change admin access."}
-      Adding someone emails them a sign-up link — they still need to create
-      their own sign-in before their access works.</p>
+    <details class="team-help">
+      <summary>What each role can do</summary>
+      <p>Anyone with a company email joins as a <b>member</b> the first time they sign in — they work the
+        leads assigned to them. <b>Sales reps</b> have a member's access and are who the morning call report
+        is about. <b>Admins</b> run the floor: assigning, imports, job search, the call report and Team
+        activity. <b>Owners</b> hold what cannot be undone — appointing admins, emptying the bin, lifting a
+        do-not-call ban. ${isOwner() ? "" : "Only the owner can change admin access."}
+        Adding someone emails them a sign-up link; they still create their own sign-in.</p>
+    </details>
     <div id="users-list" class="users-list"><div class="modal-sub">Loading…</div></div>
     <form id="user-add-row" class="user-add-row">
       <input type="email" id="user-add-email" placeholder="invite an email outside the company…" required>
@@ -1568,7 +1570,7 @@ function paintUsers() {
         <div class="user-name">${who}</div>
         <div class="user-sub">${esc(u.email)} · <b>will be deleted</b> when you save</div>
       </div>
-      <button type="button" class="btn-ghost user-undo" data-id="${u.id}">Undo</button>
+      <button type="button" class="btn-ghost user-btn user-undo" data-id="${u.id}">Undo</button>
     </div>`;
     return `
     <div class="user-row${disabled ? " user-disabled" : ""}${changes.length ? " user-changed" : ""}">
@@ -1584,10 +1586,12 @@ function paintUsers() {
         ${(grantable.includes(u.role) ? grantable : [u.role, ...grantable]).map((r) =>
           `<option value="${esc(r)}"${r === role ? " selected" : ""}>${esc(roleLabel(r))}</option>`).join("")}
       </select>
-      <button type="button" class="btn-ghost user-toggle" data-id="${u.id}"
+      <button type="button" class="btn-ghost user-btn user-toggle" data-id="${u.id}"
               ${locked ? "disabled" : ""}>
         ${disabled ? "Restore" : "Disable"}</button>
-      ${canDelete ? `<button type="button" class="btn-ghost user-delete" data-id="${u.id}" title="Delete this account">Delete</button>` : ""}
+      ${canDelete ? `<button type="button" class="user-delete" data-id="${u.id}" title="Delete ${esc(u.email)}" aria-label="Delete ${esc(u.email)}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg></button>`
+        : `<span class="user-delete-gap"></span>`}
     </div>`;
   }).join("");
   $("users-list").innerHTML = rows || `<div class="modal-sub">No accounts yet.</div>`;

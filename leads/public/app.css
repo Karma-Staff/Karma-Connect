@@ -1421,7 +1421,35 @@ body.resizing .lead-row, body.resizing .splitter { pointer-events: none; }
   width: auto; flex: 0 0 auto; margin-top: 0; padding: 6px 9px; font-size: 12.5px;
 }
 .user-row .user-toggle, .user-row .user-delete, .user-row .user-undo { flex-shrink: 0; white-space: nowrap; }
-.user-row .user-delete { color: #ffb4ab; }
+/* Manage team: wide, compact rows, the save bar always in view */
+.modal.team-panel { width: min(720px, calc(100vw - 32px)); padding-bottom: 0; }
+.team-help { margin: 0 0 12px; font-size: 13px; color: var(--ink-2); }
+.team-help summary { cursor: pointer; color: var(--accent-ink, var(--ink-2)); font-size: 12.5px; }
+.team-help p { margin: 8px 0 0; line-height: 1.5; }
+.team-panel .user-row { gap: 8px; padding: 6px 8px; }
+.team-panel .user-row .avatar { width: 30px; height: 30px; font-size: 12px; flex: none; }
+.team-panel .user-row .user-role { height: 30px; padding: 0 8px; font-size: 12.5px; }
+.user-btn { height: 30px; padding: 0 12px; font-size: 12.5px; font-weight: 500; }
+.user-delete { flex: none; width: 30px; height: 30px; border: 0; border-radius: 6px; background: transparent;
+  color: var(--ink-3); display: inline-flex; align-items: center; justify-content: center; }
+.user-delete svg { width: 16px; height: 16px; }
+.user-delete:hover { color: #ff8a80; background: color-mix(in srgb, #ff6b5e 14%, transparent); }
+.user-delete-gap { flex: none; width: 30px; }
+.team-panel .user-add-row input, .team-panel .user-add-row select { height: 32px; }
+.team-panel .user-add-row .btn-secondary { height: 32px; padding: 0 14px; }
+.team-panel .modal-actions { position: sticky; bottom: 0; z-index: 1; margin: 10px -24px 0; padding: 12px 24px 16px;
+  background: var(--surface); border-top: 1px solid var(--border); align-items: center; }
+.team-panel .modal-actions button { height: 34px; padding: 0 16px; white-space: nowrap; font-size: 13px; }
+/* phone width: the controls drop under the name, so the email shows in full */
+@media (max-width: 560px) {
+  .modal.team-panel { padding: 18px 16px 0; }
+  .team-panel .user-row { flex-wrap: wrap; row-gap: 6px; }
+  .team-panel .user-id { flex: 1 1 calc(100% - 40px); }
+  .team-panel .user-row .user-role, .team-panel .user-row .user-undo { margin-left: 38px; }
+  .team-panel .user-sub { white-space: normal; }
+  .team-panel .modal-actions { margin: 10px -16px 0; padding: 12px 16px 14px; }
+  .team-panel .users-pending { display: none; }
+}
 .user-changed { background: color-mix(in srgb, var(--gold) 9%, transparent); }
 .user-change { color: var(--gold); font-weight: 600; }
 .user-deleting { background: color-mix(in srgb, #ff6b5e 10%, transparent); }
