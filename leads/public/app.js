@@ -6092,11 +6092,28 @@ function campaignCallEnded(leadId, sdkOutcome) {
      Call Result. The disposition sheet opens (rcCall's finish) and the
      session waits for it; kdAfterWrap moves it on. */
   cancelAutoDial();
-  CAMP.awaitDispo = { leadId, sdkOutcome };
+  const w = CAMP.awaitDispo = { leadId, sdkOutcome };
   const el = $("camp-auto-state");
   if (el) el.textContent = "call ended — pick a disposition; the next lead rings once it's saved";
-  const bar = $("camp-auto");
-  if (bar) bar.classList.add("wrapping");
+  /* A RingCentral call that ends normally opens the sheet itself (rcCall's
+     finish, straight after this). Every other ending — a call that failed
+     to connect, a Zoho Voice call, a number handed off or copied — opens
+     nothing, and the session would wait for a sheet that never comes. */
+  setTimeout(() => { if (CAMP.awaitDispo === w && kdEl("kd-wrap")?.classList.contains("hidden")) campOpenWrap(); }, 250);
+  campPaintLive();
+}
+
+/* Open the disposition sheet on the session's current lead — for an ending
+   that did not open it, and for the bar's Disposition button after the rep
+   closed it. */
+function campOpenWrap() {
+  const cur = CAMP.s?.current?.lead;
+  if (!cur || kdActive()) return;
+  if (String(KD.lead?.id) !== String(cur.id))
+    KD.lead = { id: cur.id, name: cur.name || cur.company, company: cur.company, phone: cur.phone, status: cur.status };
+  KD.number = String(cur.phone || "").replace(/[^0-9*#+]/g, "");
+  rcPanelToggle(true);
+  kdOpenWrap();
 }
 
 /* The disposition sheet was saved (picked) or skipped (null) for a session
@@ -6229,6 +6246,7 @@ function wireCampAction(r, name) {
   });
   $("pd-pause")?.addEventListener("click", () => campPause(false));
   $("pd-resume")?.addEventListener("click", () => campPause(true));
+  $("cs-dispo")?.addEventListener("click", campOpenWrap);
 }
 
 function wireAutoDial(r, name) {
@@ -6414,6 +6432,8 @@ const CS_IC = {
 /* The one action for the state the session is in. */
 function campAction(d, phase) {
   const c = d.campaign, ready = autoReady();
+  if (CAMP.awaitDispo && !kdActive())
+    return `<button type="button" class="cs-btn cs-primary" id="cs-dispo" title="Pick what happened on this call">${CS_IC.play}<span>Disposition</span></button>`;
   if (c) {
     if (c.status === "paused") return `<button type="button" class="cs-btn cs-primary" id="pd-resume">${CS_IC.play}<span>Resume</span></button>`;
     if (c.status === "draft") return "";
@@ -6633,18 +6653,6 @@ function campPaintLive() {
         : phase === "connected" ? "on the call — the disposition opens when you hang up"
           : campStateText(d);
   }
-}
-
-/* The lead's own clock, beside its name: what time it is where they are,
-   and a warning when it is outside calling hours (8am-9pm local). The
-   server has already moved leads it is too early or late for to the end
-   of the list (campaign.js servable); this is the one it could not move. */
-function campLocalTime(ct) {
-  if (!ct || !ct.local) return "";
-  const moved = ct.deferred ? ` · ${ct.deferred} lead${ct.deferred === 1 ? "" : "s"} it's too early or late for moved to later` : "";
-  return ct.open
-    ? `<div class="camp-local">${esc(ct.local)} ${esc(ct.zone)} time${moved}</div>`
-    : `<div class="camp-local closed" title="Calls are allowed 8am–9pm in the lead's local time">⚠ ${esc(ct.local)} ${esc(ct.zone)} time — outside calling hours</div>`;
 }
 
 function holdForHours(ct) {
