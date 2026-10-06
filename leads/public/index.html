@@ -1030,9 +1030,11 @@
           <textarea id="kd-note" rows="2" placeholder="Add a short note about this call"></textarea>
         </div>
         <div id="kd-fu" class="kd-field hidden">
-          <label for="kd-fu-at">Follow-up</label>
-          <input id="kd-fu-at" type="datetime-local">
-          <p class="kd-hint">You'll get an email when it falls due.</p>
+          <label class="kd-fu-check"><input type="checkbox" id="kd-fu-on"> Remind me to call back</label>
+          <div id="kd-fu-when" class="hidden">
+            <input id="kd-fu-at" type="datetime-local" aria-label="When to call back">
+            <p class="kd-hint">You'll get an email when it falls due.</p>
+          </div>
         </div>
         <div class="kd-saverow">
           <button id="kd-save" class="kd-primary">Save</button>

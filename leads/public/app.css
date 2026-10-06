@@ -3124,6 +3124,9 @@ label.check input[type="checkbox"] { width: auto; margin: 0; accent-color: var(-
 .kd-miss-btn svg { width: 13px; height: 13px; }
 .kd-miss-btn.call { background: var(--kd-live); border-color: var(--kd-live); color: #062014; font-weight: 600; }
 .kd-miss-audio audio { width: 100%; height: 32px; margin-top: 6px; }
+.kd-fu-check { display: flex !important; align-items: center; gap: 8px; cursor: pointer; }
+.kd-fu-check input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+#kd-fu-when { margin-top: 8px; }
 .kd-miss-err { display: block; margin-top: 6px; font-size: 11.5px; color: #ffb4ab; }
 .kd-allclear { display: flex; flex-direction: column; align-items: center; gap: 6px;
   padding: 40px 16px; text-align: center; }

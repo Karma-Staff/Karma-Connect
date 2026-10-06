@@ -170,9 +170,12 @@ async function logCall(req, lead) {
    already allows 'call' and 'note'. Member-safe by position, like timeline
    below: requireOwnLead has run on every /api/leads/:id path. */
 const DISPOSITIONS = new Set([
-  "Interested", "Follow-up Required", "Not Interested", "No Answer", "Busy",
-  "Voicemail", "Gatekeeper", "Hung Up", "Wrong Number", "Not in Service",
-  "Email Captured", "Call Back Later", "Converted", "Do Not Contact", "Prospect",
+  /* the list the dialler offers — Zoho CRM's own Call Results, plus Prospect */
+  "Prospect", "GK", "CDM", "Email captured", "Wrong number", "No Answer", "DNC", "VM", "Busy",
+  /* the names before them, still accepted so a tab opened before the change
+     can save; past calls keep whichever they were logged with */
+  "Interested", "Follow-up Required", "Not Interested", "Voicemail", "Gatekeeper", "Hung Up",
+  "Wrong Number", "Not in Service", "Email Captured", "Call Back Later", "Converted", "Do Not Contact",
 ]);
 
 router.post("/api/leads/:id/disposition", requireUser, express.json({ limit: "4kb" }),

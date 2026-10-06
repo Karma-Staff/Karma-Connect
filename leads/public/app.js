@@ -3187,24 +3187,21 @@ const KD = {
 
 const KD_DISPOS = [
   /* Each chip writes to the ONE place Karma Connect already keeps that fact —
-     see kdSaveDispo. `kind` is what it touches, so nothing is stored twice. */
-  { label: "Interested", kind: "status", value: "Responded" },
+     see kdSaveDispo. `kind` is what it touches, so nothing is stored twice.
+     The labels are Zoho CRM's own Call Results (crm-sync.js RESULT), so what
+     a rep picks is what the CRM shows. A follow-up is not a disposition: it
+     is the "Remind me to call back" box under the notes. */
   /* A person worth a CRM record: asks for their name (email optional) and,
      on save, creates them as a Lead in Zoho before the call is sent there. */
   { label: "Prospect", kind: "prospect" },
-  { label: "Follow-up Required", kind: "followup" },
-  { label: "Not Interested", kind: "status", value: "Not interested" },
+  { label: "GK", kind: "log", title: "Gatekeeper" },
+  { label: "CDM", kind: "log" },
+  { label: "Email captured", kind: "log" },
+  { label: "Wrong number", kind: "outcome", value: "failed" },
   { label: "No Answer", kind: "outcome", value: "no-answer" },
-  { label: "Voicemail", kind: "log" },
+  { label: "DNC", kind: "dnc", title: "Do not contact — blocks this number" },
+  { label: "VM", kind: "log", title: "Voicemail" },
   { label: "Busy", kind: "outcome", value: "busy" },
-  { label: "Gatekeeper", kind: "log" },
-  { label: "Hung Up", kind: "log" },
-  { label: "Wrong Number", kind: "outcome", value: "failed" },
-  { label: "Not in Service", kind: "log" },
-  { label: "Email Captured", kind: "log" },
-  { label: "Call Back Later", kind: "followup" },
-  { label: "Converted", kind: "status", value: "Qualified" },
-  { label: "Do Not Contact", kind: "dnc" },
 ];
 /* Every chip, whatever else it touches, is also written to the disposition
    log (POST /api/leads/:id/disposition — the list there must match this one).
@@ -4633,6 +4630,7 @@ function rcWireBar() {
   kdEl("kd-num")?.addEventListener("keydown", (e) => { if (e.key === "Enter") kdDial(true); });
   kdEl("kd-q")?.addEventListener("input", (e) => kdRenderQueue(KD.queue, e.target.value));
   root.addEventListener("change", (e) => {
+    if (e.target.id === "kd-fu-on") { KD.wantFu = e.target.checked; return kdRenderDispos(); }
     if (e.target.id !== "kd-in" && e.target.id !== "kd-out") return;
     const p = kdAudioPrefs();
     p[e.target.id === "kd-in" ? "input" : "output"] = e.target.value;
@@ -4825,9 +4823,9 @@ function kdMenuPick(k) {
   if (k === "audio") { KD.view = "settings"; KD.stab = "audio"; kdLoadDevices(); return kdRender(); }
   if (!KD.lead && k !== "dispo") return kdToast("Pick a lead first");
   if (k === "dispo" || k === "note") return kdOpenWrap();
-  if (k === "followup") { KD.dispo = "Follow-up Required"; return kdOpenWrap(); }
+  if (k === "followup") { KD.wantFu = true; return kdOpenWrap(); }
   if (k === "lead") { KD.view = "lead"; KD.ptab = "lead"; return kdRender(); }
-  if (k === "dnc") { KD.dispo = "Do Not Contact"; return kdOpenWrap(); }
+  if (k === "dnc") { KD.dispo = "DNC"; return kdOpenWrap(); }
 }
 
 /* ---------------- the disposition sheet ---------------- */
@@ -4879,14 +4877,18 @@ async function crmCreateLead(leadId, first, last, email) {
 function kdRenderDispos() {
   if (KD.dispo && !kdDispoChoices().some((d) => d.label === KD.dispo)) KD.dispo = "";
   kdEl("kd-dispos").innerHTML = kdDispoChoices().map((d) =>
-    `<button data-dispo="${esc(d.label)}" aria-pressed="${KD.dispo === d.label}">${esc(d.label)}</button>`).join("");
+    `<button data-dispo="${esc(d.label)}" aria-pressed="${KD.dispo === d.label}"${d.title ? ` title="${esc(d.title)}"` : ""}>${esc(d.label)}</button>`).join("");
   const picked = KD_DISPOS.find((d) => d.label === KD.dispo);
-  kdShow("kd-fu", picked?.kind === "followup");
+  /* the call-back reminder: any call to a lead, whatever the outcome */
+  kdShow("kd-fu", !!KD.lead);
+  const fuOn = kdEl("kd-fu-on");
+  if (fuOn) fuOn.checked = !!KD.wantFu;
+  kdShow("kd-fu-when", !!KD.wantFu);
   /* The prospect's name — only for Prospect, and only while the Zoho CRM
      sync is on, since that is where it goes. */
   kdShow("kd-crm", picked?.kind === "prospect" && !!VOICE.crmOn);
   if (picked?.kind === "prospect" && VOICE.crmOn) setTimeout(() => kdEl("kd-crm-first")?.focus(), 0);
-  if (picked?.kind === "followup" && !kdEl("kd-fu-at").value) {
+  if (KD.wantFu && !kdEl("kd-fu-at").value) {
     /* A sensible default beats an empty field: tomorrow, same hour, on the
        hour. A rep picking "call back later" means soon, not never. */
     const d = new Date(Date.now() + 864e5);
@@ -4912,12 +4914,12 @@ async function kdSaveDispo() {
   if (picked?.kind === "status" && picked.value !== L.status)
     jobs.push(patchLead(L.id, { status: picked.value }).then(() => { L.status = picked.value; }));
 
-  if (picked?.kind === "followup") {
+  if (KD.wantFu) {
     const at = kdEl("kd-fu-at")?.value;
     if (!at) return kdToast("Pick a date and time for the follow-up");
     jobs.push(api("/api/leads/" + L.id + "/followup", {
       method: "POST",
-      body: JSON.stringify({ due_at: new Date(at).toISOString(), note: note || KD.dispo }),
+      body: JSON.stringify({ due_at: new Date(at).toISOString(), note: note || KD.dispo || "Call back" }),
     }).then((r) => { KD.followup = r.followup || { due_at: new Date(at).toISOString(), note }; }));
   }
 
@@ -4974,7 +4976,8 @@ async function kdSaveDispo() {
     if (crm?.leadError) toast("Zoho CRM lead not created: " + crm.leadError, 9000);
     if (crm?.sendError) toast("Call saved, but Zoho CRM refused it for now — it will retry: " + crm.sendError, 9000);
     kdLoadLead(L.id);
-    if (picked?.kind === "followup") kdLoadFollowups();
+    if (KD.wantFu) kdLoadFollowups();
+    KD.wantFu = false;
   } catch (e) {
     kdToast("Could not save — " + (describeErr(e) || "unknown"));
   }
@@ -5247,14 +5250,14 @@ async function rcCall(digits, name, leadId) {
        outcome buttons and an automatic one after a few seconds. Opening the
        panel's sheet as well would ask the rep the same question twice. */
     const inSession = S.tab === "camp" && CAMP.s?.current;
-    /* A voicemail drop is its own disposition: log "Voicemail" straight away
+    /* A voicemail drop is its own disposition: log "VM" straight away
        (after the call row exists, so it lands on it — and from there into
        Zoho CRM) instead of asking the rep what just happened. */
     if (KD.vmDropped && KD.lead && !inSession) {
       const L = KD.lead;
       KD.vmDropped = false;
       Promise.resolve(logged).catch(() => {}).then(() => api("/api/leads/" + L.id + "/disposition", {
-        method: "POST", body: JSON.stringify({ disposition: "Voicemail", note: "Voicemail drop left" }) }))
+        method: "POST", body: JSON.stringify({ disposition: "VM", note: "Voicemail drop left" }) }))
         .then((r) => kdToast(r?.crm?.sent ? "Voicemail left · logged and sent to Zoho CRM" : "Voicemail left · logged"))
         .catch((e) => kdToast("Voicemail left, but couldn't log it — " + (describeErr(e) || "unknown")));
       kdLoadLead(L.id);

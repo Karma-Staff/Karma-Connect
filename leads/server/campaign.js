@@ -230,8 +230,7 @@ router.post("/api/campaign/outcome", requireUser, express.json({ limit: "8kb" })
            in the call report. Only a call the softphone never saw (a tel:
            link, a desk phone) gets a row of its own. */
         const outcome = String(b.outcome || "no-answer");
-        const disposition = { voicemail: "Voicemail", "no-answer": "No Answer", busy: "Busy" }[outcome]
-          || (b.status === "Not interested" ? "Not Interested" : null);
+        const disposition = { voicemail: "VM", "no-answer": "No Answer", busy: "Busy" }[outcome] || null;
         const stamp = { session: s.id, session_outcome: outcome,
           ...(disposition ? { disposition, dispo_at: new Date().toISOString() } : {}) };
         const hit = (await query(

@@ -74,7 +74,11 @@ const TZ = process.env.CALL_TZ || "America/New_York";
    CDM, Wrong Number, No Answer, DNC, VM, Busy). Ones the CRM has no value
    for go into the description instead. */
 const RESULT = {
-  "Voicemail": "VM", "Gatekeeper": "GK", "No Answer": "No Answer", "Busy": "Busy",
+  // what the dialler offers now — the CRM's own values
+  "VM": "VM", "GK": "GK", "No Answer": "No Answer", "Busy": "Busy", "Wrong number": "Wrong Number",
+  "Email captured": "Email captured", "DNC": "DNC",
+  // the names calls were logged with before
+  "Voicemail": "VM", "Gatekeeper": "GK",
   "Wrong Number": "Wrong Number", "Email Captured": "Email captured", "Do Not Contact": "DNC",
   "CDM": "CDM",
 };

@@ -199,7 +199,7 @@ function assess({ number, calls, ours = [], now = Date.now(), share = 0, verifie
       digits10(c.toNum) === digits10(o.number) && Math.abs(c.t + c.dur * 1000 - o.at) < 5 * 60e3));
     if (mine.length < 10) add("opt_outs", "Opt-out rate", "unknown", `${mine.length} dispositioned`, "Too few dispositioned calls from this number to judge.");
     else {
-      const dnc = mine.filter((o) => o.disposition === "Do Not Contact").length;
+      const dnc = mine.filter((o) => o.disposition === "DNC" || o.disposition === "Do Not Contact").length;
       const r = pct(dnc, mine.length);
       const value = `${r}% (${dnc} of ${mine.length}) marked Do Not Contact`;
       if (r >= 5) add("opt_outs", "Opt-out rate", "detected", value, "One in twenty or more calls ends in a do-not-contact request.", 15);
