@@ -165,6 +165,10 @@ async function attachRecording(row, zohoCallId, recId) {
   return { id: String(d.details?.id || ""), noteId, name, bytes: buf.length, as: w.as };
 }
 
+/* When the search for a call's recording started: the call itself, or the
+   moment someone pressed Retry (POST /api/crm/sync/recordings/retry). */
+const recClock = (row) => new Date(row.meta?.crm_rec_retry_at || row.at).getTime();
+
 /* Attach, and record what happened on the call's row. */
 async function attachAndMark(row, zohoCallId, recId) {
   try {
@@ -174,7 +178,7 @@ async function attachAndMark(row, zohoCallId, recId) {
       [row.id, a.id || a.name, a.bytes]);
     return true;
   } catch (e) {
-    const old = Date.now() - new Date(row.at).getTime() > REC_WINDOW_MIN * 60e3;
+    const old = Date.now() - recClock(row) > REC_WINDOW_MIN * 60e3;
     await query(`UPDATE activity_log SET meta = meta || jsonb_build_object('crm_rec_error', $2::text,
         'crm_rec_tries', coalesce((meta->>'crm_rec_tries')::int, 0) + 1,
         'crm_rec_pending', $3::boolean) WHERE id = $1`,
@@ -332,7 +336,7 @@ async function backfillRecordings() {
        AND a.meta ? 'crm_call_id'
      ORDER BY a.at LIMIT ${BATCH}`)).rows;
   for (const row of rows) {
-    const old = Date.now() - new Date(row.at).getTime() > REC_WINDOW_MIN * 60e3;
+    const old = Date.now() - recClock(row) > REC_WINDOW_MIN * 60e3;
     if (old || +(row.meta.crm_rec_tries || 0) >= 6) {
       /* Say why it stopped, so the Zoho CRM panel can show it: usually the
          call was simply not recorded in RingCentral. */
@@ -412,6 +416,9 @@ router.get("/api/crm/sync", requireAdmin, async (req, res, next) => {
                count(*) FILTER (WHERE meta->>'crm_state' = 'error')::int AS errors,
                count(*) FILTER (WHERE meta ? 'crm_rec_attached')::int AS rec_attached,
                count(*) FILTER (WHERE meta->>'crm_rec_pending' = 'true')::int AS rec_pending,
+               count(*) FILTER (WHERE meta ? 'crm_call_id' AND NOT (meta ? 'crm_rec_attached')
+                                  AND meta->>'crm_rec_pending' IS DISTINCT FROM 'true'
+                                  AND at > now() - interval '30 days')::int AS rec_missing,
                max((meta->>'crm_synced_at')::timestamptz) AS last_synced_at
           FROM activity_log
          WHERE action = 'call' AND meta->>'provider' = 'ringcentral' AND at >= $1`, [since])).rows[0];
@@ -427,7 +434,7 @@ router.get("/api/crm/sync", requireAdmin, async (req, res, next) => {
          ORDER BY at DESC LIMIT 1`, [since])).rows[0];
       stats = { synced: s.synced, today: s.today, pending: s.pending, errors: s.errors,
         lastError: le?.e || null, lastSyncedAt: s.last_synced_at,
-        recAttached: s.rec_attached, recPending: s.rec_pending,
+        recAttached: s.rec_attached, recPending: s.rec_pending, recMissing: s.rec_missing,
         lastRecError: re ? { error: re.e, at: re.at } : null };
     }
     res.json({ configured: zoho.ENABLED, on: !!cfg.on, since,
@@ -457,6 +464,29 @@ router.put("/api/crm/sync", requireOwner, express.json({ limit: "1kb" }), async 
 
 /* The exact payloads the next calls would produce. Read-only — nothing is
    sent, nothing is stamped. Works with the switch off, which is the point. */
+/* POST /api/crm/sync/recordings/retry — look again for the recordings of
+   calls already in Zoho without one (last 30 days): the search had given
+   up, or an older upload method had failed. Each goes back to "waiting"
+   for another 30 minutes from now; the sweeper attaches what RingCentral
+   has, and a call that was never recorded ends up with the same "no
+   recording" note as before. */
+router.post("/api/crm/sync/recordings/retry", requireAdmin, async (req, res, next) => {
+  try {
+    const cfg = await config();
+    if (!cfg.since) return res.json({ queued: 0 });
+    const { rows } = await query(
+      `UPDATE activity_log
+          SET meta = (meta - 'crm_rec_error') || jsonb_build_object(
+                'crm_rec_pending', true, 'crm_rec_tries', 0, 'crm_rec_retry_at', now())
+        WHERE action = 'call' AND meta->>'provider' = 'ringcentral' AND at >= $1::timestamptz
+          AND at > now() - interval '30 days'
+          AND meta ? 'crm_call_id' AND NOT (meta ? 'crm_rec_attached')
+          AND meta->>'crm_rec_pending' IS DISTINCT FROM 'true'
+        RETURNING id`, [cfg.since]);
+    res.json({ queued: rows.length });
+  } catch (e) { next(e); }
+});
+
 router.get("/api/crm/sync/preview", requireAdmin, async (req, res, next) => {
   try {
     if (!zoho.ENABLED) return res.status(503).json({ error: "Zoho CRM is not configured on this server" });

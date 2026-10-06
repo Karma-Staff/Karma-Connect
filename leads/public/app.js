@@ -9132,7 +9132,9 @@ async function openCrmSync() {
         <div><b>${dashN(st.pending)}</b><span>waiting</span></div>
         <div class="${st.errors ? "bad" : ""}"><b>${dashN(st.errors)}</b><span>failed</span></div>
       </div>${st.lastError ? `<p class="login-error">Last error: ${esc(st.lastError)}</p>` : ""}
-      <p class="dash-mute">Recordings: ${dashN(st.recAttached || 0)} attached in Zoho${st.recPending ? ` · ${dashN(st.recPending)} waiting for RingCentral` : ""}</p>${
+      <p class="dash-mute">Recordings: ${dashN(st.recAttached || 0)} attached in Zoho${st.recPending ? ` · ${dashN(st.recPending)} waiting for RingCentral` : ""}${
+        st.recMissing ? ` · ${dashN(st.recMissing)} sent without one <button type="button" class="btn-ghost crm-retry" id="crm-rec-retry"
+          title="Look again in RingCentral for these calls' recordings and attach any it has">Retry missing recordings</button>` : ""}</p>${
         st.lastRecError ? `<p class="login-error">Last recording problem (${esc(relTime(st.lastRecError.at))}): ${esc(st.lastRecError.error)}</p>` : ""}` : ""}
       <h4 class="crm-h">Preview — what the next calls would look like in the CRM</h4>
       ${prev.error ? `<p class="login-error">${esc(prev.error)}</p>`
@@ -9160,6 +9162,14 @@ async function openCrmSync() {
         <p class="dash-mute crm-fine">Each person connects from the Calls tab or the dialler's Settings.</p>` : ""}
       <div class="modal-actions"><button type="button" class="btn-secondary" id="modal-cancel">Close</button></div>`;
     $("modal-cancel").addEventListener("click", closeModal);
+    $("crm-rec-retry")?.addEventListener("click", async (e) => {
+      e.currentTarget.disabled = true;
+      try {
+        const r = await api("/api/crm/sync/recordings/retry", { method: "POST", body: "{}" });
+        toast(`Looking again for ${r.queued} recording${r.queued === 1 ? "" : "s"} — any RingCentral has are attached within a few minutes`, 6000);
+        paint();
+      } catch (ex) { toast("Couldn't retry: " + ex.message, 6000); e.currentTarget.disabled = false; }
+    });
     $("crm-toggle")?.addEventListener("click", async () => {
       if (!s.on && !confirm("Turn on Zoho CRM call logging?\n\nFrom now on, RingCentral calls placed in Karma Connect will be written into Zoho CRM's call log, and reps can create CRM leads from connected calls.")) return;
       try {

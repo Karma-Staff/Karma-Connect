@@ -4,7 +4,7 @@
 
 # API
 
-**194 routes**, generated from the source on 2026-10-06.
+**195 routes**, generated from the source on 2026-10-06.
 
 Every path is absolute. That is deliberate: Karma Leads' API paths are the same
 whether it runs standalone or mounted into Connect, which is what let its front
@@ -47,7 +47,7 @@ declared once for the group.
 
 ---
 
-## Karma Leads — 132 routes
+## Karma Leads — 133 routes
 
 ### `/api/activity`
 
@@ -149,10 +149,11 @@ declared once for the group.
 | GET | `/api/crm/people` | admin | [leads/server/crm-identity.js:269](../../leads/server/crm-identity.js#L269) | Who has connected — the manager's answer to "why are this rep's calls still under the shared… |
 | GET | `/api/crm/preview` | admin | [leads/server/zoho-crm.js:153](../../leads/server/zoho-crm.js#L153) | How much of our own base would ever reach the CRM. |
 | GET | `/api/crm/status` | admin | [leads/server/zoho-crm.js:103](../../leads/server/zoho-crm.js#L103) | GET /api/crm/status — is it connected, and what is actually in there. |
-| GET | `/api/crm/sync` | admin | [leads/server/crm-sync.js:401](../../leads/server/crm-sync.js#L401) |  |
-| PUT | `/api/crm/sync` | owner | [leads/server/crm-sync.js:444](../../leads/server/crm-sync.js#L444) |  |
-| GET | `/api/crm/sync/on` | signed in | [leads/server/crm-sync.js:440](../../leads/server/crm-sync.js#L440) | Just "is it on" — for a rep's wrap-up, which offers "Create CRM lead" only when there is some… |
-| GET | `/api/crm/sync/preview` | admin | [leads/server/crm-sync.js:460](../../leads/server/crm-sync.js#L460) | The exact payloads the next calls would produce. |
+| GET | `/api/crm/sync` | admin | [leads/server/crm-sync.js:405](../../leads/server/crm-sync.js#L405) |  |
+| PUT | `/api/crm/sync` | owner | [leads/server/crm-sync.js:451](../../leads/server/crm-sync.js#L451) |  |
+| GET | `/api/crm/sync/on` | signed in | [leads/server/crm-sync.js:447](../../leads/server/crm-sync.js#L447) | Just "is it on" — for a rep's wrap-up, which offers "Create CRM lead" only when there is some… |
+| GET | `/api/crm/sync/preview` | admin | [leads/server/crm-sync.js:490](../../leads/server/crm-sync.js#L490) |  |
+| POST | `/api/crm/sync/recordings/retry` | admin | [leads/server/crm-sync.js:473](../../leads/server/crm-sync.js#L473) | POST /api/crm/sync/recordings/retry — look again for the recordings of calls already in Zoho… |
 
 ### `/api/cron`
 
@@ -217,7 +218,7 @@ declared once for the group.
 | POST | `/api/leads/:id/call` | signed in, own lead *(inherited)* | [leads/server/calls.js:99](../../leads/server/calls.js#L99) | POST /api/leads/:id/call — the softphone reporting how a call went. |
 | GET | `/api/leads/:id/comments` | own lead *(inherited)* | [leads/server/leads.js:442](../../leads/server/leads.js#L442) |  |
 | POST | `/api/leads/:id/comments` | own lead *(inherited)* | [leads/server/leads.js:453](../../leads/server/leads.js#L453) |  |
-| POST | `/api/leads/:id/crm-lead` | signed in, own lead *(inherited)* | [leads/server/crm-sync.js:548](../../leads/server/crm-sync.js#L548) |  |
+| POST | `/api/leads/:id/crm-lead` | signed in, own lead *(inherited)* | [leads/server/crm-sync.js:578](../../leads/server/crm-sync.js#L578) |  |
 | GET | `/api/leads/:id/delete-preview` | admin, own lead *(inherited)* | [leads/server/trash.js:94](../../leads/server/trash.js#L94) | what the confirm modal shows before the click: |
 | POST | `/api/leads/:id/disposition` | signed in, own lead *(inherited)* | [leads/server/calls.js:176](../../leads/server/calls.js#L176) |  |
 | GET | `/api/leads/:id/followup` | signed in, own lead *(inherited)* | [leads/server/followups.js:104](../../leads/server/followups.js#L104) | What is set on this lead right now — the reading pane asks on every open. |
