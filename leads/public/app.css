@@ -270,6 +270,8 @@ a:hover { text-decoration: underline; }
 .ph-list { margin: 0 0 12px; font-size: 13px; }
 .ph-list summary { cursor: pointer; color: var(--accent-ink); margin-bottom: 8px; }
 .ph-from { font-family: ui-monospace, monospace; font-size: 12px; }
+.camp-local { margin-top: 4px; font-size: 12px; color: var(--ink-3); }
+.camp-local.closed { color: var(--gold); font-weight: 600; }
 .crm-retry { height: 26px; padding: 0 10px; font-size: 12px; margin-left: 6px; }
 .asg-un { height: 28px; padding: 0 10px; font-size: 12px; }
 

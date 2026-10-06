@@ -6115,6 +6115,7 @@ function renderCampaign(d) {
           <div class="camp-sub">${esc([r.City, r.State].filter(Boolean).join(", "))}
             ${r.Industry ? " · " + esc(titleCase(r.Industry)) : ""}
             ${r.Employees ? " · " + r.Employees.toLocaleString() + " staff" : ""}</div>
+          ${campLocalTime(d.current.callTime)}
         </div>
         <a class="dial camp-dial" href="tel:${esc(r.Phone)}" data-dial="${esc(r.Phone)}"
            data-dial-id="${esc(r.Id)}" data-dial-name="${esc(name)}">☎ ${esc(r.Phone)}</a>
@@ -6175,11 +6176,44 @@ function renderCampaign(d) {
     setTab("tasks");
   });
   wireAutoDial(r, name);
+  /* Nobody in reach can be called yet (calling hours): hold auto-dial and
+     look again when the soonest lead's 8am comes round. */
+  if (d.current.callTime?.waiting) return holdForHours(d.current.callTime);
   /* Only after an outcome, never on the first paint of a session — the
      opening call has to be a real click so the browser grants the
      microphone, and every later call reuses that permission. */
   if (CAMP.advanced) armAutoDial(r, name);
   CAMP.advanced = false;
+}
+
+/* The lead's own clock, beside its name: what time it is where they are,
+   and a warning when it is outside calling hours (8am-9pm local). The
+   server has already moved leads it is too early or late for to the end
+   of the list (campaign.js servable); this is the one it could not move. */
+function campLocalTime(ct) {
+  if (!ct || !ct.local) return "";
+  const moved = ct.deferred ? ` · ${ct.deferred} lead${ct.deferred === 1 ? "" : "s"} it's too early or late for moved to later` : "";
+  return ct.open
+    ? `<div class="camp-local">${esc(ct.local)} ${esc(ct.zone)} time${moved}</div>`
+    : `<div class="camp-local closed" title="Calls are allowed 8am–9pm in the lead's local time">⚠ ${esc(ct.local)} ${esc(ct.zone)} time — outside calling hours</div>`;
+}
+
+function holdForHours(ct) {
+  const keep = CAMP.advanced;
+  CAMP.advanced = false;
+  cancelAutoDial();
+  clearTimeout(CAMP.hoursTimer);
+  const at = ct.opensAt ? new Date(ct.opensAt) : null;
+  const el = $("camp-auto-state");
+  if (el) el.textContent = `outside calling hours for every lead up next — nothing will ring${at
+    ? ` until ${at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} your time` : ""}`;
+  // look again when it opens (or every 10 minutes, whichever is sooner)
+  const wait = at ? Math.max(60e3, Math.min(at.getTime() - Date.now() + 5e3, 10 * 60e3)) : 10 * 60e3;
+  CAMP.hoursTimer = setTimeout(() => {
+    if (S.tab !== "camp" || kdActive() || CAMP.busy) return;
+    CAMP.advanced = keep;
+    loadCampaign();
+  }, wait);
 }
 
 async function submitOutcome(extra) {

@@ -23,6 +23,7 @@ const { query, tx } = require("./db");
 const { requireUser, requireAdmin, rankOf, RANK } = require("./auth");
 const { STATUSES } = require("./dedupe");
 const activity = require("./activity");
+const calltime = require("./calltime");
 
 const router = express.Router();
 
@@ -70,6 +71,45 @@ const COLS = `id, actor, owner, pos, filters, started_at, ended_at, called, conn
 async function openSession(actor) {
   return (await query(
     `SELECT ${COLS} FROM call_sessions WHERE actor = $1 AND ended_at IS NULL`, [actor])).rows[0] || null;
+}
+
+/* Calling hours. Before a lead is served, the next ones are checked against
+   8am-9pm in THEIR local time (calltime.js). Leads it is too early or too
+   late for are moved to the end of the list, untouched, and the first lead
+   it is a decent hour for comes up instead — so nobody is skipped, they are
+   called later in the day. Only the next LOOK leads are read per request.
+   If none of them can be called yet, the lead stays put and the answer says
+   when the soonest opens (callTime.waiting), so auto-dial holds instead of
+   ringing someone at 7am. */
+const LOOK = 200;
+async function servable(s) {
+  if (!s || s.cur_id == null) return { s, callTime: null };
+  const rows = (await query(
+    `SELECT u.ord::int AS ord, l.state, l.phone
+       FROM call_sessions cs
+            CROSS JOIN LATERAL unnest(cs.lead_ids[cs.pos + 1 : cs.pos + ${LOOK}]) WITH ORDINALITY u(id, ord)
+            LEFT JOIN leads l ON l.id = u.id
+      WHERE cs.id = $1 ORDER BY u.ord`, [s.id])).rows;
+  const now = new Date();
+  const checks = rows.map((r) => calltime.check(r, now));
+  const j = checks.findIndex((c) => c.open);
+  if (j === 0) return { s, callTime: checks[0] };
+  if (j < 0) {
+    const soonest = checks.map((c) => c.opensAt).filter(Boolean).sort()[0] || null;
+    return { s, callTime: { ...checks[0], waiting: true, opensAt: soonest } };
+  }
+  const moved = (await query(
+    `UPDATE call_sessions
+        SET lead_ids = lead_ids[1:pos] || lead_ids[pos + $2 + 1:] || lead_ids[pos + 1:pos + $2]
+      WHERE id = $1 AND ended_at IS NULL RETURNING ${COLS}`, [s.id, j])).rows[0];
+  return moved ? { s: moved, callTime: { ...checks[j], deferred: j } } : { s, callTime: checks[0] };
+}
+
+/* The served session: the next callable lead's card, with its local time. */
+async function serve(s, actor) {
+  const v = await servable(s);
+  const card = v.s.cur_id != null ? await leadCard(v.s.cur_id, actor) : null;
+  return shape(v.s, card && { ...card, callTime: v.callTime });
 }
 
 /* A manager's power-dialer campaign is a call session too — same snapshot of
@@ -152,7 +192,7 @@ router.post("/api/campaign/start", requireUser, express.json({ limit: "4kb" }),
         [me(req), owner, rows.map((r) => r.id),
           JSON.stringify({ statuses: OPEN_STATUSES, hasPhone: true })])).rows[0];
 
-      res.json(shape(s, await leadCard(s.cur_id, me(req))));
+      res.json(await serve(s, me(req)));
     } catch (e) { next(e); }
   });
 
@@ -162,8 +202,7 @@ router.get("/api/campaign/current", requireUser, async (req, res, next) => {
   try {
     const s = await openSession(me(req));
     if (!s) return res.json({ session: null });
-    const id = s.cur_id;
-    res.json(shape(s, id ? await leadCard(id, me(req)) : null));
+    res.json(await serve(s, me(req)));
   } catch (e) { next(e); }
 });
 
@@ -257,7 +296,7 @@ router.post("/api/campaign/outcome", requireUser, express.json({ limit: "8kb" })
                 filters = CASE WHEN filters->>'kind' = 'campaign'
                                THEN filters || '{"status":"completed"}'::jsonb ELSE filters END
           WHERE id = $1`, [s.id]);
-      res.json(shape(next, nid ? await leadCard(nid, me(req)) : null));
+      res.json(nid ? await serve(next, me(req)) : shape(next, null));
     } catch (e) { next(e); }
   });
 
