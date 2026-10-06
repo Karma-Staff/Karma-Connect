@@ -9324,6 +9324,7 @@ function pdWire() {
     const id = +b.dataset.pdId, act = b.dataset.pdAct;
     const c = PD.data?.list.find((x) => x.id === id);
     if (act === "unassign") return c && openUnassign(c);
+    if (act === "end" && c?.status === "draft") return openDeleteDraft(c);
     if (act === "end" && !confirm(`End "${c?.name}"? ${c ? c.pending + " lead(s) not yet called will be dropped from it." : ""}`)) return;
     PD.busy.add(id); renderPower();
     try {
@@ -9382,6 +9383,47 @@ function renderPower() {
           c.status === "paused" && c.pausedBy ? `<span class="pd-by">by ${esc(c.pausedBy)}</span>` : ""}</td>
         <td class="pd-acts">${actions(c)}</td></tr>`;
     }).join("")}</tbody></table></div>`;
+}
+
+/* Deleting a campaign that never started. One built from new unassigned
+   leads gave them to the rep when it was created, so deleting it offers to
+   give them back — ticked by default for those, since the rep never asked
+   for them. Unassigning ends the campaign by itself (same endpoint as
+   Unassign leads), so it is one request either way. */
+function openDeleteDraft(c) {
+  const fromPool = c.source === "unassigned";
+  $("modal-title").textContent = `Delete “${c.name}”?`;
+  $("modal-body").innerHTML = `
+    <p class="modal-sub">It never started, so nothing has been called.</p>
+    <form id="pd-del-form" class="pd-form">
+      <label class="pd-choice"><input type="checkbox" id="pd-del-un" ${fromPool ? "checked" : ""}>
+        <span><b>Also put its ${dashN(c.total)} lead${c.total === 1 ? "" : "s"} back in Unassigned</b>${fromPool
+          ? ` — they were given to ${esc(c.ownerName)} when this campaign was made`
+          : ` — they were already ${esc(c.ownerName)}'s; leave unticked to keep them on their list`}</span></label>
+      <div id="pd-del-err" class="login-error hidden"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="modal-cancel">Cancel</button>
+        <button type="submit" class="btn-primary" id="pd-del-go">Delete campaign</button>
+      </div>
+    </form>`;
+  $("modal-backdrop").classList.remove("hidden");
+  $("modal-cancel").addEventListener("click", closeModal);
+  $("pd-del-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = $("pd-del-go"), err = $("pd-del-err"), un = $("pd-del-un").checked;
+    btn.disabled = true; btn.textContent = "Deleting…";
+    try {
+      const r = un
+        ? await api(`/api/dialer/campaigns/${c.id}/unassign`, { method: "POST", body: JSON.stringify({ which: "all" }) })
+        : await api(`/api/dialer/campaigns/${c.id}/state`, { method: "POST", body: JSON.stringify({ action: "end" }) });
+      closeModal();
+      toast(un ? `Campaign deleted · ${dashN(r.unassigned)} lead${r.unassigned === 1 ? "" : "s"} back in Unassigned` : "Campaign deleted", 5000);
+      pdFetch();
+    } catch (ex) {
+      err.textContent = ex.message; err.classList.remove("hidden");
+      btn.disabled = false; btn.textContent = "Delete campaign";
+    }
+  });
 }
 
 /* Unassign a campaign's leads from its rep: back to the unassigned pool.

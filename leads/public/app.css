@@ -2471,6 +2471,7 @@ label.check input[type="checkbox"] { width: auto; margin: 0; accent-color: var(-
 .pd-choice b { color: var(--ink); font-weight: 600; }
 .pd-choice:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
 .pd-choice:has(input:disabled) { opacity: .55; cursor: default; }
+.pd-choice input[type="checkbox"] { margin-top: 2px; }
 .pd-form input[type="radio"] { width: 16px; height: 16px; margin: 2px 0 0; flex: none; accent-color: var(--accent); }
 .pd-count { margin: 14px 0 0; font-size: 13px; color: var(--ink-2); }
 .pd-count b { color: var(--ink); }
