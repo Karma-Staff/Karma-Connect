@@ -3298,6 +3298,9 @@ const kdActive = () => KD.phase === "calling" || KD.phase === "live";
 /* ---------------- paint ---------------- */
 
 function kdRender() {
+  /* The Call session card follows the phone, panel open or not — so this
+     runs before the early return below for a closed panel. */
+  campPaintLive();
   const root = kdEl("rc-call");
   if (!root || root.classList.contains("hidden")) return;
   const live = KD.phase === "live", calling = KD.phase === "calling";
@@ -6174,10 +6177,12 @@ function autoReady() {
 }
 
 function cancelAutoDial(reason) {
+  const was = !!CAMP.timer;
   if (CAMP.timer) { clearInterval(CAMP.timer); CAMP.timer = null; }
   CAMP.countdown = 0;
   const el = $("camp-auto-state");
   if (el && reason) el.textContent = reason;
+  if (was) campPaintLive();
 }
 
 /* Start the countdown to the current lead. Called after an outcome, never
@@ -6203,53 +6208,12 @@ function armAutoDial(r, name) {
     if (el) el.textContent = placed ? "calling " + name + "…" : "could not dial — call it by hand";
     if (!placed) setAutoOn(false);       // stop rather than fail silently each time
   }, 1000);
+  campPaintLive();                         // the bar offers Pause while it counts
 }
 
-/* The switch, and the countdown, in one strip above the lead. In a manager's
-   campaign there is no switch — the campaign's state is shown instead, with
-   the rep's one-click Join before the first call. */
-function autoDialBar() {
-  const ready = autoReady();
-  const c = campOf();
-  if (c) {
-    const live = c.status === "ongoing";
-    const joinable = live && ready.ok && !CAMP.joined && !kdActive();
-    return `
-      <div class="camp-auto pd-strip ${live ? "on" : c.status}">
-        <span class="pd-strip-tag"><i></i>Power dialer · ${esc(PD_STATUS[c.status]?.[0] || c.status)}</span>
-        <span id="camp-auto-state" class="camp-auto-state">${
-          !ready.ok ? esc(ready.why)
-            : c.status === "paused" ? campPausedText(c)
-              : c.status === "draft" ? "ready — waiting for your manager to start it"
-                : joinable ? "press Start calling — after that each lead rings by itself"
-                  : `on — hang up and it logs the call and rings the next in ${autoGap()}s`}</span>
-        ${joinable ? `<button type="button" class="btn-primary pd-join" id="pd-join">▶ Start calling</button>` : ""}
-        ${live ? `<button type="button" class="btn-ghost camp-auto-pause" id="pd-pause" title="Take a break: nothing else rings until you resume">❚❚ Pause campaign</button>` : ""}
-        ${c.status === "paused" ? `<button type="button" class="btn-primary pd-join" id="pd-resume">▶ Resume</button>` : ""}
-      </div>`;
-  }
-  const on = autoOn() && ready.ok;
-  return `
-    <div class="camp-auto${on ? " on" : ""}">
-      <label class="camp-auto-sw">
-        <input type="checkbox" id="camp-auto" ${on ? "checked" : ""} ${ready.ok ? "" : "disabled"}>
-        <span>Auto-dial</span>
-      </label>
-      ${VOICE.mode === "copy"
-        ? `<span class="camp-scope" title="This Zoho account is a Telephony agent, which has no access to the Zoho Voice web phone. Only an admin can upgrade that licence.">No in-page phone on this Zoho account — numbers are copied for you</span>`
-        : VOICE.scopeWarning ? `<span class="camp-scope" title="${esc(VOICE.scopeWarning)}">Zoho panel is read-only — use the note box below</span>` : ""}
-      <span id="camp-auto-state" class="camp-auto-state">${
-        ready.ok
-          ? (on ? "on — hang up and it logs the call and rings the next" : "off — press the number to call")
-          : esc(ready.why)}</span>
-      ${on ? `<button type="button" class="btn-ghost camp-auto-pause" id="camp-auto-pause">Pause</button>` : ""}
-      <label class="camp-auto-gap">gap
-        <input type="number" id="camp-gap" min="2" max="60" value="${autoGap()}"> s
-      </label>
-    </div>`;
-}
-
-function wireAutoDial(r, name) {
+/* The bar's one action (Start calling / Pause / Resume) — wired on its own,
+   because campPaintLive swaps it as the phone moves on. */
+function wireCampAction(r, name) {
   /* The rep's one real click: it rings the first lead, and that gesture is
      what lets every later call in the campaign start on its own. */
   $("pd-join")?.addEventListener("click", () => {
@@ -6258,17 +6222,22 @@ function wireAutoDial(r, name) {
     if (!placed) { CAMP.joined = false; toast("Couldn't place the call — check the phone connection", 6000); }
     renderCampaign(CAMP.s);
   });
+  $("camp-auto-pause")?.addEventListener("click", () => {
+    cancelWrap();
+    cancelAutoDial("paused — press the number when you are ready");
+    campPaintLive();
+  });
+  $("pd-pause")?.addEventListener("click", () => campPause(false));
+  $("pd-resume")?.addEventListener("click", () => campPause(true));
+}
+
+function wireAutoDial(r, name) {
+  wireCampAction(r, name);
   $("camp-auto")?.addEventListener("change", (e) => {
     setAutoOn(e.target.checked);
     cancelAutoDial();
     renderCampaign(CAMP.s);            // repaint the strip, do not start a call
   });
-  $("camp-auto-pause")?.addEventListener("click", () => {
-    cancelWrap();
-    cancelAutoDial("paused — press the number when you are ready");
-  });
-  $("pd-pause")?.addEventListener("click", () => campPause(false));
-  $("pd-resume")?.addEventListener("click", () => campPause(true));
   $("camp-gap")?.addEventListener("change", (e) => {
     try { localStorage.setItem("kl_camp_gap", String(e.target.value)); } catch (err) { /* fine */ }
   });
@@ -6292,6 +6261,7 @@ async function campPause(resume) {
   } catch (e) { return toast("Couldn't " + (resume ? "resume" : "pause") + " — " + e.message, 6000); }
   c.status = resume ? "ongoing" : "paused";
   c.pausedBy = resume ? null : S.me?.email || null;
+  campPaintLive();
   if (PDR.last) Object.assign(PDR.last, { status: c.status, pausedBy: c.pausedBy });
   toast(resume ? "Resumed — the next lead rings by itself" : "Campaign paused — nothing else will ring", 4000);
   if (kdActive() || CAMP.busy || CAMP.awaitDispo) {
@@ -6342,6 +6312,7 @@ async function loadCampaign() {
 /* The start screen: whose list, how many are callable. */
 async function renderCampStart(preOwner) {
   const el = $("camp-body");
+  $("camp-pane")?.classList.remove("cs-mode");
   const admin = isAdmin();
   let owners = [];
   if (admin) {
@@ -6397,91 +6368,209 @@ async function renderCampStart(preOwner) {
   });
 }
 
+/* ---------------- the Call session screen ----------------
+   One lead at a time, in the power-dialer layout: a header (whose list,
+   assigned by whom, the caller ID), then one card — a bar with the state,
+   the progress and the one action that matters now; the lead, its number
+   and its clock; the opener and what they do; and the manual log for a
+   call made some other way.
+
+   The state follows the phone as it happens (campPaintLive, called from the
+   dialler's own render): Ready → Calling → Connected → the disposition →
+   Ready, or Paused. Every control keeps the id the session logic already
+   drives (camp-auto-state, pd-join, pd-pause, pd-resume, camp-skip, …), so
+   pausing, resuming, joining, the countdown and the wrap-up behave exactly
+   as before. */
+const CS_LOOK = {
+  ready:     { label: "Ready",       eyebrow: "Up next",      cls: "ready" },
+  waiting:   { label: "Not started", eyebrow: "Up next",      cls: "idle" },
+  calling:   { label: "Calling",     eyebrow: "Calling now",  cls: "calling" },
+  connected: { label: "Connected",   eyebrow: "On call",      cls: "live" },
+  wrapup:    { label: "Wrap-up",     eyebrow: "Just called",  cls: "live" },
+  hours:     { label: "Waiting",     eyebrow: "Up next",      cls: "idle" },
+  paused:    { label: "Paused",      eyebrow: "Current lead", cls: "idle" },
+  off:       { label: "Manual",      eyebrow: "Current lead", cls: "idle" },
+};
+
+function campPhase(d) {
+  const c = d?.campaign;
+  if (kdActive()) return KD.phase === "live" ? "connected" : "calling";
+  if (c?.status === "paused") return "paused";
+  if (c?.status === "draft") return "waiting";
+  if (CAMP.awaitDispo) return "wrapup";
+  if (d?.current?.callTime?.waiting) return "hours";
+  if (!c && !(autoOn() && autoReady().ok)) return "off";
+  return "ready";
+}
+
+const CS_IC = {
+  phone: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>`,
+  copy: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`,
+  play: `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>`,
+  pause: `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4h4v16H6zM14 4h4v16h-4z"/></svg>`,
+  next: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>`,
+};
+
+/* The one action for the state the session is in. */
+function campAction(d, phase) {
+  const c = d.campaign, ready = autoReady();
+  if (c) {
+    if (c.status === "paused") return `<button type="button" class="cs-btn cs-primary" id="pd-resume">${CS_IC.play}<span>Resume</span></button>`;
+    if (c.status === "draft") return "";
+    if (c.status === "ongoing" && ready.ok && !CAMP.joined && !kdActive())
+      return `<button type="button" class="cs-btn cs-primary" id="pd-join">${CS_IC.play}<span>Start calling</span></button>`;
+    if (c.status === "ongoing")
+      return `<button type="button" class="cs-btn cs-dark" id="pd-pause" title="Take a break: nothing else rings until you resume">${CS_IC.pause}<span>Pause</span></button>`;
+    return "";
+  }
+  if (phase === "calling" || phase === "connected") return "";
+  if (CAMP.timer) return `<button type="button" class="cs-btn cs-dark" id="camp-auto-pause">${CS_IC.pause}<span>Pause</span></button>`;
+  return "";
+}
+
+/* What the state line in the bar says when nothing more specific is
+   running (countdowns and the wrap-up write their own text into it). */
+function campStateText(d) {
+  const c = d.campaign, ready = autoReady();
+  if (!ready.ok) return ready.why;
+  if (c) {
+    if (c.status === "paused") return campPausedText(c);
+    if (c.status === "draft") return "waiting for your manager to start it";
+    if (CAMP.awaitDispo) return "call ended — pick a disposition; the next lead rings once it's saved";
+    if (!CAMP.joined && !kdActive()) return "press Start calling — after that each lead rings by itself";
+    return `on — after each call and its disposition, the next lead rings in ${autoGap()}s`;
+  }
+  if (CAMP.awaitDispo) return "call ended — pick a disposition";
+  return autoOn() ? "auto-dial on — after each call, the next lead rings by itself" : "auto-dial off — press the number to call";
+}
+
+/* The progress bar: one segment per lead for a short list (as designed),
+   a single bar for a long one — a 50,000-lead campaign is not 50,000 ticks. */
+function campProgress(d) {
+  const total = Math.max(0, d.total), pos = Math.min(d.pos, total);
+  const label = `<div class="cs-prog-t"><b>${dashN(Math.min(pos + 1, total))} / ${dashN(total)} leads</b> · ${dashN(d.called)} called · ${dashN(d.connected)} connected${d.skipped ? ` · ${dashN(d.skipped)} skipped` : ""}</div>`;
+  if (total <= 24) return `${label}<div class="cs-segs" style="grid-template-columns:repeat(${total || 1},minmax(0,1fr))" aria-hidden="true">${
+    Array.from({ length: total || 1 }, (_, i) => `<span class="${i < pos ? "done" : i === pos ? "now" : ""}"></span>`).join("")}</div>`;
+  return `${label}<div class="cs-bar" aria-hidden="true"><i style="width:${total ? Math.round((pos / total) * 100) : 0}%"></i></div>`;
+}
+
 function renderCampaign(d) {
   const el = $("camp-body");
+  $("camp-pane")?.classList.add("cs-mode");
   if (d.done || !d.current) return renderCampDone(d);
 
   const r = fromApi(d.current.lead);
   const name = displayName(r, r._t);
   const b = d.current.brief;
-  const hook = b && b.congratulations && b.congratulations[0];
-  const pct = Math.round((d.pos / d.total) * 100);
-
+  const opener = (b && (b.congratulations?.[0] || b.talkingPoints?.[0])) || "";
+  const about = b && (b.whatTheyDo || b.headline);
   const c = d.campaign;
+  const phase = campPhase(d);
+  const look = CS_LOOK[phase];
   /* A rep cannot end a campaign their manager assigned — they can leave the
      screen, and it is waiting where they left it. */
   const canEnd = !c || isAdmin();
-  el.innerHTML = `
-    ${c ? `<div class="pd-camphead"><span class="pd-campname">${esc(c.name)}</span>
-      <span class="dash-mute">assigned by ${esc(c.createdBy || "your manager")}${c.callback
-        ? ` · calls show ${esc(c.callback.name)}'s number — callbacks ring ${esc(c.callback.name.split(" ")[0])}` : ""}</span></div>` : ""}
-    <div class="camp-bar">
-      <div class="camp-prog"><span style="width:${pct}%"></span></div>
-      <div class="camp-meta">
-        <b>${d.pos + 1}</b> of ${d.total}
-        · ${d.called} called · ${d.connected} connected${d.skipped ? ` · ${d.skipped} skipped` : ""}
-        ${!c && d.owner !== S.me?.email ? ` · ${esc(d.owner)}'s list` : ""}
-        <button class="btn-ghost camp-stop" id="camp-end">${canEnd ? "Stop" : "Leave"}</button>
+  const ct = d.current.callTime;
+  const meta = [[r.City, r.State].filter(Boolean).join(", "), r.Industry ? titleCase(r.Industry) : "",
+    r.Employees ? r.Employees.toLocaleString() + " employees" : "",
+    ct?.local ? `${ct.local} ${ct.zone}` : ""].filter(Boolean);
+  const last = d.current.lastCall;
+  const callerId = c?.callback
+    ? `<span class="cs-cid-k">Caller ID</span><span><b>${esc(c.callback.name)}</b> · callbacks ring ${esc(c.callback.name.split(" ")[0])}</span>`
+    : KD.callerId ? `<span class="cs-cid-k">Caller ID</span><span><b>${esc(kdFmtNum(KD.callerId))}</b> · your own number</span>` : "";
+
+  el.innerHTML = `<div class="cs-wrap">
+    <div class="cs-head">
+      <div class="cs-titles">
+        <h1>Call session</h1>
+        <div class="cs-sub">${c
+          ? `<b>${esc(c.name)}</b> · assigned by ${esc(c.createdBy || "your manager")}`
+          : `<b>${d.owner && d.owner !== S.me?.email ? esc(d.owner) + "'s list" : "Your list"}</b> · ${dashN(d.total)} leads, oldest-untouched first`}</div>
+      </div>
+      <div class="cs-headr">
+        ${callerId ? `<div class="cs-cid">${callerId}</div>` : ""}
+        <button type="button" class="cs-btn cs-quiet" id="camp-end" title="${canEnd ? "End this session" : "Leave — the campaign waits where you left it"}">${canEnd ? "Stop" : "Leave"}</button>
       </div>
     </div>
 
-    ${autoDialBar()}
+    <section class="cs-card${phase === "wrapup" ? " wrapping" : ""}" id="cs-card" aria-label="Power dialer">
+      <div class="cs-bar-top">
+        <div class="cs-brand"><span class="cs-brand-ic">${CS_IC.phone}</span><span>${c ? "Power dialer" : "Call session"}</span></div>
+        <div class="cs-pill ${look.cls}" id="cs-pill" role="status"><i class="${phase === "calling" ? "cs-pulse" : ""}"></i><span>${look.label}</span></div>
+        <span class="cs-spacer"></span>
+        ${!c ? `<label class="cs-auto" title="Ring the next lead by itself after each call">
+            <input type="checkbox" id="camp-auto" ${autoOn() && autoReady().ok ? "checked" : ""} ${autoReady().ok ? "" : "disabled"}>
+            <span>Auto-dial</span></label>
+          <label class="cs-gap" title="Seconds between calls">gap <input type="number" id="camp-gap" min="2" max="60" value="${autoGap()}"> s</label>` : ""}
+        <div class="cs-prog">${campProgress(d)}</div>
+        <span id="cs-act">${campAction(d, phase)}</span>
+        <button type="button" class="cs-btn cs-ghost camp-skip" id="camp-skip" title="Leave it untouched and move on"><span>Skip</span>${CS_IC.next}</button>
+      </div>
+      <div class="cs-status"><span id="camp-auto-state" class="camp-auto-state cs-msg">${esc(campStateText(d))}</span></div>
+      ${VOICE.mode === "copy" ? `<div class="cs-warn">No in-page phone on this Zoho account — numbers are copied for you; log each call below.</div>`
+        : VOICE.scopeWarning ? `<div class="cs-warn">${esc(VOICE.scopeWarning)}</div>` : ""}
 
-    <div class="act-card camp-card">
-      <div class="camp-head">
-        <div>
-          <h3 class="camp-name">${esc(name)}</h3>
-          <div class="camp-sub">${esc([r.City, r.State].filter(Boolean).join(", "))}
-            ${r.Industry ? " · " + esc(titleCase(r.Industry)) : ""}
-            ${r.Employees ? " · " + r.Employees.toLocaleString() + " staff" : ""}</div>
-          ${campLocalTime(d.current.callTime)}
+      <div class="cs-lead">
+        <div class="cs-eyebrow" id="cs-eyebrow">${look.eyebrow}</div>
+        <h2>${esc(name)}</h2>
+        <div class="cs-meta">${meta.map((m) => `<span>${esc(m)}</span>`).join(`<span aria-hidden="true">·</span>`)}${
+          ct && !ct.open && ct.local ? `<span class="cs-closed" title="Calls are allowed 8am–9pm in the lead's local time">outside calling hours</span>` : ""}${
+          ct?.deferred ? `<span class="cs-moved">${ct.deferred} lead${ct.deferred === 1 ? "" : "s"} it's too early or late for moved to later</span>` : ""}</div>
+        <div class="cs-phone-row">
+          <div class="cs-phone">
+            <span class="cs-phone-ic">${CS_IC.phone}</span>
+            <a class="dial camp-dial cs-num" href="tel:${esc(r.Phone)}" data-dial="${esc(r.Phone)}"
+               data-dial-id="${esc(r.Id)}" data-dial-name="${esc(name)}" title="Call ${esc(name)}">${esc(dashPhone(r.Phone) || r.Phone || "")}</a>
+            <button type="button" class="cs-btn cs-icon" data-cs-copy="${esc(r.Phone || "")}" aria-label="Copy phone number">${CS_IC.copy}</button>
+          </div>
+          ${last ? `<div class="cs-last"><span class="cs-out ${esc(last.to_value || "")}"><i></i>${esc(OUTCOME_WORDS[last.to_value] || last.to_value || "Called")}</span>
+            <span>Last called ${esc(relTime(last.at))} · ${esc(String(last.actor || "").split("@")[0])}</span></div>`
+            : `<div class="cs-last"><span class="cs-out"><i></i>Not called yet</span></div>`}
         </div>
-        <a class="dial camp-dial" href="tel:${esc(r.Phone)}" data-dial="${esc(r.Phone)}"
-           data-dial-id="${esc(r.Id)}" data-dial-name="${esc(name)}">☎ ${esc(r.Phone)}</a>
       </div>
 
-      ${d.current.lastCall ? `<p class="camp-last">Last called ${esc(relTime(d.current.lastCall.at))}
-        by ${esc(d.current.lastCall.actor)} — ${esc(d.current.lastCall.to_value || "")}</p>` : ""}
-
-      ${hook ? `<div class="camp-hook"><span class="rs-label">Opener</span>${esc(hook)}</div>` : ""}
-      ${b && b.headline ? `<p class="camp-brief">${esc(b.headline)}</p>` : ""}
-      ${d.current.notes.length ? `<div class="camp-notes">
-        <span class="rs-label">Recent notes</span>
-        ${d.current.notes.map((n) => `<p>${esc(n.body)} <i>— ${esc(n.author_email)}</i></p>`).join("")}
+      ${opener || about || d.current.notes.length ? `<div class="cs-info">
+        ${opener ? `<div class="cs-opener">
+          <div class="cs-k"><span>Opener</span>
+            <button type="button" class="cs-btn cs-mini" data-cs-copy="${esc(opener)}">${CS_IC.copy}<span>Copy</span></button></div>
+          <p>“${esc(opener)}”</p>
+        </div>` : ""}
+        <div class="cs-about">
+          ${about ? `<div class="cs-k"><span>About</span></div><p>${esc(about)}</p>${b?.size ? `<div class="cs-dim">${esc(b.size)}</div>` : ""}` : ""}
+          ${d.current.notes.length ? `<div class="cs-k cs-k2"><span>Recent notes</span></div>
+            ${d.current.notes.map((n) => `<p class="cs-note">${esc(n.body)} <i>— ${esc(String(n.author_email).split("@")[0])}</i></p>`).join("")}` : ""}
+        </div>
       </div>` : ""}
 
-      <textarea id="camp-note" class="camp-note" rows="2"
-        placeholder="What happened? (saved as a note on the lead)"></textarea>
-
-      <label class="camp-follow">
-        <input type="checkbox" id="camp-fu"> Remind me to follow back
-        <input type="datetime-local" id="camp-fu-when" disabled>
-      </label>
-
-      ${VOICE.crmOn ? `<details class="camp-crm">
-        <summary>＋ Add to Zoho CRM as a lead</summary>
-        <div class="camp-crm-row">
-          <input id="camp-crm-first" placeholder="First name" autocomplete="off" aria-label="First name">
-          <input id="camp-crm-last" placeholder="Last name" autocomplete="off" aria-label="Last name">
-          <input id="camp-crm-email" type="email" placeholder="Email (optional)" autocomplete="off" aria-label="Email">
+      <details class="cs-log"${VOICE.mode === "copy" || !autoReady().ok ? " open" : ""}>
+        <summary>Log this call yourself <span>— only for a call made some other way; the disposition after each call does it for you</span></summary>
+        <div class="cs-log-b">
+          <div class="cs-outs">
+            ${CAMP_OUTCOMES.map((o) => `<button type="button" class="cs-btn cs-chip camp-out${o.tone ? " " + o.tone : ""}"
+              data-out="${o.key}" data-status="${o.status}">${o.label}</button>`).join("")}
+            <button type="button" class="cs-btn cs-chip camp-out" data-out="not-interested" data-status="Not interested">Not interested</button>
+          </div>
+          <textarea id="camp-note" class="cs-note-in" rows="2" placeholder="What happened? (saved as a note on the lead)"></textarea>
+          <label class="cs-follow"><input type="checkbox" id="camp-fu"> Remind me to follow back
+            <input type="datetime-local" id="camp-fu-when" disabled></label>
+          ${VOICE.crmOn ? `<details class="camp-crm">
+            <summary>＋ Add to Zoho CRM as a lead</summary>
+            <div class="camp-crm-row">
+              <input id="camp-crm-first" placeholder="First name" autocomplete="off" aria-label="First name">
+              <input id="camp-crm-last" placeholder="Last name" autocomplete="off" aria-label="Last name">
+              <input id="camp-crm-email" type="email" placeholder="Email (optional)" autocomplete="off" aria-label="Email">
+            </div>
+          </details>` : ""}
         </div>
-        <p class="rc-how">After a connected call: a last name creates this person as a lead in Zoho CRM when you record the outcome. Already there? It's linked, not duplicated.</p>
-      </details>` : ""}
-
-      <div class="camp-actions">
-        ${CAMP_OUTCOMES.map((o) => `<button class="btn-secondary camp-out${o.tone ? " " + o.tone : ""}"
-          data-out="${o.key}" data-status="${o.status}">${o.label}</button>`).join("")}
-        <button class="btn-ghost camp-out" data-out="not-interested" data-status="Not interested">Not interested</button>
-        <button class="btn-ghost camp-skip" id="camp-skip" title="Leave it untouched and move on">Skip →</button>
-      </div>
-    </div>`;
+      </details>
+    </section>
+  </div>`;
 
   const fu = $("camp-fu"), fuWhen = $("camp-fu-when");
   fu.addEventListener("change", () => {
     fuWhen.disabled = !fu.checked;
     if (fu.checked && !fuWhen.value) fuWhen.value = toLocalInput(presetDate(FOLLOW_PRESETS[0]));
   });
-
   el.querySelectorAll(".camp-out").forEach((btn) =>
     btn.addEventListener("click", () => submitOutcome({
       outcome: btn.dataset.out === "not-interested" ? "connected" : btn.dataset.out,
@@ -6494,6 +6583,12 @@ function renderCampaign(d) {
     CAMP.joined = false;
     setTab("tasks");
   });
+  el.querySelectorAll("[data-cs-copy]").forEach((btn) => btn.addEventListener("click", () => {
+    copyText(btn.dataset.csCopy);
+    toast("Copied", 1500);
+  }));
+  $("cs-act").dataset.html = campAction(d, phase);
+  CAMP.lastPhase = phase;
   wireAutoDial(r, name);
   /* Nobody in reach can be called yet (calling hours): hold auto-dial and
      look again when the soonest lead's 8am comes round. */
@@ -6503,6 +6598,41 @@ function renderCampaign(d) {
      microphone, and every later call reuses that permission. */
   if (CAMP.advanced) armAutoDial(r, name);
   CAMP.advanced = false;
+}
+
+/* The phone moved on (ringing, answered, ended): keep the card's state,
+   eyebrow and action in step without repainting the lead — a note being
+   typed must survive a call connecting. Called from kdRender. */
+function campPaintLive() {
+  if (S.tab !== "camp" || !$("cs-card")) return;
+  const d = CAMP.s;
+  if (!d?.current) return;
+  const phase = campPhase(d), look = CS_LOOK[phase];
+  const pill = $("cs-pill");
+  if (pill && (pill.textContent.trim() !== look.label || !pill.classList.contains(look.cls))) {
+    pill.className = "cs-pill " + look.cls;
+    pill.innerHTML = `<i class="${phase === "calling" ? "cs-pulse" : ""}"></i><span>${look.label}</span>`;
+  }
+  const eb = $("cs-eyebrow");
+  if (eb) eb.textContent = look.eyebrow;
+  $("cs-card").classList.toggle("wrapping", phase === "wrapup");
+  const act = $("cs-act"), html = campAction(d, phase);
+  if (act && act.dataset.html !== html) {
+    act.dataset.html = html;
+    act.innerHTML = html;
+    const r = fromApi(d.current.lead);
+    wireCampAction(r, displayName(r, r._t));
+  }
+  /* The state line says what the phone is doing — once per change, so a
+     countdown or a calling-hours message written meanwhile is left alone. */
+  if (phase !== CAMP.lastPhase) {
+    CAMP.lastPhase = phase;
+    const st = $("camp-auto-state");
+    if (st && !CAMP.timer) st.textContent =
+      phase === "calling" ? `calling ${d.current.lead?.name || d.current.lead?.company || "the lead"}…`
+        : phase === "connected" ? "on the call — the disposition opens when you hang up"
+          : campStateText(d);
+  }
 }
 
 /* The lead's own clock, beside its name: what time it is where they are,
@@ -6574,6 +6704,7 @@ async function submitOutcome(extra) {
 
 function renderCampDone(d) {
   cancelAutoDial(); cancelWrap();
+  $("camp-pane")?.classList.remove("cs-mode");
   $("camp-body").innerHTML = `
     <div class="act-card camp-done">
       <h4>Session finished</h4>
@@ -10190,6 +10321,7 @@ async function pdRepCheck() {
   if (CAMP.s?.campaign && c && CAMP.s.id === c.id && CAMP.s.campaign.status !== c.status) {
     CAMP.s.campaign.status = c.status;
     CAMP.s.campaign.pausedBy = c.pausedBy || null;
+    campPaintLive();
     const idle = !kdActive() && !CAMP.wrapTimer && !CAMP.awaitDispo && !CAMP.busy;
     if (c.status !== "ongoing") cancelAutoDial("paused by your manager");
     if (S.tab === "camp" && idle) {
