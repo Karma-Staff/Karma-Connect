@@ -788,6 +788,8 @@ body.zv-collapsed .zohovoice-container { display: none !important; }
 .nav-count { margin-left: auto; font-size: 12px; color: var(--ink-3); font-weight: 500; }
 
 .nav-top { margin-bottom: 6px; }
+/* My settings: its own section, set apart from the groups above it */
+.nav-settings { margin-top: 10px; }
 .nav-group { display: flex; flex-direction: column; }
 .nav-group + .nav-group { margin-top: 2px; }
 .nav-group-h { color: var(--ink); font-weight: 600; }
