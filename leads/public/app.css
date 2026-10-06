@@ -2455,6 +2455,19 @@ label.check input[type="checkbox"] { width: auto; margin: 0; accent-color: var(-
 .pd-form input[type="checkbox"] { width: 16px; height: 16px; margin: 0; flex: none; accent-color: var(--accent); }
 .pd-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .pd-help { font-size: 11.5px; font-weight: 400; line-height: 1.45; color: var(--ink-3); }
+/* where a campaign's leads come from, and the unassign choice: one radio per row */
+.pd-source { border: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.pd-source legend { margin-bottom: 6px; font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
+.pd-choice { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--surface-2); font-size: 12.5px; line-height: 1.45;
+  font-weight: 400; color: var(--ink-2); cursor: pointer; }
+.pd-choice b { color: var(--ink); font-weight: 600; }
+.pd-choice:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.pd-choice:has(input:disabled) { opacity: .55; cursor: default; }
+.pd-form input[type="radio"] { width: 16px; height: 16px; margin: 2px 0 0; flex: none; accent-color: var(--accent); }
+.pd-count { margin: 14px 0 0; font-size: 13px; color: var(--ink-2); }
+.pd-count b { color: var(--ink); }
+.pd-by { display: block; margin-top: 3px; font-size: 11px; color: var(--ink-3); }
 
 /* the dialler's incoming-call state */
 .kd-incoming { display: flex; flex-direction: column; gap: 10px; animation: kd-pop .2s ease-out both; }

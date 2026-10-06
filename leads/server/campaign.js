@@ -19,7 +19,7 @@
    person's decision. */
 
 const express = require("express");
-const { query } = require("./db");
+const { query, tx } = require("./db");
 const { requireUser, requireAdmin, rankOf, RANK } = require("./auth");
 const { STATUSES } = require("./dedupe");
 const activity = require("./activity");
@@ -60,9 +60,16 @@ async function leadCard(id, actor) {
   };
 }
 
+/* A session row WITHOUT its lead list: the count and the one lead it is on.
+   A campaign holds up to 50,000 ids, and the rep's screen asks about its
+   session every 15 seconds — reading the whole array each time to use its
+   length and one element would move megabytes for nothing. */
+const COLS = `id, actor, owner, pos, filters, started_at, ended_at, called, connected, skipped,
+  cardinality(lead_ids) AS total, lead_ids[pos + 1] AS cur_id`;
+
 async function openSession(actor) {
   return (await query(
-    "SELECT * FROM call_sessions WHERE actor = $1 AND ended_at IS NULL", [actor])).rows[0] || null;
+    `SELECT ${COLS} FROM call_sessions WHERE actor = $1 AND ended_at IS NULL`, [actor])).rows[0] || null;
 }
 
 /* A manager's power-dialer campaign is a call session too — same snapshot of
@@ -77,12 +84,12 @@ const isCampaign = (s) => s?.filters?.kind === "campaign";
 function shape(s, card) {
   const f = s.filters || {};
   return {
-    id: s.id, owner: s.owner, pos: s.pos, total: s.lead_ids.length,
+    id: s.id, owner: s.owner, pos: s.pos, total: s.total,
     called: s.called, connected: s.connected, skipped: s.skipped,
     filters: f, startedAt: s.started_at,
-    done: s.pos >= s.lead_ids.length,
+    done: s.pos >= s.total,
     campaign: isCampaign(s) ? { name: f.name, status: f.status, createdBy: f.created_by,
-      gap: f.gap || null, callback: f.callback || null } : null,
+      gap: f.gap || null, callback: f.callback || null, pausedBy: f.paused_by || null } : null,
     current: card,
   };
 }
@@ -141,11 +148,11 @@ router.post("/api/campaign/start", requireUser, express.json({ limit: "4kb" }),
         [me(req)]);
       const s = (await query(
         `INSERT INTO call_sessions (actor, owner, lead_ids, filters)
-         VALUES ($1, $2, $3, $4) RETURNING *`,
+         VALUES ($1, $2, $3, $4) RETURNING ${COLS}`,
         [me(req), owner, rows.map((r) => r.id),
           JSON.stringify({ statuses: OPEN_STATUSES, hasPhone: true })])).rows[0];
 
-      res.json(shape(s, await leadCard(s.lead_ids[0], me(req))));
+      res.json(shape(s, await leadCard(s.cur_id, me(req))));
     } catch (e) { next(e); }
   });
 
@@ -155,7 +162,7 @@ router.get("/api/campaign/current", requireUser, async (req, res, next) => {
   try {
     const s = await openSession(me(req));
     if (!s) return res.json({ session: null });
-    const id = s.lead_ids[s.pos];
+    const id = s.cur_id;
     res.json(shape(s, id ? await leadCard(id, me(req)) : null));
   } catch (e) { next(e); }
 });
@@ -168,7 +175,7 @@ router.post("/api/campaign/outcome", requireUser, express.json({ limit: "8kb" })
     try {
       const s = await openSession(me(req));
       if (!s) return res.status(400).json({ error: "no session running" });
-      const id = s.lead_ids[s.pos];
+      const id = s.cur_id;
       if (!id) return res.json(shape(s, null));
 
       const b = req.body || {};
@@ -241,10 +248,10 @@ router.post("/api/campaign/outcome", requireUser, express.json({ limit: "8kb" })
         `UPDATE call_sessions
             SET pos = pos + 1,
                 called = called + $2, connected = connected + $3, skipped = skipped + $4
-          WHERE id = $1 RETURNING *`,
+          WHERE id = $1 RETURNING ${COLS}`,
         [s.id, skip ? 0 : 1, connected ? 1 : 0, skip ? 1 : 0])).rows[0];
 
-      const nid = next.lead_ids[next.pos];
+      const nid = next.cur_id;
       if (!nid) await query(
         `UPDATE call_sessions SET ended_at = now(),
                 filters = CASE WHEN filters->>'kind' = 'campaign'
@@ -262,7 +269,7 @@ router.get("/api/campaign/state", requireUser, async (req, res, next) => {
     if (!isCampaign(s)) return res.json({ campaign: null });
     res.json({ campaign: { id: s.id, name: s.filters.name, status: s.filters.status,
       createdBy: s.filters.created_by, gap: s.filters.gap || null, callback: s.filters.callback || null,
-      pos: s.pos, total: s.lead_ids.length } });
+      pos: s.pos, total: s.total, pausedBy: s.filters.paused_by || null } });
   } catch (e) { next(e); }
 });
 
@@ -274,7 +281,28 @@ router.post("/api/campaign/end", requireUser, async (req, res, next) => {
       return res.status(403).json({ error: "This campaign was assigned by a manager — only they can end it. You can simply leave this screen." });
     await query("UPDATE call_sessions SET ended_at = now() WHERE id = $1", [s.id]);
     res.json({ ended: true, called: s.called, connected: s.connected,
-      skipped: s.skipped, total: s.lead_ids.length, pos: s.pos });
+      skipped: s.skipped, total: s.total, pos: s.pos });
+  } catch (e) { next(e); }
+});
+
+/* A break: whoever is dialling a campaign — the rep it was given to, or a
+   manager working one themselves — can pause it and pick it back up. Ending
+   it stays the manager's (dialer/campaigns/:id/state). The pause is the same
+   one a manager's Pause sets, so the manager's list shows it, and who took
+   it (paused_by) so a paused campaign is never a mystery. */
+router.post("/api/campaign/pause", requireUser, express.json({ limit: "1kb" }), async (req, res, next) => {
+  try {
+    const s = await openSession(me(req));
+    if (!isCampaign(s)) return res.status(400).json({ error: "You have no campaign running." });
+    const resume = (req.body || {}).resume === true;
+    if (!resume && s.filters.status !== "ongoing")
+      return res.status(400).json({ error: "The campaign isn't running, so there is nothing to pause." });
+    if (resume && s.filters.status !== "paused")
+      return res.status(400).json({ error: "The campaign isn't paused." });
+    const f = resume ? { status: "ongoing", paused_by: null } : { status: "paused", paused_by: me(req) };
+    await query(`UPDATE call_sessions SET filters = filters || $2::jsonb WHERE id = $1 AND ended_at IS NULL`,
+      [s.id, JSON.stringify(f)]);
+    res.json({ ok: true, status: f.status });
   } catch (e) { next(e); }
 });
 
@@ -290,7 +318,10 @@ router.post("/api/campaign/end", requireUser, async (req, res, next) => {
    ongoing, auto-dial is on and the next lead rings a few seconds after each
    wrap-up; paused, it stops after the current call. Admin only. */
 
-const MAX_CAMPAIGN = 1000;
+/* 50,000 is a ceiling, not a target: a campaign is worked a lead at a time,
+   so its size only decides when it runs out. The rep's screen never reads
+   the list whole (see COLS). */
+const MAX_CAMPAIGN = 50000;
 const NAME_MAX = 80;
 const dash = require("./rc-dashboard");
 
@@ -340,6 +371,7 @@ router.get("/api/dialer/campaigns", requireAdmin, async (req, res, next) => {
       called: s.called, connected: s.connected, skipped: s.skipped,
       owner: s.owner, ownerName: s.owner_name, createdBy: s.filters.created_by, creatorName: s.creator_name,
       gap: s.filters.gap || null, callback: s.filters.callback || null,
+      pausedBy: s.filters.paused_by || null, source: s.filters.source || "assigned",
       createdAt: s.started_at, startedAt: s.filters.started || null, endedAt: s.ended_at,
     })).filter((c) => (!want || c.status === want)
       && (!q || [c.name, c.ownerName, c.owner, c.creatorName].some((x) => String(x || "").toLowerCase().includes(q))));
@@ -356,6 +388,11 @@ router.get("/api/dialer/campaigns/reps", requireAdmin, async (req, res, next) =>
              (SELECT count(*)::int FROM leads l
                WHERE btrim(l.owner) = u.email AND l.deleted_at IS NULL AND NOT l.removed
                  AND nullif(btrim(l.phone), '') IS NOT NULL AND l.status = ANY($1)) AS callable,
+             (SELECT jsonb_object_agg(status, n) FROM (
+                SELECT l.status, count(*)::int AS n FROM leads l
+                 WHERE btrim(l.owner) = u.email AND l.deleted_at IS NULL AND NOT l.removed
+                   AND nullif(btrim(l.phone), '') IS NOT NULL AND l.status = ANY($1)
+                 GROUP BY l.status) x) AS callable_by,
              (SELECT s.filters->>'name' FROM call_sessions s
                WHERE s.actor = u.email AND s.ended_at IS NULL LIMIT 1) AS busy_with,
              (SELECT s.filters->>'kind' FROM call_sessions s
@@ -363,7 +400,15 @@ router.get("/api/dialer/campaigns/reps", requireAdmin, async (req, res, next) =>
         FROM app_users u
        WHERE NOT u.disabled
        ORDER BY 2`, [OPEN_STATUSES]);
-    res.json({ reps: rows, statuses: OPEN_STATUSES, max: MAX_CAMPAIGN });
+    /* The pool a campaign can also be filled from: callable leads nobody owns,
+       counted per status so the form's number follows its tick-boxes. */
+    const pool = (await query(`
+      SELECT status, count(*)::int AS n FROM leads
+       WHERE nullif(btrim(owner), '') IS NULL AND deleted_at IS NULL AND NOT removed
+         AND nullif(btrim(phone), '') IS NOT NULL AND status = ANY($1)
+       GROUP BY status`, [OPEN_STATUSES])).rows;
+    const unassigned = Object.fromEntries(pool.map((r) => [r.status, r.n]));
+    res.json({ reps: rows, statuses: OPEN_STATUSES, max: MAX_CAMPAIGN, unassigned });
   } catch (e) { next(e); }
 });
 
@@ -385,15 +430,18 @@ router.post("/api/dialer/campaigns", requireAdmin, express.json({ limit: "4kb" }
       ? `${rep.email} already has the campaign "${open.filters.name}" open. End it before giving them another.`
       : `${rep.email} is in the middle of their own call session. Ask them to stop it first.` });
 
-    const ids = (await query(
+    /* Where the leads come from: the rep's own assigned leads, or callable
+       leads nobody owns — which become the rep's as the campaign is made. */
+    const source = b.source === "unassigned" ? "unassigned" : "assigned";
+    const ids = source === "assigned" ? (await query(
       `SELECT l.id FROM leads l
          LEFT JOIN recents r ON r.lead_id = l.id AND r.user_id = $3
         WHERE btrim(l.owner) = $1 AND l.deleted_at IS NULL AND NOT l.removed
           AND nullif(btrim(l.phone), '') IS NOT NULL
           AND l.status = ANY($2)
         ORDER BY r.touched_at ASC NULLS FIRST, l.date_added DESC NULLS LAST, l.id
-        LIMIT ${limit}`, [rep.email, statuses, rep.id])).rows.map((r) => r.id);
-    if (!ids.length) return res.status(400).json({
+        LIMIT ${limit}`, [rep.email, statuses, rep.id])).rows.map((r) => r.id) : null;
+    if (ids && !ids.length) return res.status(400).json({
       error: `${rep.email} has no assigned leads with a phone number and those statuses. Assign them some first.` });
 
     /* Who callbacks go to — checked against the phone system, never taken
@@ -406,12 +454,39 @@ router.post("/api/dialer/campaigns", requireAdmin, express.json({ limit: "4kb" }
     }
 
     const status = b.start ? "ongoing" : "draft";
-    const s = (await query(
-      `INSERT INTO call_sessions (actor, owner, lead_ids, filters)
-       VALUES ($1, $1, $2, $3) RETURNING *`,
-      [rep.email, ids, JSON.stringify({ kind: "campaign", name, created_by: me(req), status, gap,
-        statuses, hasPhone: true, callback, ...(b.start ? { started: new Date().toISOString() } : {}) })])).rows[0];
-    res.json({ ok: true, id: s.id, total: ids.length, status });
+    const filters = JSON.stringify({ kind: "campaign", name, created_by: me(req), status, gap, source,
+      statuses, hasPhone: true, callback, ...(b.start ? { started: new Date().toISOString() } : {}) });
+    const out = await tx(async (client) => {
+      let leadIds = ids;
+      if (source === "unassigned") {
+        /* Claim and assign in one statement, so two managers building at
+           once cannot hand the same lead to two reps. Newest first. */
+        leadIds = (await client.query(
+          `UPDATE leads SET owner = $1, updated_at = now()
+            WHERE id IN (SELECT id FROM leads
+                          WHERE nullif(btrim(owner), '') IS NULL AND deleted_at IS NULL AND NOT removed
+                            AND nullif(btrim(phone), '') IS NOT NULL AND status = ANY($2)
+                          ORDER BY date_added DESC NULLS LAST, id
+                          LIMIT ${limit}
+                          FOR UPDATE SKIP LOCKED)
+            RETURNING id`, [rep.email, statuses])).rows.map((r) => r.id);
+        if (!leadIds.length) return null;
+        await activity.log({
+          actor: me(req), user_id: req.user.id, action: "owner",
+          lead_name: `${leadIds.length} lead${leadIds.length === 1 ? "" : "s"}`, to_value: rep.email,
+          meta: { bulk: true, count: leadIds.length, owner: rep.email, campaign: name,
+            ...(leadIds.length <= 500 ? { ids: leadIds } : {}) },
+        }, client);
+      }
+      const row = (await client.query(
+        `INSERT INTO call_sessions (actor, owner, lead_ids, filters)
+         VALUES ($1, $1, $2, $3) RETURNING id`, [rep.email, leadIds, filters])).rows[0];
+      return { id: row.id, total: leadIds.length };
+    });
+    if (!out) return res.status(400).json({
+      error: "There are no unassigned leads with a phone number and those statuses." });
+    if (source === "unassigned") require("./counts").invalidate();   // the Unassigned tile moved
+    res.json({ ok: true, id: out.id, total: out.total, status, source });
   } catch (e) {
     /* the unique open-session index, if two managers raced */
     if (e.code === "23505") return res.status(409).json({ error: "That person was just given another session. Refresh and try again." });
@@ -436,9 +511,50 @@ router.post("/api/dialer/campaigns/:id/state", requireAdmin, express.json({ limi
     await query(
       `UPDATE call_sessions
           SET filters = filters || jsonb_build_object('status', $2::text,
-                'started', coalesce(filters->>'started', now()::text))
-        WHERE id = $1 AND ended_at IS NULL`, [id, to]);
+                'started', coalesce(filters->>'started', now()::text),
+                'paused_by', CASE WHEN $2 = 'paused' THEN $3::text END)
+        WHERE id = $1 AND ended_at IS NULL`, [id, to, me(req)]);
     res.json({ ok: true, status: to });
+  } catch (e) { next(e); }
+});
+
+/* Unassign a campaign's leads: they go back to the unassigned pool, off the
+   rep's book and out of any later campaign. Only leads still owned by the
+   campaign's rep are touched — one reassigned since belongs to someone else
+   now. "pending" is the leads not yet called; "all" adds the ones called.
+   A campaign still open loses its uncalled leads either way, so it ends:
+   a list that rings leads nobody owns any more would be wrong. */
+router.post("/api/dialer/campaigns/:id/unassign", requireAdmin, express.json({ limit: "1kb" }), async (req, res, next) => {
+  try {
+    const id = +req.params.id;
+    const which = (req.body || {}).which === "all" ? "all" : "pending";
+    const s = (await query(
+      `SELECT id, owner, pos, ended_at, filters, cardinality(lead_ids) AS total
+         FROM call_sessions WHERE id = $1 AND filters->>'kind' = 'campaign'`, [id])).rows[0];
+    if (!s) return res.status(404).json({ error: "No such campaign." });
+    if (!s.ended_at && s.filters.status === "ongoing")
+      return res.status(409).json({ error: "Pause the campaign first — it is ringing these leads right now." });
+    const out = await tx(async (client) => {
+      const changed = (await client.query(
+        `UPDATE leads SET owner = NULL, updated_at = now()
+          WHERE id IN (SELECT unnest(CASE WHEN $3 = 'all' THEN lead_ids ELSE lead_ids[pos + 1:] END)
+                         FROM call_sessions WHERE id = $1)
+            AND lower(btrim(owner)) = lower($2) AND deleted_at IS NULL
+          RETURNING id`, [id, s.owner, which])).rows.map((r) => r.id);
+      if (changed.length)
+        await activity.log({
+          actor: me(req), user_id: req.user.id, action: "owner",
+          lead_name: `${changed.length} lead${changed.length === 1 ? "" : "s"}`, to_value: "unassigned",
+          meta: { bulk: true, count: changed.length, owner: null, from: s.owner, campaign: s.filters.name,
+            ...(changed.length <= 500 ? { ids: changed } : {}) },
+        }, client);
+      if (!s.ended_at)
+        await client.query(`UPDATE call_sessions SET ended_at = now(),
+            filters = filters || '{"status":"ended"}'::jsonb WHERE id = $1`, [id]);
+      return changed.length;
+    });
+    require("./counts").invalidate();
+    res.json({ ok: true, unassigned: out, ended: !s.ended_at });
   } catch (e) { next(e); }
 });
 

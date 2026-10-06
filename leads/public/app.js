@@ -5799,12 +5799,13 @@ function autoDialBar() {
         <span class="pd-strip-tag"><i></i>Power dialer · ${esc(PD_STATUS[c.status]?.[0] || c.status)}</span>
         <span id="camp-auto-state" class="camp-auto-state">${
           !ready.ok ? esc(ready.why)
-            : c.status === "paused" ? "paused by your manager — finish this call; nothing else will ring"
+            : c.status === "paused" ? campPausedText(c)
               : c.status === "draft" ? "ready — waiting for your manager to start it"
                 : joinable ? "press Start calling — after that each lead rings by itself"
                   : `on — hang up and it logs the call and rings the next in ${autoGap()}s`}</span>
         ${joinable ? `<button type="button" class="btn-primary pd-join" id="pd-join">▶ Start calling</button>` : ""}
-        ${live && CAMP.joined ? `<button type="button" class="btn-ghost camp-auto-pause" id="camp-auto-pause">Pause me</button>` : ""}
+        ${live ? `<button type="button" class="btn-ghost camp-auto-pause" id="pd-pause" title="Take a break: nothing else rings until you resume">❚❚ Pause campaign</button>` : ""}
+        ${c.status === "paused" ? `<button type="button" class="btn-primary pd-join" id="pd-resume">▶ Resume</button>` : ""}
       </div>`;
   }
   const on = autoOn() && ready.ok;
@@ -5846,9 +5847,44 @@ function wireAutoDial(r, name) {
     cancelWrap();
     cancelAutoDial("paused — press the number when you are ready");
   });
+  $("pd-pause")?.addEventListener("click", () => campPause(false));
+  $("pd-resume")?.addEventListener("click", () => campPause(true));
   $("camp-gap")?.addEventListener("change", (e) => {
     try { localStorage.setItem("kl_camp_gap", String(e.target.value)); } catch (err) { /* fine */ }
   });
+}
+
+/* A break in a manager's campaign, taken by whoever is dialling it. It is
+   the campaign's own pause (POST /api/campaign/pause), so the manager's list
+   shows it and who took it; only the manager can end the campaign. */
+function campPausedText(c) {
+  const mine = c.pausedBy && S.me?.email && c.pausedBy.toLowerCase() === S.me.email.toLowerCase();
+  return mine ? "paused — you're on a break; press Resume when you're back"
+    : `paused by ${c.pausedBy || "your manager"} — finish this call; nothing else will ring`;
+}
+
+async function campPause(resume) {
+  const c = campOf();
+  if (!c) return;
+  if (!resume) { cancelWrap(); cancelAutoDial("pausing…"); }
+  try {
+    await api("/api/campaign/pause", { method: "POST", body: JSON.stringify({ resume }) });
+  } catch (e) { return toast("Couldn't " + (resume ? "resume" : "pause") + " — " + e.message, 6000); }
+  c.status = resume ? "ongoing" : "paused";
+  c.pausedBy = resume ? null : S.me?.email || null;
+  if (PDR.last) Object.assign(PDR.last, { status: c.status, pausedBy: c.pausedBy });
+  toast(resume ? "Resumed — the next lead rings by itself" : "Campaign paused — nothing else will ring", 4000);
+  if (kdActive() || CAMP.busy) {
+    const st = $("camp-auto-state");
+    if (st) st.textContent = resume ? "resumed — the next lead rings after this call" : campPausedText(c);
+    return;
+  }
+  const note = $("camp-note")?.value || "";
+  /* resumed after Join: carry straight on to the next lead, as a manager's
+     Resume does */
+  CAMP.advanced = resume && CAMP.joined;
+  renderCampaign(CAMP.s);
+  if ($("camp-note")) $("camp-note").value = note;
 }
 
 /* ---------------- Call session ----------------
@@ -9176,6 +9212,7 @@ function pdWire() {
     if (!b) return;
     const id = +b.dataset.pdId, act = b.dataset.pdAct;
     const c = PD.data?.list.find((x) => x.id === id);
+    if (act === "unassign") return c && openUnassign(c);
     if (act === "end" && !confirm(`End "${c?.name}"? ${c ? c.pending + " lead(s) not yet called will be dropped from it." : ""}`)) return;
     PD.busy.add(id); renderPower();
     try {
@@ -9207,10 +9244,11 @@ function renderPower() {
   const actions = (c) => {
     const dis = PD.busy.has(c.id) ? " disabled" : "";
     const btn = (act, label, cls = "btn-ghost") => `<button class="${cls} pd-btn" data-pd-act="${act}" data-pd-id="${c.id}"${dis}>${label}</button>`;
-    if (c.status === "draft") return btn("start", "▶ Start", "btn-primary") + btn("end", "Delete");
+    const un = btn("unassign", "Unassign leads");
+    if (c.status === "draft") return btn("start", "▶ Start", "btn-primary") + btn("end", "Delete") + un;
     if (c.status === "ongoing") return btn("pause", "❚❚ Pause") + btn("end", "End");
-    if (c.status === "paused") return btn("resume", "▶ Resume", "btn-primary") + btn("end", "End");
-    return `<span class="dash-mute">${c.endedAt ? esc(new Date(c.endedAt).toLocaleDateString([], { month: "short", day: "numeric" })) : ""}</span>`;
+    if (c.status === "paused") return btn("resume", "▶ Resume", "btn-primary") + btn("end", "End") + un;
+    return `<span class="dash-mute">${c.endedAt ? esc(new Date(c.endedAt).toLocaleDateString([], { month: "short", day: "numeric" })) : ""}</span>` + un;
   };
   body.innerHTML = `<div class="cl-tablewrap"><table class="cl-table pd-table">
     <thead><tr><th>Campaign</th><th class="n">Contacts</th><th class="n">Completed</th><th class="n">Pending</th>
@@ -9229,9 +9267,50 @@ function renderPower() {
         <td><span class="pd-who"><span class="live-av pd-av">${esc(initials(c.ownerName))}</span>${esc(c.ownerName)}</span></td>
         <td>${c.callback ? `<div class="cl-party"><b>${esc(c.callback.name)}</b><span>x${esc(c.callback.ext)} · ${esc(dashPhone(c.callback.number))}</span></div>`
           : `<span class="dash-mute">Rep's own number</span>`}</td>
-        <td><span class="pd-status ${cls}"><i></i>${esc(label)}</span></td>
+        <td><span class="pd-status ${cls}"><i></i>${esc(label)}</span>${
+          c.status === "paused" && c.pausedBy ? `<span class="pd-by">by ${esc(c.pausedBy)}</span>` : ""}</td>
         <td class="pd-acts">${actions(c)}</td></tr>`;
     }).join("")}</tbody></table></div>`;
+}
+
+/* Unassign a campaign's leads from its rep: back to the unassigned pool.
+   The server only touches leads that rep still owns, and ends a campaign
+   that is still open, since its uncalled leads are no longer theirs. */
+function openUnassign(c) {
+  const open = c.status === "draft" || c.status === "paused";
+  $("modal-title").textContent = `Unassign leads — ${c.name}`;
+  $("modal-body").innerHTML = `
+    <p class="modal-sub">The leads go back to <b>Unassigned</b>: off ${esc(c.ownerName)}'s list and out of any later campaign.
+      Leads since given to someone else are left alone.</p>
+    <form id="pd-un-form" class="pd-form">
+      <label class="pd-choice"><input type="radio" name="pd-un" value="pending" checked>
+        <span><b>Not yet called</b> · ${dashN(c.pending)} lead${c.pending === 1 ? "" : "s"}</span></label>
+      <label class="pd-choice"><input type="radio" name="pd-un" value="all">
+        <span><b>Every lead in this campaign</b> · ${dashN(c.total)}, including the ${dashN(c.completed)} already called</span></label>
+      ${open ? `<p class="pd-help">This campaign is still open, so it will be ended.</p>` : ""}
+      <div id="pd-un-err" class="login-error hidden"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="modal-cancel">Cancel</button>
+        <button type="submit" class="btn-primary" id="pd-un-go">Unassign</button>
+      </div>
+    </form>`;
+  $("modal-backdrop").classList.remove("hidden");
+  $("modal-cancel").addEventListener("click", closeModal);
+  $("pd-un-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = $("pd-un-go"), err = $("pd-un-err");
+    btn.disabled = true; btn.textContent = "Unassigning…";
+    try {
+      const which = document.querySelector('input[name="pd-un"]:checked').value;
+      const r = await api(`/api/dialer/campaigns/${c.id}/unassign`, { method: "POST", body: JSON.stringify({ which }) });
+      closeModal();
+      toast(`${dashN(r.unassigned)} lead${r.unassigned === 1 ? "" : "s"} unassigned${r.ended ? " — campaign ended" : ""}`, 5000);
+      pdFetch();
+    } catch (ex) {
+      err.textContent = ex.message; err.classList.remove("hidden");
+      btn.disabled = false; btn.textContent = "Unassign";
+    }
+  });
 }
 
 async function openNewCampaign() {
@@ -9244,9 +9323,11 @@ async function openNewCampaign() {
       api("/api/dialer/callback-targets").catch((e) => ({ targets: [], error: e.message }))]);
   } catch (e) { $("modal-body").innerHTML = `<p class="login-error">${esc(e.message)}</p>`; return; }
   const today = new Date().toLocaleDateString([], { day: "2-digit", month: "2-digit", year: "numeric" }).replace(/\D/g, "");
+  const pool = reps.unassigned || {};
+  const poolTotal = Object.values(pool).reduce((a, n) => a + n, 0);
   $("modal-body").innerHTML = `
-    <p class="modal-sub">The campaign takes the leads <b>assigned to one person</b> that have a phone number,
-      oldest-untouched first. When you press <b>Start</b>, their Call session rings each lead in turn —
+    <p class="modal-sub">Name it, pick who calls, and choose where the leads come from — only leads with a phone
+      number go in. When you press <b>Start</b>, their Call session rings each lead in turn —
       they join with one click, then it runs by itself.</p>
     <form id="pd-form" class="pd-form">
       <label class="modal-field">Campaign name
@@ -9254,7 +9335,7 @@ async function openNewCampaign() {
       <label class="modal-field">Assign to
         <select id="pd-owner" required>
           <option value="">Choose a person…</option>
-          ${reps.reps.map((r) => `<option value="${esc(r.email)}"${r.busy_with || !r.callable ? " disabled" : ""}>
+          ${reps.reps.map((r) => `<option value="${esc(r.email)}"${r.busy_with ? " disabled" : ""}>
             ${esc(r.name)} — ${r.callable ? dashN(r.callable) + " callable lead" + (r.callable === 1 ? "" : "s") : "no callable leads"}${
             r.busy_with ? ` (busy: ${esc(r.busy_kind === "campaign" ? r.busy_with : "own session")})` : ""}</option>`).join("")}
         </select></label>
@@ -9266,6 +9347,12 @@ async function openNewCampaign() {
         <span class="pd-help">${targets.error ? esc(targets.error)
           : "The campaign's calls show this person's number, so a lead who calls back rings them directly — and their dialler shows who it is."}</span>
       </label>
+      <fieldset class="modal-field pd-source"><legend>Leads</legend>
+        <label class="pd-choice"><input type="radio" name="pd-src" value="unassigned" ${poolTotal ? "checked" : "disabled"}>
+          <span><b>New unassigned leads</b> · ${dashN(poolTotal)} with a phone number — they're assigned to this person as the campaign is created</span></label>
+        <label class="pd-choice"><input type="radio" name="pd-src" value="assigned" ${poolTotal ? "" : "checked"}>
+          <span><b>Leads already assigned to this person</b>, oldest-untouched first</span></label>
+      </fieldset>
       <fieldset class="modal-field pd-statuses"><legend>Lead statuses to include</legend>
         ${reps.statuses.map((s) => `<label><input type="checkbox" name="pd-st" value="${esc(s)}" checked> ${esc(s)}</label>`).join("")}
       </fieldset>
@@ -9275,6 +9362,7 @@ async function openNewCampaign() {
         <label class="modal-field">Seconds between calls
           <input id="pd-gap" type="number" min="2" max="60" value="6"></label>
       </div>
+      <p class="pd-count" id="pd-count" aria-live="polite"></p>
       <label class="pd-startnow"><input type="checkbox" id="pd-start"> Start straight away</label>
       <div id="pd-err" class="login-error hidden"></div>
       <div class="modal-actions">
@@ -9284,6 +9372,24 @@ async function openNewCampaign() {
     </form>`;
   $("modal-cancel").addEventListener("click", closeModal);
   $("pd-name").focus();
+  /* How many leads this will be, as the form stands: the source's callable
+     leads in the ticked statuses, capped by Max contacts. */
+  const count = () => {
+    const src = document.querySelector('input[name="pd-src"]:checked')?.value;
+    const rep = reps.reps.find((r) => r.email === $("pd-owner").value);
+    const by = src === "unassigned" ? pool : rep?.callable_by || {};
+    const avail = [...document.querySelectorAll('input[name="pd-st"]:checked')].reduce((a, x) => a + (by[x.value] || 0), 0);
+    const n = Math.min(avail, Math.max(0, +$("pd-limit").value || 0));
+    const out = $("pd-count");
+    if (src === "assigned" && !rep) { out.textContent = "Choose a person to see how many of their leads go in."; return; }
+    out.innerHTML = n
+      ? `<b>${dashN(n)}</b> lead${n === 1 ? "" : "s"} will be in this campaign${avail > n ? ` (of ${dashN(avail)} available)` : ""}${
+          src === "unassigned" && rep ? ` and assigned to <b>${esc(rep.name)}</b>` : ""}.`
+      : `<span class="login-error">No ${src === "unassigned" ? "unassigned" : "assigned"} leads with a phone number in those statuses.</span>`;
+  };
+  $("pd-form").addEventListener("input", count);
+  $("pd-form").addEventListener("change", count);
+  count();
   $("pd-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const err = $("pd-err"), btn = $("pd-create");
@@ -9294,6 +9400,7 @@ async function openNewCampaign() {
         name: $("pd-name").value, owner: $("pd-owner").value,
         statuses: [...document.querySelectorAll('input[name="pd-st"]:checked')].map((x) => x.value),
         limit: +$("pd-limit").value, gap: +$("pd-gap").value, start: $("pd-start").checked,
+        source: document.querySelector('input[name="pd-src"]:checked')?.value || "assigned",
         callback_ext: $("pd-callback").value || undefined }) });
       closeModal();
       toast(`Campaign created with ${dashN(out.total)} lead${out.total === 1 ? "" : "s"}${out.status === "ongoing" ? " — started" : " — press Start when ready"}`, 5000);
@@ -9330,6 +9437,7 @@ async function pdRepCheck() {
   if (S.tab === "camp" && c && (!CAMP.s || CAMP.s.id !== c.id)) loadCampaign();
   if (CAMP.s?.campaign && c && CAMP.s.id === c.id && CAMP.s.campaign.status !== c.status) {
     CAMP.s.campaign.status = c.status;
+    CAMP.s.campaign.pausedBy = c.pausedBy || null;
     const idle = !kdActive() && !CAMP.wrapTimer && !CAMP.busy;
     if (c.status !== "ongoing") cancelAutoDial("paused by your manager");
     if (S.tab === "camp" && idle) {
@@ -9340,7 +9448,7 @@ async function pdRepCheck() {
       if ($("camp-note")) $("camp-note").value = note;
     } else if (S.tab === "camp" && c.status !== "ongoing") {
       const st = $("camp-auto-state");
-      if (st) st.textContent = "paused by your manager — finish this call; nothing else will ring";
+      if (st) st.textContent = campPausedText(CAMP.s.campaign);
     }
   }
   pdBanner(c && c.status === "ongoing" && S.tab !== "camp" && PDR.dismissed !== c.id + ":" + c.status ? c : null);
