@@ -66,6 +66,8 @@ const TABS = {
   research:  { title: "Prospect research", research: true },
   // live severe weather, scored for restoration and joined to the base
   storm:     { title: "Storm watch", storm: true },
+  // everyone's own phone, CRM, voicemail and audio — reps included
+  me:        { title: "My settings", me: true },
   // working an assigned list straight through, one lead at a time
   camp:      { title: "Call session", camp: true },
   // not in the sidebar: entered by clicking a segment tag in the reading pane
@@ -290,6 +292,7 @@ const PANES = {
   tasks:  "tasks-pane",
   research: "research-pane",
   storm: "storm-pane",
+  me: "me-pane",
   camp: "camp-pane",
 };
 const paneOf = (tab) => Object.keys(PANES).find((k) => TABS[tab]?.[k]) || null;
@@ -505,6 +508,7 @@ async function loadList(resetPage = false) {
   if (cfg.tasks) return loadTasks();
   if (cfg.research) return loadResearchCenter();
   if (cfg.storm) return loadStorm();
+  if (cfg.me) return loadMySettings();
   if (cfg.camp) return loadCampaign();
   // the armed tile is named in the header too: a list that is short because a
   // KPI tile is filtering it should never look like a list that is just short
@@ -6552,6 +6556,115 @@ async function endCampaign() {
 
 let STORM = { data: null, timer: null };
 
+/* ---------------- My settings ----------------
+   Each person's own connections, on a page every role can open — a sales
+   rep's RingCentral and Zoho CRM sign-ins used to live only on the Call
+   report, which is admin-only. The server already let anyone connect their
+   own (requireUser); this is the place to do it. Both sign-ins come back
+   here (?tab=me). */
+async function loadMySettings() {
+  const el = $("me-body");
+  if (!el) return;
+  el.innerHTML = `<p class="act-empty">Loading…</p>`;
+  await Promise.all([crmMeLoad().catch(() => {}), vmLoad().catch(() => {})]);
+  renderMySettings();
+}
+
+function renderMySettings() {
+  const el = $("me-body");
+  if (!el) return;
+  const rcFailed = VOICE.rcEnabled && VOICE.rcConnected && VOICE.rcError;
+  const rc = !VOICE.rcEnabled
+    ? `<p class="me-state">RingCentral isn't set up on this server yet — ask an admin.</p>`
+    : rcFailed
+      ? `<p class="me-state bad"><span class="me-dot bad"></span>Connected, but the phone didn't register: ${esc(VOICE.rcError)}</p>
+         <div class="me-acts"><a class="btn-primary" href="/api/voice/rc/connect">Reconnect</a>
+           <button class="btn-ghost" data-me="rc-off">Disconnect</button></div>`
+      : VOICE.rcConnected
+        ? `<p class="me-state ok"><span class="me-dot ok"></span>Connected${VOICE.rcExtension ? " · extension " + esc(VOICE.rcExtension) : ""}${
+            VOICE.sandbox ? " · sandbox, test numbers only" : ""}</p>
+           <div class="me-acts"><a class="btn-ghost" href="/api/voice/rc/connect">Switch account</a>
+             <button class="btn-ghost" data-me="rc-off">Disconnect</button></div>`
+        : `<p class="me-state"><span class="me-dot"></span>Not connected — calls can't go out from the dialler yet.</p>
+           <div class="me-acts"><a class="btn-primary" href="/api/voice/rc/connect">Connect RingCentral</a></div>`;
+
+  const c = CRMME;
+  const crm = !c ? `<p class="me-state">Couldn't check Zoho CRM right now.</p>`
+    : !c.enabled ? `<p class="me-state">Personal Zoho CRM sign-in isn't set up on this server — your calls and leads go into Zoho under the shared account.</p>`
+      : c.connected && c.lastError
+        ? `<p class="me-state bad"><span class="me-dot bad"></span>Zoho refused your sign-in: ${esc(c.lastError)} — your calls are going in under the shared account.</p>
+           <div class="me-acts"><a class="btn-primary" href="${esc(c.connectUrl)}">Reconnect Zoho CRM</a>
+             <button class="btn-ghost" data-me="crm-off">Disconnect</button></div>`
+        : c.connected
+          ? `<p class="me-state ok"><span class="me-dot ok"></span>Connected${c.name || c.email ? " as " + esc(c.name || c.email) : ""} — your calls and leads are filed under you</p>
+             <div class="me-acts"><button class="btn-ghost" data-me="crm-off">Disconnect</button></div>`
+          : `<p class="me-state"><span class="me-dot"></span>Not connected — your calls and leads go into Zoho under the shared account.</p>
+             <div class="me-acts"><a class="btn-primary" href="${esc(c.connectUrl)}">Connect Zoho CRM</a></div>`;
+
+  const vm = VM.meta?.has
+    ? `<p class="me-state ok"><span class="me-dot ok"></span>Recorded${VM.meta.seconds ? " · " + vmClock(VM.meta.seconds) : ""}${VM.meta.updatedAt ? " · " + esc(relTime(VM.meta.updatedAt)) : ""}</p>`
+    : `<p class="me-state"><span class="me-dot"></span>Not recorded yet — record it once, then drop it on any call that reaches voicemail.</p>`;
+
+  const me = S.me || {};
+  el.innerHTML = `<div class="me-grid">
+    <div class="act-card me-card">
+      <h4>Phone — RingCentral</h4>
+      <p class="me-why">Sign in with your own RingCentral account so calls go out from your extension, with your caller ID, in your call log.</p>
+      ${rc}
+    </div>
+    <div class="act-card me-card">
+      <h4>Zoho CRM</h4>
+      <p class="me-why">Connect your own Zoho CRM so the calls and leads you create are filed under you, not the shared account.</p>
+      ${crm}
+    </div>
+    <div class="act-card me-card">
+      <h4>Voicemail drop</h4>
+      <p class="me-why">The message played when you press VM drop on a call that reaches voicemail.</p>
+      ${vm}
+      <div class="me-acts"><button class="${VM.meta?.has ? "btn-ghost" : "btn-primary"}" data-me="vm">${VM.meta?.has ? "Change it" : "Record it"}</button></div>
+    </div>
+    <div class="act-card me-card">
+      <h4>Microphone &amp; speaker</h4>
+      <p class="me-why">Pick your headset, test the microphone, and choose where calls play.</p>
+      <div class="me-acts"><button class="btn-ghost" data-me="audio">Open audio settings</button></div>
+    </div>
+    <div class="act-card me-card">
+      <h4>Your account</h4>
+      <p class="me-state">${esc(me.display_name || me.email || "")}${me.display_name ? ` · ${esc(me.email)}` : ""}</p>
+      <p class="me-why">Access: <b>${esc(roleLabel(me.role || "member"))}</b>${isAdmin() ? "" : " — an admin changes this in Manage team."}</p>
+    </div>
+  </div>`;
+}
+
+/* The dialler holds the voicemail recorder and the audio picker: open it
+   on the right page rather than building them twice. */
+function meOpenDialler(stab) {
+  rcPanelToggle(true);
+  KD.view = "settings"; KD.stab = stab;
+  if (stab === "audio") kdLoadDevices();
+  kdRender();
+}
+
+async function meAction(what) {
+  if (what === "vm") return meOpenDialler("vm");
+  if (what === "audio") return meOpenDialler("audio");
+  if (what === "rc-off") {
+    if (!confirm("Disconnect RingCentral? You won't be able to dial from Karma Connect until you connect again.")) return;
+    try {
+      await api("/api/voice/rc/connect", { method: "DELETE" });
+      VOICE.rcConnected = false; VOICE.provider = ""; VOICE.ready = false;
+      toast("RingCentral disconnected");
+    } catch (e) { toast("Could not disconnect: " + e.message, 8000); }
+    return renderMySettings();
+  }
+  if (what === "crm-off") {
+    if (!confirm("Disconnect Zoho CRM? Your calls and leads will go into Zoho under the shared account until you connect again.")) return;
+    try { await api("/api/crm/me/connect", { method: "DELETE" }); toast("Zoho CRM disconnected"); }
+    catch (e) { toast("Could not disconnect: " + e.message, 8000); }
+    return loadMySettings();
+  }
+}
+
 async function loadStorm() {
   const el = $("storm-body");
   if (!el) return;
@@ -8398,6 +8511,8 @@ function wire() {
   on("tasks-refresh", "click", loadTasks);
   on("research-refresh", "click", loadResearchCenter);
   on("storm-refresh", "click", () => { STORM.data = null; loadStorm(); });
+  /* My settings: connect / disconnect / open the dialler's recorder and audio */
+  $("me-body")?.addEventListener("click", (e) => { const b = e.target.closest("[data-me]"); if (b) meAction(b.dataset.me); });
   on("calls-refresh", "click", () => loadCallReport());
   on("calls-live", "click", toggleCallPolling);
   on("calls-minutes", "change", () => loadCallReport());
@@ -10640,6 +10755,13 @@ async function init() {
     setTimeout(() => toast(ok ? "Zoho CRM connected — your calls and leads will be filed under you"
       : "Zoho CRM didn't connect: " + (msg || "unknown error"), ok ? 5000 : 9000), 600);
     usp.delete("crm"); usp.delete("msg");
+    history.replaceState(null, "", location.pathname + (usp.toString() ? "?" + usp.toString() : ""));
+  }
+  if (usp.get("rc")) {
+    const ok = usp.get("rc") === "ok", msg = usp.get("msg") || "";
+    setTimeout(() => toast(ok ? "RingCentral connected — you dial from your own extension"
+      : "RingCentral didn't connect: " + (msg || "unknown error"), ok ? 5000 : 9000), 600);
+    usp.delete("rc"); usp.delete("msg");
     history.replaceState(null, "", location.pathname + (usp.toString() ? "?" + usp.toString() : ""));
   }
   if (usp.get("theme") !== null) localStorage.setItem("kl_theme", usp.get("theme"));

@@ -138,7 +138,7 @@ router.get("/api/voice/rc/connect", requireUser, (req, res) => {
 
 router.get("/api/voice/rc/callback", async (req, res, next) => {
   const back = (msg, ok) => res.redirect(
-    "/leads/?tab=calls&rc=" + (ok ? "ok" : "error")
+    "/leads/?tab=me&rc=" + (ok ? "ok" : "error")
     + (msg ? "&msg=" + encodeURIComponent(String(msg).slice(0, 160)) : ""));
   try {
     if (req.query.error) return back(req.query.error_description || req.query.error);

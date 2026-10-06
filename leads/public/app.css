@@ -3124,6 +3124,19 @@ label.check input[type="checkbox"] { width: auto; margin: 0; accent-color: var(-
 .kd-miss-btn svg { width: 13px; height: 13px; }
 .kd-miss-btn.call { background: var(--kd-live); border-color: var(--kd-live); color: #062014; font-weight: 600; }
 .kd-miss-audio audio { width: 100%; height: 32px; margin-top: 6px; }
+/* My settings */
+.me-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
+.me-card h4 { margin-bottom: 6px; }
+.me-why { font-size: 12.5px; line-height: 1.5; color: var(--ink-3); margin: 0 0 10px; }
+.me-state { display: flex; align-items: center; gap: 8px; font-size: 13px; margin: 0 0 10px; color: var(--ink-2); line-height: 1.45; }
+.me-state.ok { color: var(--ink); }
+.me-state.bad { color: #ffb4ab; }
+.me-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); }
+.me-dot.ok { background: var(--good); }
+.me-dot.bad { background: #ff6b5e; }
+.me-acts { display: flex; flex-wrap: wrap; gap: 8px; }
+.me-acts .btn-primary, .me-acts .btn-ghost { height: 32px; padding: 0 14px; font-size: 12.5px;
+  display: inline-flex; align-items: center; text-decoration: none; }
 .kd-fu-check { display: flex !important; align-items: center; gap: 8px; cursor: pointer; }
 .kd-fu-check input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
 #kd-fu-when { margin-top: 8px; }

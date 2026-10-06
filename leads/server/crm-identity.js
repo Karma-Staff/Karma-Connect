@@ -103,7 +103,7 @@ router.get("/api/crm/me/connect", requireUser, (req, res) => {
 });
 
 router.get("/api/crm/oauth/callback", async (req, res) => {
-  const back = (msg, ok) => res.redirect("/leads/?tab=calls&crm=" + (ok ? "ok" : "error")
+  const back = (msg, ok) => res.redirect("/leads/?tab=me&crm=" + (ok ? "ok" : "error")
     + (msg ? "&msg=" + encodeURIComponent(String(msg).slice(0, 160)) : ""));
   try {
     if (req.query.error) return back(req.query.error === "access_denied"
