@@ -147,10 +147,10 @@ declared once for the group.
 | GET | `/api/crm/people` | admin | [leads/server/crm-identity.js:269](../../leads/server/crm-identity.js#L269) | Who has connected — the manager's answer to "why are this rep's calls still under the shared… |
 | GET | `/api/crm/preview` | admin | [leads/server/zoho-crm.js:153](../../leads/server/zoho-crm.js#L153) | How much of our own base would ever reach the CRM. |
 | GET | `/api/crm/status` | admin | [leads/server/zoho-crm.js:103](../../leads/server/zoho-crm.js#L103) | GET /api/crm/status — is it connected, and what is actually in there. |
-| GET | `/api/crm/sync` | admin | [leads/server/crm-sync.js:394](../../leads/server/crm-sync.js#L394) |  |
-| PUT | `/api/crm/sync` | owner | [leads/server/crm-sync.js:427](../../leads/server/crm-sync.js#L427) |  |
-| GET | `/api/crm/sync/on` | signed in | [leads/server/crm-sync.js:423](../../leads/server/crm-sync.js#L423) | Just "is it on" — for a rep's wrap-up, which offers "Create CRM lead" only when there is some… |
-| GET | `/api/crm/sync/preview` | admin | [leads/server/crm-sync.js:443](../../leads/server/crm-sync.js#L443) | The exact payloads the next calls would produce. |
+| GET | `/api/crm/sync` | admin | [leads/server/crm-sync.js:401](../../leads/server/crm-sync.js#L401) |  |
+| PUT | `/api/crm/sync` | owner | [leads/server/crm-sync.js:444](../../leads/server/crm-sync.js#L444) |  |
+| GET | `/api/crm/sync/on` | signed in | [leads/server/crm-sync.js:440](../../leads/server/crm-sync.js#L440) | Just "is it on" — for a rep's wrap-up, which offers "Create CRM lead" only when there is some… |
+| GET | `/api/crm/sync/preview` | admin | [leads/server/crm-sync.js:460](../../leads/server/crm-sync.js#L460) | The exact payloads the next calls would produce. |
 
 ### `/api/cron`
 
@@ -214,7 +214,7 @@ declared once for the group.
 | POST | `/api/leads/:id/call` | signed in, own lead *(inherited)* | [leads/server/calls.js:99](../../leads/server/calls.js#L99) | POST /api/leads/:id/call — the softphone reporting how a call went. |
 | GET | `/api/leads/:id/comments` | own lead *(inherited)* | [leads/server/leads.js:442](../../leads/server/leads.js#L442) |  |
 | POST | `/api/leads/:id/comments` | own lead *(inherited)* | [leads/server/leads.js:453](../../leads/server/leads.js#L453) |  |
-| POST | `/api/leads/:id/crm-lead` | signed in, own lead *(inherited)* | [leads/server/crm-sync.js:531](../../leads/server/crm-sync.js#L531) |  |
+| POST | `/api/leads/:id/crm-lead` | signed in, own lead *(inherited)* | [leads/server/crm-sync.js:548](../../leads/server/crm-sync.js#L548) |  |
 | GET | `/api/leads/:id/delete-preview` | admin, own lead *(inherited)* | [leads/server/trash.js:94](../../leads/server/trash.js#L94) | what the confirm modal shows before the click: |
 | POST | `/api/leads/:id/disposition` | signed in, own lead *(inherited)* | [leads/server/calls.js:176](../../leads/server/calls.js#L176) |  |
 | GET | `/api/leads/:id/followup` | signed in, own lead *(inherited)* | [leads/server/followups.js:104](../../leads/server/followups.js#L104) | What is set on this lead right now — the reading pane asks on every open. |
@@ -303,18 +303,18 @@ declared once for the group.
 | GET | `/api/voice/providers` | signed in | [leads/server/voice.js:234](../../leads/server/voice.js#L234) | GET/PUT /api/voice/providers — which telephony providers are on offer. |
 | PUT | `/api/voice/providers` | owner | [leads/server/voice.js:251](../../leads/server/voice.js#L251) |  |
 | GET | `/api/voice/rc/callback` | — | [leads/server/ringcentral.js:139](../../leads/server/ringcentral.js#L139) |  |
-| GET | `/api/voice/rc/calllog` | admin | [leads/server/calllogs.js:188](../../leads/server/calllogs.js#L188) |  |
+| GET | `/api/voice/rc/calllog` | admin | [leads/server/calllogs.js:191](../../leads/server/calllogs.js#L191) |  |
 | GET | `/api/voice/rc/connect` | signed in | [leads/server/ringcentral.js:128](../../leads/server/ringcentral.js#L128) |  |
 | DELETE | `/api/voice/rc/connect` | signed in | [leads/server/ringcentral.js:313](../../leads/server/ringcentral.js#L313) |  |
-| GET | `/api/voice/rc/dashboard` | admin | [leads/server/rc-dashboard.js:285](../../leads/server/rc-dashboard.js#L285) |  |
+| GET | `/api/voice/rc/dashboard` | admin | [leads/server/rc-dashboard.js:293](../../leads/server/rc-dashboard.js#L293) |  |
 | GET | `/api/voice/rc/extensions` | signed in | [leads/server/ringcentral.js:378](../../leads/server/ringcentral.js#L378) | GET /api/voice/rc/extensions — who a rep can transfer a live call to. |
 | GET | `/api/voice/rc/me` | signed in | [leads/server/ringcentral.js:346](../../leads/server/ringcentral.js#L346) | GET /api/voice/rc/me — what this rep's own seat is, for the dialler header. |
-| GET | `/api/voice/rc/recording/:id` | admin | [leads/server/calllogs.js:257](../../leads/server/calllogs.js#L257) |  |
+| GET | `/api/voice/rc/recording/:id` | admin | [leads/server/calllogs.js:260](../../leads/server/calllogs.js#L260) |  |
 | POST | `/api/voice/rc/session` | signed in | [leads/server/ringcentral.js:275](../../leads/server/ringcentral.js#L275) | POST /api/voice/rc/session — everything the browser needs to register a softphone, and nothin… |
 | GET | `/api/voice/rc/status` | signed in | [leads/server/ringcentral.js:257](../../leads/server/ringcentral.js#L257) |  |
 | GET | `/api/voice/rc/team` | admin | [leads/server/ringcentral.js:323](../../leads/server/ringcentral.js#L323) | Who on the team has a working phone. |
 | GET | `/api/voice/rc/users` | admin | [leads/server/users-dir.js:197](../../leads/server/users-dir.js#L197) |  |
-| GET | `/api/voice/rec/:id/:sig.mp3` | — | [leads/server/calllogs.js:358](../../leads/server/calllogs.js#L358) |  |
+| GET | `/api/voice/rec/:id/:sig.mp3` | — | [leads/server/calllogs.js:361](../../leads/server/calllogs.js#L361) |  |
 | POST | `/api/voice/token` | signed in | [leads/server/voice.js:199](../../leads/server/voice.js#L199) | The SDK's oAuthCallBack fetches this. |
 | GET | `/api/voice/vmdrop` | signed in | [leads/server/vm-drop.js:29](../../leads/server/vm-drop.js#L29) |  |
 | PUT | `/api/voice/vmdrop` | signed in | [leads/server/vm-drop.js:50](../../leads/server/vm-drop.js#L50) |  |

@@ -55,14 +55,19 @@ async function rcGet(userId, path, params = {}) {
 }
 
 /* A small TTL cache with in-flight de-duplication: two admins opening the
-   dashboard in the same second make one request, not two. */
+   dashboard in the same second make one request, not two.
+
+   maxAgeMs, when given, is a refresh: a copy older than that is read again
+   even inside its TTL. Something younger is still served, so a Refresh
+   button pressed over and over cannot spend RingCentral's rate limit. */
 const CACHE = new Map();
-function cached(key, ttlMs, fn) {
+function cached(key, ttlMs, fn, maxAgeMs) {
   const hit = CACHE.get(key);
   if (hit?.pending) return hit.pending;
-  if (hit && hit.until > Date.now()) return Promise.resolve(hit.value);
+  if (hit && hit.until > Date.now()
+      && !(maxAgeMs != null && hit.at < Date.now() - maxAgeMs)) return Promise.resolve(hit.value);
   const pending = fn().then(
-    (value) => { CACHE.set(key, { value, until: Date.now() + ttlMs }); return value; },
+    (value) => { CACHE.set(key, { value, at: Date.now(), until: Date.now() + ttlMs }); return value; },
     (e) => {
       /* Serve the last good copy through a rate limit or a blip rather than
          blanking a screen someone is watching. */
@@ -119,8 +124,11 @@ const isYmd = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ""));
 
 /* ---------------- fetching ---------------- */
 
-/* One local day of the call log, slimmed to the fields the charts use. */
-async function fetchDay(userId, ymd, tz, scope) {
+/* One local day of the call log, slimmed to the fields the charts use.
+   fresh: re-read a day still in progress unless it was read in the last
+   ten seconds. A finished day cannot change, so it is never re-read. */
+const FRESH_MIN_MS = 10e3;
+async function fetchDay(userId, ymd, tz, scope, fresh = false) {
   const from = localMidnight(ymd, tz);
   const to = localMidnight(addDays(ymd, 1), tz);
   const done = to <= Date.now();
@@ -150,7 +158,7 @@ async function fetchDay(userId, ymd, tz, scope) {
       if (!d.navigation?.nextPage || (d.records || []).length < PAGE) break;
     }
     return out;
-  });
+  }, fresh && !done ? FRESH_MIN_MS : undefined);
 }
 
 const extensions = (userId) => cached("ext", 10 * 60e3, async () => {

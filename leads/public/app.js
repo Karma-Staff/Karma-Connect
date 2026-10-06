@@ -8809,14 +8809,14 @@ function clQuery(extra = {}) {
   return q;
 }
 
-async function loadCallLog() {
+async function loadCallLog(fresh = false) {
   clWire();
   const body = $("cl-body");
   if (!CL.data) body.innerHTML = `<div class="dash-empty"><div class="dash-spin"></div>Reading the call log from RingCentral…</div>`;
   else body.classList.add("dash-stale");
   const seq = ++CL.seq;                     // a slow answer to an old search never overwrites a newer one
   try {
-    const d = await api("/api/voice/rc/calllog?" + clQuery());
+    const d = await api("/api/voice/rc/calllog?" + clQuery(fresh ? { fresh: 1 } : {}));
     if (seq !== CL.seq) return;
     CL.data = d; CL.error = null;
   } catch (e) {
@@ -8825,12 +8825,20 @@ async function loadCallLog() {
   }
   body.classList.remove("dash-stale");
   renderCallLog();
+  if (fresh) toast(CL.error ? "Couldn't refresh — " + CL.error : "Call logs refreshed");
 }
 
 function clWire() {
   if (CL.wired) return;
   CL.wired = true;
   on("cl-crm", "click", openCrmSync);
+  /* Same page, same filters — only newer. Disabled while it reads so a
+     double click is one request. */
+  on("cl-refresh", "click", async (e) => {
+    const b = e.currentTarget;
+    b.disabled = true; b.textContent = "Refreshing…";
+    try { await loadCallLog(true); } finally { b.disabled = false; b.textContent = "Refresh"; }
+  });
   crmPaintChip();
   const reload = () => { CL.page = 1; loadCallLog(); };
   on("cl-preset", "change", (e) => {

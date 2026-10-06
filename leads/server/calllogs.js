@@ -92,15 +92,18 @@ async function buildRows(req) {
   const days = [];
   for (let d = from; d <= to && days.length < MAX_DAYS; d = dash.addDays(d, 1)) days.push(d);
 
+  /* ?fresh=1 is the Refresh button: today is re-read rather than served
+     from its one-minute cache (finished days cannot change). */
+  const fresh = req.query.fresh === "1";
   const warnings = [];
   let calls = [], scope = "account", loaded = 0;
   for (const d of days) {
-    try { calls.push(...await dash.fetchDay(uid, d, tz, scope)); loaded++; }
+    try { calls.push(...await dash.fetchDay(uid, d, tz, scope, fresh)); loaded++; }
     catch (e) {
       if (e.status === 403 && scope === "account" && loaded === 0) {
         scope = "extension";
         warnings.push("Your RingCentral user can't read the whole company's call log, so these are only your own calls.");
-        calls.push(...await dash.fetchDay(uid, d, tz, scope)); loaded++;
+        calls.push(...await dash.fetchDay(uid, d, tz, scope, fresh)); loaded++;
         continue;
       }
       if (e.status === 429) {
