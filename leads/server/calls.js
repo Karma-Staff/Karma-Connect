@@ -90,6 +90,7 @@ const LIVE_TODAY = `
 const OUTCOMES = ["connected", "no-answer", "busy", "failed", "cancelled", "placed"];
 // a call longer than this is a forgotten tab, not a conversation
 const MAX_SECONDS = 4 * 60 * 60;
+const digits10 = (s) => String(s || "").replace(/\D/g, "").slice(-10);
 
 /* POST /api/leads/:id/call — the softphone reporting how a call went.
    Mounted under /api/leads/:id, so leads.js's requireOwnLead has already
@@ -104,35 +105,50 @@ router.post("/api/leads/:id/call", requireUser, express.json({ limit: "4kb" }),
         "SELECT id, lead_code, name, owner FROM leads WHERE id = $1 AND deleted_at IS NULL",
         [id])).rows[0];
       if (!lead) return res.status(404).json({ error: "no such lead" });
-
-      const b = req.body || {};
-      const outcome = OUTCOMES.includes(b.outcome) ? b.outcome : "failed";
-      const seconds = Math.max(0, Math.min(MAX_SECONDS, Math.floor(Number(b.seconds) || 0)));
-
-      await activity.log({
-        actor: req.user.email,
-        user_id: req.user.id,
-        action: "call",
-        lead_id: lead.id,
-        lead_code: lead.lead_code,
-        lead_name: lead.name,
-        to_value: outcome,           // shown directly in the activity feed
-        meta: {
-          outcome,
-          seconds,
-          provider: String(b.provider || "zoho").slice(0, 24),
-          /* a callback answered in the dialler is logged too, marked inbound;
-             a power-dialer call carries whose number it showed */
-          ...(b.direction === "inbound" ? { direction: "inbound" } : {}),
-          ...(b.callback_ext ? { callback_ext: String(b.callback_ext).slice(0, 12) } : {}),
-          ...(b.campaign ? { campaign: String(b.campaign).slice(0, 80) } : {}),
-          call_id: b.call_id ? String(b.call_id).slice(0, 120) : null,
-          number: b.number ? String(b.number).slice(0, 32) : null,
-        },
-      });
-      res.json({ ok: true, outcome, seconds });
+      res.json(await logCall(req, lead));
     } catch (e) { next(e); }
   });
+
+/* POST /api/calls/log — the same, for a number that is no lead's: one typed
+   on the keypad, or an unknown caller answered. Without a row the call was
+   invisible — not in the report and never sent to Zoho CRM, whose sweeper
+   works from these rows and finds the CRM record by number on its own. */
+router.post("/api/calls/log", requireUser, express.json({ limit: "4kb" }),
+  async (req, res, next) => {
+    try {
+      if (digits10(req.body?.number).length < 7) return res.status(400).json({ error: "no number" });
+      res.json(await logCall(req, null));
+    } catch (e) { next(e); }
+  });
+
+async function logCall(req, lead) {
+  const b = req.body || {};
+  const outcome = OUTCOMES.includes(b.outcome) ? b.outcome : "failed";
+  const seconds = Math.max(0, Math.min(MAX_SECONDS, Math.floor(Number(b.seconds) || 0)));
+
+  await activity.log({
+    actor: req.user.email,
+    user_id: req.user.id,
+    action: "call",
+    lead_id: lead?.id ?? null,
+    lead_code: lead?.lead_code ?? null,
+    lead_name: lead?.name ?? null,
+    to_value: outcome,           // shown directly in the activity feed
+    meta: {
+      outcome,
+      seconds,
+      provider: String(b.provider || "zoho").slice(0, 24),
+      /* a callback answered in the dialler is logged too, marked inbound;
+         a power-dialer call carries whose number it showed */
+      ...(b.direction === "inbound" ? { direction: "inbound" } : {}),
+      ...(b.callback_ext ? { callback_ext: String(b.callback_ext).slice(0, 12) } : {}),
+      ...(b.campaign ? { campaign: String(b.campaign).slice(0, 80) } : {}),
+      call_id: b.call_id ? String(b.call_id).slice(0, 120) : null,
+      number: b.number ? String(b.number).slice(0, 32) : null,
+    },
+  });
+  return { ok: true, outcome, seconds };
+}
 
 /* POST /api/leads/:id/disposition — what the rep says happened on a call.
 
@@ -205,6 +221,41 @@ router.post("/api/leads/:id/disposition", requireUser, express.json({ limit: "4k
         meta: { ...stamp, note: note ? `${disposition} — ${note}` : disposition },
       });
       res.json({ ok: true, on: "note" });
+    } catch (e) { next(e); }
+  });
+
+/* POST /api/calls/disposition — the same for a call to a number that is no
+   lead's (POST /api/calls/log). Stamped onto this rep's latest such call to
+   that number in the last three hours, then sent to Zoho CRM right away.
+   There is no lead to hang a note on, so with no call to stamp it is refused
+   rather than kept somewhere nobody would look. */
+router.post("/api/calls/disposition", requireUser, express.json({ limit: "4kb" }),
+  async (req, res, next) => {
+    try {
+      const b = req.body || {};
+      const disposition = String(b.disposition || "").trim();
+      if (!DISPOSITIONS.has(disposition)) return res.status(400).json({ error: "unknown disposition" });
+      const number = digits10(b.number);
+      if (number.length < 7) return res.status(400).json({ error: "no number" });
+      const note = String(b.note || "").trim().slice(0, 500) || null;
+
+      const stamp = { disposition, dispo_note: note, dispo_at: new Date().toISOString() };
+      const hit = (await query(
+        `UPDATE activity_log SET meta = coalesce(meta, '{}'::jsonb) || $3::jsonb
+          WHERE id = (SELECT id FROM activity_log
+                       WHERE action = 'call' AND lead_id IS NULL AND actor = $2
+                         AND right(regexp_replace(coalesce(meta->>'number', ''), '\\D', '', 'g'), 10) = $1
+                         AND at > now() - interval '3 hours'
+                       ORDER BY at DESC LIMIT 1)
+          RETURNING id`, [number, req.user.email, JSON.stringify(stamp)])).rows[0];
+      if (!hit) return res.status(404).json({ error: "no recent call to that number" });
+
+      const crm = {};
+      try {
+        const sent = await require("./crm-sync").sendNow(hit.id);
+        if (sent) Object.assign(crm, sent.sent ? { sent: true, as: sent.as } : { sendError: sent.error });
+      } catch (e) { crm.sendError = e.message; }
+      res.json({ ok: true, on: "call", id: hit.id, crm });
     } catch (e) { next(e); }
   });
 

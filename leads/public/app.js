@@ -2796,7 +2796,10 @@ const CALL_OUTCOMES = ["connected", "no-answer", "busy", "failed", "cancelled", 
    emitting several end-ish states for one call. */
 function reportCall(raw, state) {
   const c = VOICE.call;
-  if (c.reported || !c.leadId) return;
+  /* A call with no lead (a number typed on the keypad, an unknown caller) is
+     logged too, against the number: Zoho CRM is sent every logged call, and
+     an unlogged one simply never reached it. */
+  if (c.reported || (!c.leadId && !c.number)) return;
   c.reported = true;
   /* An exact outcome name is a caller telling us what happened; anything else
      is a raw SDK state string to be read. Kept in step with OUTCOMES in
@@ -2811,8 +2814,8 @@ function reportCall(raw, state) {
      thing that knows the call ended and whether anyone answered, so the
      hang-up is what should move a hands-free session on — not a button
      press after the fact. */
-  if (typeof campaignCallEnded === "function") campaignCallEnded(c.leadId, outcome);
-  return fetch("/api/leads/" + c.leadId + "/call", {
+  if (c.leadId && typeof campaignCallEnded === "function") campaignCallEnded(c.leadId, outcome);
+  return c.logged = fetch(c.leadId ? "/api/leads/" + c.leadId + "/call" : "/api/calls/log", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -4572,8 +4575,14 @@ function kdMenuPick(k) {
 
 /* ---------------- the disposition sheet ---------------- */
 
+/* Chips that need a lead — a status, a follow-up, Do Not Contact, a Zoho
+   Lead — are left off for a call to a number that is no lead's; the rest
+   describe the call itself, and that call is logged against the number. */
+const KD_DISPO_NO_LEAD = new Set(["outcome", "log"]);
+const kdDispoChoices = () => KD.lead ? KD_DISPOS : KD_DISPOS.filter((d) => KD_DISPO_NO_LEAD.has(d.kind));
+
 function kdOpenWrap() {
-  if (!KD.lead) return kdToast("This call has no lead to log against");
+  if (!KD.lead && !KD.number) return kdToast("This call has no lead or number to log against");
   kdEl("kd-wrapsub").textContent = KD.phase === "live"
     ? "The call stays connected."
     : KD.phase === "ended" ? "Call ended · " + kdClock(KD.elapsed)
@@ -4611,7 +4620,8 @@ async function crmCreateLead(leadId, first, last, email) {
 }
 
 function kdRenderDispos() {
-  kdEl("kd-dispos").innerHTML = KD_DISPOS.map((d) =>
+  if (KD.dispo && !kdDispoChoices().some((d) => d.label === KD.dispo)) KD.dispo = "";
+  kdEl("kd-dispos").innerHTML = kdDispoChoices().map((d) =>
     `<button data-dispo="${esc(d.label)}" aria-pressed="${KD.dispo === d.label}">${esc(d.label)}</button>`).join("");
   const picked = KD_DISPOS.find((d) => d.label === KD.dispo);
   kdShow("kd-fu", picked?.kind === "followup");
@@ -4634,7 +4644,7 @@ function kdRenderDispos() {
    reported — that correction is the new information. */
 async function kdSaveDispo() {
   const L = KD.lead;
-  if (!L) return kdShow("kd-wrap", false);
+  if (!L) return kdSaveNumberDispo();
   const note = (kdEl("kd-note")?.value || "").trim();
   const picked = KD_DISPOS.find((d) => d.label === KD.dispo);
   const jobs = [];
@@ -4708,6 +4718,27 @@ async function kdSaveDispo() {
     if (crm?.sendError) toast("Call saved, but Zoho CRM refused it for now — it will retry: " + crm.sendError, 9000);
     kdLoadLead(L.id);
     if (picked?.kind === "followup") kdLoadFollowups();
+  } catch (e) {
+    kdToast("Could not save — " + (describeErr(e) || "unknown"));
+  }
+}
+
+/* The wrap-up for a call to a number that is no lead's: the disposition and
+   note go onto that call's row (POST /api/calls/disposition), which sends it
+   to Zoho CRM with its Call Result. There is no lead for a note of its own. */
+async function kdSaveNumberDispo() {
+  const picked = kdDispoChoices().find((d) => d.label === KD.dispo);
+  if (!picked) return kdToast("Pick an outcome for this call");
+  const note = (kdEl("kd-note")?.value || "").trim();
+  try {
+    await VOICE.call.logged;      // the row this is stamped onto
+    const r = await api("/api/calls/disposition", {
+      method: "POST", body: JSON.stringify({ number: KD.number, disposition: picked.label, note }) });
+    kdShow("kd-wrap", false);
+    kdEl("kd-note").value = "";
+    KD.dispo = "";
+    kdToast(r?.crm?.sent ? "Saved · sent to Zoho CRM" : "Saved");
+    if (r?.crm?.sendError) toast("Call saved, but Zoho CRM refused it for now — it will retry: " + r.crm.sendError, 9000);
   } catch (e) {
     kdToast("Could not save — " + (describeErr(e) || "unknown"));
   }
@@ -4844,7 +4875,7 @@ async function kdAnswer() {
     KD.session = null;
     KD.muted = KD.held = KD.rec = false;
     kdRender();
-    if (KD.lead) { kdOpenWrap(); kdLoadLead(KD.lead.id); }
+    kdOpenWrap(); if (KD.lead) kdLoadLead(KD.lead.id);
     if (VOICE.rcSession === s) VOICE.rcSession = null;
   });
 }
@@ -4954,7 +4985,7 @@ async function rcCall(digits, name, leadId) {
     kdRender();
     /* Straight into the wrap-up. A disposition asked for a minute later is a
        disposition nobody fills in, and this is the one moment the rep still
-       remembers what was said. Only when there is a lead to log it against. */
+       remembers what was said. With no lead it is logged against the number. */
     /* A Call session (and a power-dialer campaign) has its own wrap-up —
        outcome buttons and an automatic one after a few seconds. Opening the
        panel's sheet as well would ask the rep the same question twice. */
@@ -4970,7 +5001,7 @@ async function rcCall(digits, name, leadId) {
         .then((r) => kdToast(r?.crm?.sent ? "Voicemail left · logged and sent to Zoho CRM" : "Voicemail left · logged"))
         .catch((e) => kdToast("Voicemail left, but couldn't log it — " + (describeErr(e) || "unknown")));
       kdLoadLead(L.id);
-    } else if (KD.lead && !inSession) { kdOpenWrap(); kdLoadLead(KD.lead.id); }
+    } else if (!inSession) { kdOpenWrap(); if (KD.lead) kdLoadLead(KD.lead.id); }
     if (VOICE.rcSession === session) VOICE.rcSession = null;
   };
 
