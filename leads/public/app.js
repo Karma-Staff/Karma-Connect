@@ -4622,7 +4622,7 @@ function rcWireBar() {
     if (e.target.closest("#kd-decline")) return kdDecline();
     if (e.target.closest("#kd-resume")) return kdControl("hold");
     if (e.target.closest("#kd-save")) return kdSaveDispo();
-    if (e.target.closest("#kd-skip")) return kdShow("kd-wrap", false);
+    if (e.target.closest("#kd-skip")) { kdShow("kd-wrap", false); return kdAfterWrap(null); }
     /* Tapping the dimmed area behind a sheet closes it, as every sheet does. */
     if (e.target.classList.contains("kd-scrim")) return e.target.classList.add("hidden");
   });
@@ -4912,6 +4912,7 @@ function kdRenderDispos() {
 async function kdSaveDispo() {
   const L = KD.lead;
   if (!L) return kdSaveNumberDispo();
+  await VOICE.call?.logged;                // the call's row is what the disposition stamps
   const note = (kdEl("kd-note")?.value || "").trim();
   const picked = KD_DISPOS.find((d) => d.label === KD.dispo);
   const jobs = [];
@@ -4967,7 +4968,7 @@ async function kdSaveDispo() {
       body: JSON.stringify({ body: `Call marked "${KD.dispo}" by the rep (the line reported ${KD.lastOutcome}).` }),
     }));
 
-  if (!jobs.length) { kdShow("kd-wrap", false); return kdToast("Nothing to save"); }
+  if (!jobs.length) { kdShow("kd-wrap", false); kdAfterWrap(null); return kdToast("Nothing to save"); }
 
   try {
     await Promise.all(jobs);
@@ -4986,6 +4987,7 @@ async function kdSaveDispo() {
     kdLoadLead(L.id);
     if (KD.wantFu) kdLoadFollowups();
     KD.wantFu = false;
+    kdAfterWrap(picked || null);
   } catch (e) {
     kdToast("Could not save — " + (describeErr(e) || "unknown"));
   }
@@ -5055,26 +5057,73 @@ function kdLive(state) {
    person's other phones and then voicemail, exactly as before. Declining
    sends it to voicemail rather than hanging up on a returning lead. */
 
-let kdRinger = null;
-function kdRing(on) {
-  if (kdRinger) { clearInterval(kdRinger.t); kdRinger.ctx.close().catch(() => {}); kdRinger = null; }
-  if (!on) return;
+/* The ring for an incoming call — made to be heard.
+
+   It used to be nearly silent in practice: a new AudioContext was made when
+   the call arrived, which the browser keeps muted unless the page was
+   clicked very recently; the volume was 5%; and each burst was re-armed with
+   setInterval, which a background tab runs about once a minute — one burst,
+   then silence. Now one AudioContext is unlocked by the first click or key
+   anywhere on the page and kept; a minute of ring pattern is scheduled on
+   the audio clock up front (audio is not throttled in a background tab);
+   it is louder; the tab title flashes; and a desktop notification says who
+   it is, when the person has allowed them (My settings → Call alerts). */
+let kdRinger = null, kdAudio = null;
+function kdAudioCtx() {
   try {
-    const ctx = new AudioContext();
-    const burst = () => {
-      const t0 = ctx.currentTime;
+    if (!kdAudio) kdAudio = new (window.AudioContext || window.webkitAudioContext)();
+    if (kdAudio.state === "suspended") kdAudio.resume().catch(() => {});
+    return kdAudio;
+  } catch (e) { return null; }
+}
+for (const ev of ["pointerdown", "keydown"])
+  document.addEventListener(ev, () => kdAudioCtx(), { once: true, capture: true });
+
+function kdRing(on, seconds = 60) {
+  if (kdRinger) {
+    try { kdRinger.out?.disconnect(); } catch (e) { /* already gone */ }
+    clearInterval(kdRinger.flash);
+    document.title = kdRinger.title;
+    try { kdRinger.note?.close(); } catch (e) { /* fine */ }
+    kdRinger = null;
+  }
+  if (!on) return;
+  const r = { title: document.title };
+  const ctx = kdAudioCtx();
+  if (ctx) {
+    r.out = ctx.createGain();
+    r.out.gain.value = 0.25;
+    r.out.connect(ctx.destination);
+    const t0 = ctx.currentTime + 0.05;
+    for (let k = 0; k < Math.ceil(seconds / 3); k++) {
       for (const [start, f] of [[0, 440], [0, 480], [0.5, 440], [0.5, 480]]) {
-        const o = ctx.createOscillator(), g = ctx.createGain();
+        const o = ctx.createOscillator(), g = ctx.createGain(), a = t0 + k * 3 + start;
         o.frequency.value = f;
-        g.gain.setValueAtTime(0.05, t0 + start);
-        g.gain.setValueAtTime(0, t0 + start + 0.4);
-        o.connect(g).connect(ctx.destination);
-        o.start(t0 + start); o.stop(t0 + start + 0.4);
+        g.gain.setValueAtTime(0, a);
+        g.gain.linearRampToValueAtTime(1, a + 0.02);
+        g.gain.setValueAtTime(1, a + 0.38);
+        g.gain.linearRampToValueAtTime(0, a + 0.4);
+        o.connect(g).connect(r.out);
+        o.start(a); o.stop(a + 0.42);
       }
-    };
-    burst();
-    kdRinger = { ctx, t: setInterval(burst, 3000) };
-  } catch (e) { /* no audio — the panel and the toast still say it */ }
+    }
+  }
+  let alt = false;
+  r.flash = setInterval(() => { alt = !alt; document.title = alt ? "📞 Incoming call" : r.title; }, 1000);
+  kdRinger = r;
+}
+
+/* The desktop notification for a ringing call — shown even when another
+   window is in front. Replaced (same tag) when the caller is identified. */
+function kdNotifyCall(title, body) {
+  if (!kdRinger || !("Notification" in window) || Notification.permission !== "granted") return;
+  try {
+    kdRinger.note?.close();
+    const n = new Notification(title, { body, tag: "kd-incoming", renotify: true, requireInteraction: true,
+      icon: "/leads/icon-256.png" });
+    n.onclick = () => { window.focus(); rcPanelToggle(true); n.close(); };
+    kdRinger.note = n;
+  } catch (e) { /* notifications unavailable here */ }
 }
 
 function kdIncoming(session) {
@@ -5087,6 +5136,7 @@ function kdIncoming(session) {
   KD.view = "lead"; KD.ptab = "history";
   rcPanelToggle(true);
   kdRing(true);
+  kdNotifyCall("Incoming call", kdFmtNum(number) + " — open Karma Connect to answer");
   kdRender();
   api("/api/calls/whois?number=" + encodeURIComponent(number)).then((d) => {
     if (KD.incoming?.session !== session && KD.session !== session) return;
@@ -5097,6 +5147,8 @@ function kdIncoming(session) {
         status: l.status, city: l.city, state: l.state, industry: l.industry, owner: l.owner };
       kdLoadLead(l.id);
     }
+    if (KD.incoming?.session === session) kdNotifyCall("Incoming call from " + (d.lead ? (d.lead.name || d.lead.company) : kdFmtNum(number)),
+      d.last ? `Calling back — ${d.last.by} called them ${relTime(d.last.at)}` : kdFmtNum(number));
     kdRender();
   }).catch(() => { if (KD.incoming) { KD.incoming.info = { known: false, last: null }; kdRender(); } });
 
@@ -5254,10 +5306,11 @@ async function rcCall(digits, name, leadId) {
     /* Straight into the wrap-up. A disposition asked for a minute later is a
        disposition nobody fills in, and this is the one moment the rep still
        remembers what was said. With no lead it is logged against the number. */
-    /* A Call session (and a power-dialer campaign) has its own wrap-up —
-       outcome buttons and an automatic one after a few seconds. Opening the
-       panel's sheet as well would ask the rep the same question twice. */
-    const inSession = S.tab === "camp" && CAMP.s?.current;
+    /* A Call session or power-dialer campaign asks for the disposition too —
+       it is what Zoho CRM gets as the Call Result. campaignCallEnded (run
+       from reportCall above) has marked the session as waiting for it; the
+       next lead rings once it is saved or skipped (kdAfterWrap). */
+    const inSession = !!CAMP.awaitDispo;
     /* A voicemail drop is its own disposition: log "VM" straight away
        (after the call row exists, so it lands on it — and from there into
        Zoho CRM) instead of asking the rep what just happened. */
@@ -5269,7 +5322,12 @@ async function rcCall(digits, name, leadId) {
         .then((r) => kdToast(r?.crm?.sent ? "Voicemail left · logged and sent to Zoho CRM" : "Voicemail left · logged"))
         .catch((e) => kdToast("Voicemail left, but couldn't log it — " + (describeErr(e) || "unknown")));
       kdLoadLead(L.id);
-    } else if (!inSession) { kdOpenWrap(); if (KD.lead) kdLoadLead(KD.lead.id); }
+    } else {
+      // in a session a voicemail drop is offered as VM, ready to save
+      if (inSession && KD.vmDropped) { KD.dispo = "VM"; KD.vmDropped = false; }
+      kdOpenWrap();
+      if (KD.lead) kdLoadLead(KD.lead.id);
+    }
     if (VOICE.rcSession === session) VOICE.rcSession = null;
   };
 
@@ -6005,14 +6063,10 @@ function openFollowupModal(r) {
    pressing an outcome afterwards was the manual step this was supposed to
    remove.
 
-   It does not advance the instant the line drops. There is a short wrap-up
-   window first, because the seconds right after a call are when the rep
-   types what was said and decides it was really "not interested" rather
-   than the "connected" the SDK saw. The outcome buttons stay live the whole
-   time and pressing one submits immediately — this only decides what
-   happens if nobody does anything. */
-
-const WRAP_SECONDS = 8;
+   It does not advance the instant the line drops: the disposition sheet
+   opens and the session waits for it, because the disposition is what
+   Zoho CRM records as the call's result. Saving or skipping it moves on
+   (kdAfterWrap); the outcome buttons on the card stay live as well. */
 
 /* The SDK's verdict, mapped to what a session records. The SDK knows
    whether the line connected; it cannot know that the person said no,
@@ -6030,27 +6084,29 @@ function campaignCallEnded(leadId, sdkOutcome) {
   // only for the lead this session is actually on
   if (String(d.current.lead.id) !== String(leadId)) return;
 
-  const pick = wrapOutcomeOf(sdkOutcome);
+  /* No more logging by itself after a few seconds: that recorded only
+     "Connected" or "No answer", so a campaign call reached Zoho CRM with no
+     Call Result. The disposition sheet opens (rcCall's finish) and the
+     session waits for it; kdAfterWrap moves it on. */
   cancelAutoDial();
-  CAMP.wrap = WRAP_SECONDS;
-
-  const paint = () => {
-    const el = $("camp-auto-state");
-    if (!el) return;
-    el.textContent = `call ended — logging "${pick.label}" in ${CAMP.wrap}s`;
-  };
-  paint();
+  CAMP.awaitDispo = { leadId, sdkOutcome };
+  const el = $("camp-auto-state");
+  if (el) el.textContent = "call ended — pick a disposition; the next lead rings once it's saved";
   const bar = $("camp-auto");
   if (bar) bar.classList.add("wrapping");
+}
 
-  CAMP.wrapTimer = setInterval(() => {
-    CAMP.wrap -= 1;
-    if (CAMP.wrap > 0) return paint();
-    cancelWrap();
-    /* Straight into the normal path, so the note, the follow-back tick-box
-       and the status all behave exactly as a pressed button. */
-    submitOutcome({ outcome: pick.outcome, status: pick.status });
-  }, 1000);
+/* The disposition sheet was saved (picked) or skipped (null) for a session
+   call: record the session's outcome — VM, No Answer and Busy say what it
+   was; anything else keeps what the line reported — and move on, which
+   rings the next lead when auto-dial is on. */
+function kdAfterWrap(picked) {
+  const w = CAMP.awaitDispo;
+  if (!w) return;
+  CAMP.awaitDispo = null;
+  const line = wrapOutcomeOf(w.sdkOutcome);
+  const said = { "No Answer": "no-answer", Busy: "busy", VM: "voicemail" }[picked?.label];
+  submitOutcome({ outcome: said || line.outcome, status: said === "busy" ? "" : line.status });
 }
 
 function cancelWrap(reason) {
@@ -6238,7 +6294,7 @@ async function campPause(resume) {
   c.pausedBy = resume ? null : S.me?.email || null;
   if (PDR.last) Object.assign(PDR.last, { status: c.status, pausedBy: c.pausedBy });
   toast(resume ? "Resumed — the next lead rings by itself" : "Campaign paused — nothing else will ring", 4000);
-  if (kdActive() || CAMP.busy) {
+  if (kdActive() || CAMP.busy || CAMP.awaitDispo) {
     const st = $("camp-auto-state");
     if (st) st.textContent = resume ? "resumed — the next lead rings after this call" : campPausedText(c);
     return;
@@ -6482,6 +6538,8 @@ function holdForHours(ct) {
 async function submitOutcome(extra) {
   if (CAMP.busy) return;                       // a double press must not skip a lead
   CAMP.busy = true;
+  // pressed on the card instead of saving the sheet: the sheet's question is answered
+  if (CAMP.awaitDispo) { CAMP.awaitDispo = null; kdShow("kd-wrap", false); }
   document.querySelectorAll(".camp-out, .camp-skip").forEach((b) => (b.disabled = true));
   const fu = $("camp-fu");
   try {
@@ -6730,6 +6788,17 @@ function renderMySettings() {
       <div class="me-acts"><button class="${VM.meta?.has ? "btn-ghost" : "btn-primary"}" data-me="vm">${VM.meta?.has ? "Change it" : "Record it"}</button></div>
     </div>
     <div class="act-card me-card">
+      <h4>Call alerts</h4>
+      <p class="me-why">When a call comes in, the dialler opens and rings, the tab title flashes, and — if you allow it — a desktop notification shows who it is even when another window is in front.</p>
+      ${!("Notification" in window) ? `<p class="me-state">This browser can't show desktop notifications.</p>`
+        : Notification.permission === "granted" ? `<p class="me-state ok"><span class="me-dot ok"></span>Desktop notifications are on</p>`
+          : Notification.permission === "denied" ? `<p class="me-state bad"><span class="me-dot bad"></span>Notifications are blocked for this site — allow them from the lock icon in the address bar</p>`
+            : `<p class="me-state"><span class="me-dot"></span>Desktop notifications are off</p>`}
+      <div class="me-acts">${"Notification" in window && Notification.permission === "default"
+        ? `<button class="btn-primary" data-me="notify">Turn on notifications</button>` : ""}
+        <button class="btn-ghost" data-me="ring">Test the ring</button></div>
+    </div>
+    <div class="act-card me-card">
       <h4>Microphone &amp; speaker</h4>
       <p class="me-why">Pick your headset, test the microphone, and choose where calls play.</p>
       <div class="me-acts"><button class="btn-ghost" data-me="audio">Open audio settings</button></div>
@@ -6752,6 +6821,16 @@ function meOpenDialler(stab) {
 }
 
 async function meAction(what) {
+  if (what === "notify") {
+    try { await Notification.requestPermission(); } catch (e) { /* older browsers */ }
+    if (Notification.permission === "granted") new Notification("Call alerts are on", { body: "You'll see who is calling here, even when Karma Connect is behind another window.", icon: "/leads/icon-256.png" });
+    return renderMySettings();
+  }
+  if (what === "ring") {
+    kdRing(true, 3);
+    if (kdRinger) setTimeout(() => kdRing(false), 3200);
+    return toast("That's the ring for an incoming call", 3000);
+  }
   if (what === "vm") return meOpenDialler("vm");
   if (what === "audio") return meOpenDialler("audio");
   if (what === "rc-off") {
@@ -10111,7 +10190,7 @@ async function pdRepCheck() {
   if (CAMP.s?.campaign && c && CAMP.s.id === c.id && CAMP.s.campaign.status !== c.status) {
     CAMP.s.campaign.status = c.status;
     CAMP.s.campaign.pausedBy = c.pausedBy || null;
-    const idle = !kdActive() && !CAMP.wrapTimer && !CAMP.busy;
+    const idle = !kdActive() && !CAMP.wrapTimer && !CAMP.awaitDispo && !CAMP.busy;
     if (c.status !== "ongoing") cancelAutoDial("paused by your manager");
     if (S.tab === "camp" && idle) {
       const note = $("camp-note")?.value || "";
