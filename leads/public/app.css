@@ -3124,6 +3124,22 @@ label.check input[type="checkbox"] { width: auto; margin: 0; accent-color: var(-
 .kd-miss-btn svg { width: 13px; height: 13px; }
 .kd-miss-btn.call { background: var(--kd-live); border-color: var(--kd-live); color: #062014; font-weight: 600; }
 .kd-miss-audio audio { width: 100%; height: 32px; margin-top: 6px; }
+/* My calls */
+.mc-tabs { display: inline-flex; padding: 3px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--border); }
+.mc-tabs button { height: 30px; padding: 0 14px; border: 0; border-radius: 7px; background: transparent; color: var(--ink-2); font-size: 13px; }
+.mc-tabs button.on { background: var(--surface); color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.25); }
+.mc-filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.mc-filters select, .mc-filters input { height: 34px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface-2); color: var(--ink); font-size: 13px; }
+.mc-filters input { flex: 1; min-width: 180px; max-width: 320px; }
+.mc-sum { margin: 0 0 12px; font-size: 13px; color: var(--ink-2); }
+.mc-sum b { color: var(--ink); }
+.mc-out { font-size: 12.5px; }
+.mc-out.connected { color: var(--good); font-weight: 600; }
+.mc-out.failed, .mc-out.busy { color: #ffb4ab; }
+.mc-note { margin-top: 3px; font-size: 11.5px; color: var(--ink-3); max-width: 260px; }
+.mc-more { display: flex; justify-content: center; margin: 14px 0 4px; }
+
 /* My settings */
 .me-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
 .me-card h4 { margin-bottom: 6px; }

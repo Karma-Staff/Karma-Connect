@@ -68,6 +68,8 @@ const TABS = {
   storm:     { title: "Storm watch", storm: true },
   // everyone's own phone, CRM, voicemail and audio — reps included
   me:        { title: "My settings", me: true },
+  // everyone's own: the campaigns given to them and their own call history
+  mycalls:   { title: "My calls", mycalls: true },
   // working an assigned list straight through, one lead at a time
   camp:      { title: "Call session", camp: true },
   // not in the sidebar: entered by clicking a segment tag in the reading pane
@@ -293,6 +295,7 @@ const PANES = {
   research: "research-pane",
   storm: "storm-pane",
   me: "me-pane",
+  mycalls: "mycalls-pane",
   camp: "camp-pane",
 };
 const paneOf = (tab) => Object.keys(PANES).find((k) => TABS[tab]?.[k]) || null;
@@ -509,6 +512,7 @@ async function loadList(resetPage = false) {
   if (cfg.research) return loadResearchCenter();
   if (cfg.storm) return loadStorm();
   if (cfg.me) return loadMySettings();
+  if (cfg.mycalls) return loadMyCalls();
   if (cfg.camp) return loadCampaign();
   // the armed tile is named in the header too: a list that is short because a
   // KPI tile is filtering it should never look like a list that is just short
@@ -6556,6 +6560,108 @@ async function endCampaign() {
 
 let STORM = { data: null, timer: null };
 
+/* ---------------- My calls ----------------
+   A rep's own view of their calling, under Calling: the power-dialer
+   campaigns they were given (GET /api/campaign/mine) and their own call
+   history (GET /api/calls/mine) — nobody else's calls, whatever the role. */
+const MC = { tab: "campaigns", days: 30, outcome: "", q: "", rows: [], more: false, summary: null, camps: null, seq: 0 };
+
+async function loadMyCalls() {
+  document.querySelectorAll("[data-mc]").forEach((b) => b.classList.toggle("on", b.dataset.mc === MC.tab));
+  if (MC.tab === "campaigns") return loadMyCampaigns();
+  return loadMyHistory(false);
+}
+
+async function loadMyCampaigns() {
+  const el = $("mc-body");
+  el.innerHTML = `<p class="act-empty">Loading…</p>`;
+  try { MC.camps = (await api("/api/campaign/mine")).list; }
+  catch (e) { el.innerHTML = `<p class="act-empty">Couldn't load your campaigns (${esc(e.message)})</p>`; return; }
+  const list = MC.camps;
+  const open = list.filter((c) => c.status === "ongoing" || c.status === "paused" || c.status === "draft");
+  $("mc-sub").textContent = list.length ? `${list.length} campaign${list.length === 1 ? "" : "s"}${open.length ? ` · ${open.length} open` : ""}` : "";
+  if (!list.length) {
+    el.innerHTML = `<div class="live-quiet pd-empty"><b>No campaigns yet</b>
+      <span>When your manager gives you a power-dialer campaign it shows here, and a banner offers Join when it starts.</span></div>`;
+    return;
+  }
+  el.innerHTML = `<div class="cl-tablewrap"><table class="cl-table pd-table mc-table">
+    <thead><tr><th>Campaign</th><th>Status</th><th>Progress</th><th class="n">Contacts</th><th class="n">Called</th>
+      <th class="n">Connected</th><th>Given by</th><th></th></tr></thead>
+    <tbody>${list.map((c) => {
+      const pct = c.total ? Math.round((c.completed / c.total) * 100) : 0;
+      const [label, cls] = PD_STATUS[c.status] || [c.status, "draft"];
+      const when = c.endedAt ? "ended " + new Date(c.endedAt).toLocaleDateString([], { month: "short", day: "numeric" })
+        : "since " + new Date(c.createdAt).toLocaleDateString([], { month: "short", day: "numeric" });
+      const live = c.status === "ongoing" || c.status === "paused";
+      return `<tr class="pd-${cls}">
+        <td><div class="cl-party"><b>${esc(c.name)}</b><span>${esc(when)}${c.callback ? ` · callbacks ring ${esc(c.callback.name)}` : ""}</span></div></td>
+        <td><span class="pd-status ${cls}"><i></i>${esc(label)}</span>${c.status === "paused" && c.pausedBy ? `<span class="pd-by">by ${esc(c.pausedBy)}</span>` : ""}</td>
+        <td class="pd-progc"><div class="pd-prog"><i style="width:${pct}%"></i></div><span>${pct}% · ${dashN(c.pending)} left</span></td>
+        <td class="n">${dashN(c.total)}</td><td class="n">${dashN(c.called)}</td><td class="n">${dashN(c.connected)}</td>
+        <td>${esc(c.createdBy || "—")}</td>
+        <td class="pd-acts">${live ? `<button class="btn-primary pd-btn" data-mc-go="1">Go to campaign</button>` : ""}</td></tr>`;
+    }).join("")}</tbody></table></div>`;
+}
+
+async function loadMyHistory(more) {
+  const el = $("mc-body");
+  const seq = ++MC.seq;
+  if (!more) {
+    MC.rows = [];
+    el.innerHTML = `
+      <div class="mc-filters">
+        <select id="mc-days" aria-label="Period">
+          ${[[1, "Today"], [7, "Last 7 days"], [30, "Last 30 days"], [90, "Last 90 days"]].map(([v, l]) =>
+            `<option value="${v}"${v === MC.days ? " selected" : ""}>${l}</option>`).join("")}
+        </select>
+        <select id="mc-outcome" aria-label="Outcome">
+          <option value="">All outcomes</option>
+          ${Object.entries(OUTCOME_WORDS).filter(([k]) => k !== "unknown").map(([k, l]) =>
+            `<option value="${k}"${k === MC.outcome ? " selected" : ""}>${esc(l)}</option>`).join("")}
+        </select>
+        <input type="search" id="mc-q" placeholder="Search a lead or number" value="${esc(MC.q)}" autocomplete="off">
+      </div>
+      <div id="mc-sum" class="mc-sum"></div>
+      <div id="mc-list"><p class="act-empty">Loading…</p></div>`;
+    $("mc-days").addEventListener("change", (e) => { MC.days = +e.target.value; loadMyHistory(false); });
+    $("mc-outcome").addEventListener("change", (e) => { MC.outcome = e.target.value; loadMyHistory(false); });
+    let t;
+    $("mc-q").addEventListener("input", (e) => { clearTimeout(t); t = setTimeout(() => { MC.q = e.target.value.trim(); loadMyHistory(false); }, 350); });
+  }
+  const p = new URLSearchParams({ days: MC.days });
+  if (MC.outcome) p.set("outcome", MC.outcome);
+  if (MC.q) p.set("q", MC.q);
+  if (more && MC.rows.length) p.set("before", MC.rows[MC.rows.length - 1].at);
+  let d;
+  try { d = await api("/api/calls/mine?" + p); }
+  catch (e) { if (seq === MC.seq) $("mc-list").innerHTML = `<p class="act-empty">Couldn't load your calls (${esc(e.message)})</p>`; return; }
+  if (seq !== MC.seq) return;                     // a newer search answered first
+  MC.rows = more ? MC.rows.concat(d.list) : d.list;
+  MC.more = d.more;
+  const s = d.summary;
+  $("mc-sub").textContent = `Only your own calls`;
+  $("mc-sum").innerHTML = `<b>${dashN(s.calls)}</b> call${s.calls === 1 ? "" : "s"} · <b>${dashN(s.connected)}</b> connected${
+    s.calls ? ` (${Math.round((s.connected / s.calls) * 100)}%)` : ""} · <b>${dashDur(s.seconds)}</b> talking`;
+  const rows = MC.rows;
+  $("mc-list").innerHTML = !rows.length ? `<p class="act-empty">No calls${MC.q || MC.outcome ? " match" : " in this period"}.</p>` : `
+    <div class="cl-tablewrap"><table class="cl-table mc-table">
+      <thead><tr><th>When</th><th>Lead</th><th>Number</th><th>Outcome</th><th class="n">Length</th><th>Disposition</th><th>Campaign</th></tr></thead>
+      <tbody>${rows.map((r) => `<tr>
+        <td><div class="cl-party"><b>${esc(new Date(r.at).toLocaleDateString([], { month: "short", day: "numeric" }))}</b>
+          <span>${esc(new Date(r.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }))}${r.direction === "inbound" ? " · incoming" : ""}</span></div></td>
+        <td>${r.lead_id && r.lead_kind ? `<a href="#" class="person-lead" data-lead="${r.lead_id}" data-kind="${esc(r.lead_kind)}">${esc(r.lead_name || "—")}</a>`
+          : esc(r.lead_name || "—")}</td>
+        <td>${esc(r.number ? dashPhone(r.number) : "—")}</td>
+        <td><span class="mc-out ${esc(r.outcome || "")}">${esc(OUTCOME_WORDS[r.outcome] || r.outcome || "—")}</span></td>
+        <td class="n">${r.outcome === "connected" ? esc(dashDur(r.seconds)) : "—"}</td>
+        <td>${r.disposition ? `<span class="dash-chip">${esc(r.disposition)}</span>` : `<span class="dash-mute">—</span>`}${
+          r.note ? `<div class="mc-note">${esc(r.note)}</div>` : ""}</td>
+        <td>${esc(r.campaign || "")}</td></tr>`).join("")}</tbody></table></div>
+    ${MC.more ? `<div class="mc-more"><button class="btn-ghost" id="mc-more">Show more</button></div>` : ""}`;
+  $("mc-more")?.addEventListener("click", () => loadMyHistory(true));
+}
+
 /* ---------------- My settings ----------------
    Each person's own connections, on a page every role can open — a sales
    rep's RingCentral and Zoho CRM sign-ins used to live only on the Call
@@ -8511,6 +8617,16 @@ function wire() {
   on("tasks-refresh", "click", loadTasks);
   on("research-refresh", "click", loadResearchCenter);
   on("storm-refresh", "click", () => { STORM.data = null; loadStorm(); });
+  /* My calls: the two tabs, a lead link, the way into a running campaign */
+  document.querySelectorAll("[data-mc]").forEach((b) => b.addEventListener("click", () => { MC.tab = b.dataset.mc; loadMyCalls(); }));
+  $("mc-body")?.addEventListener("click", (e) => {
+    if (e.target.closest("[data-mc-go]")) return setTab("camp");
+    const a = e.target.closest(".person-lead");
+    if (!a) return;
+    e.preventDefault();
+    const tab = KIND_TAB[a.dataset.kind];
+    if (tab) { setTab(tab); select({ Id: +a.dataset.lead, _t: tab }); }
+  });
   /* My settings: connect / disconnect / open the dialler's recorder and audio */
   $("me-body")?.addEventListener("click", (e) => { const b = e.target.closest("[data-me]"); if (b) meAction(b.dataset.me); });
   on("calls-refresh", "click", () => loadCallReport());

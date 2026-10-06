@@ -194,6 +194,10 @@
           <button class="nav-item" data-tab="camp" title="Call session">
             <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 4.5h2.2l1.3 3.3-1.7 1.3a10.5 10.5 0 0 0 4.9 4.9l1.3-1.7 3.3 1.3v2.2a1.7 1.7 0 0 1-1.85 1.7C10.8 17.2 6.8 13.2 5.8 6.35A1.7 1.7 0 0 1 7.5 4.5Z"/><path d="M14.5 3.5h6M17.5 .5v6" transform="translate(0 2)"/></svg>
             <span class="nav-label">Call session</span></button>
+          <!-- each person's own: the campaigns given to them, and their own calls -->
+          <button class="nav-item" data-tab="mycalls" title="My calls">
+            <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h12M8 12h12M8 18h8"/><path d="M4 6h.01M4 12h.01M4 18h.01" stroke-width="2.6"/></svg>
+            <span class="nav-label">My calls</span></button>
           <button class="nav-item admin-only hidden" data-tab="power" title="Power dialer">
             <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3 5 13.5h6L10 21l8-10.5h-6L13 3Z"/></svg>
             <span class="nav-label">Power dialer</span><span class="nav-count live-count hidden" id="count-power"></span></button>
@@ -405,6 +409,24 @@
     </section>
 
     <!-- Storm watch: where property just got damaged, and the leads there. -->
+    <!-- My calls: the campaigns given to this person, and only their own calls -->
+    <section class="stats-pane hidden" id="mycalls-pane">
+      <div class="stats-head">
+        <div class="list-title-wrap">
+          <div class="seg-eyebrow">Calling</div>
+          <h2>My calls</h2>
+          <div class="dash-sub" id="mc-sub"></div>
+        </div>
+        <div class="list-filters">
+          <div class="mc-tabs" role="group" aria-label="Campaigns or call history">
+            <button data-mc="campaigns">Campaigns</button>
+            <button data-mc="history">Call history</button>
+          </div>
+        </div>
+      </div>
+      <div id="mc-body" class="stats-body"></div>
+    </section>
+
     <!-- My settings: each person's own connections, whatever their role -->
     <section class="stats-pane hidden" id="me-pane">
       <div class="stats-head">

@@ -301,6 +301,31 @@ router.post("/api/campaign/outcome", requireUser, express.json({ limit: "8kb" })
 
 /* The rep's screen polls this to notice a manager starting or pausing their
    campaign. One indexed row, no lead card — cheap enough to ask every 15s. */
+/* GET /api/campaign/mine — the power-dialer campaigns given to this
+   person, the open one first: for My calls, so a rep can see what they have
+   been handed and how far each got without the manager's page. */
+router.get("/api/campaign/mine", requireUser, async (req, res, next) => {
+  try {
+    const { rows } = await query(`
+      SELECT s.id, s.pos, cardinality(s.lead_ids) AS total, s.called, s.connected, s.skipped,
+             s.filters, s.started_at, s.ended_at,
+             coalesce(nullif(btrim(c.display_name), ''), s.filters->>'created_by') AS creator_name
+        FROM call_sessions s
+        LEFT JOIN app_users c ON lower(c.email) = lower(s.filters->>'created_by')
+       WHERE lower(s.actor) = lower($1) AND s.filters->>'kind' = 'campaign'
+       ORDER BY s.ended_at IS NULL DESC, s.started_at DESC
+       LIMIT 100`, [me(req)]);
+    res.json({ list: rows.map((s) => ({
+      id: +s.id, name: s.filters.name, status: campaignStatus(s),
+      total: +s.total, completed: s.pos, pending: Math.max(0, s.total - s.pos),
+      called: s.called, connected: s.connected, skipped: s.skipped,
+      createdBy: s.creator_name || null, pausedBy: s.filters.paused_by || null,
+      callback: s.filters.callback || null,
+      createdAt: s.started_at, startedAt: s.filters.started || null, endedAt: s.ended_at,
+    })) });
+  } catch (e) { next(e); }
+});
+
 router.get("/api/campaign/state", requireUser, async (req, res, next) => {
   try {
     const s = await openSession(me(req));

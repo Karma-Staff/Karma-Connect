@@ -264,6 +264,43 @@ router.post("/api/calls/disposition", requireUser, express.json({ limit: "4kb" }
     } catch (e) { next(e); }
   });
 
+/* ---------------- my calls ----------------
+   GET /api/calls/mine — this person's own calls, newest first: the ones they
+   placed or answered (actor = them). For My calls under Calling, where a rep
+   sees their history and nobody else's. ?days= the window (max 90),
+   ?outcome=, ?q= a lead name or number, ?before= paging (the last row's at).
+   Answers 100 at a time with the window's totals. */
+router.get("/api/calls/mine", requireUser, async (req, res, next) => {
+  try {
+    const me = String(req.user.email || "").trim().toLowerCase();
+    const days = Math.max(1, Math.min(90, Math.round(+req.query.days || 30)));
+    const outcome = OUTCOMES.includes(req.query.outcome) ? req.query.outcome : "";
+    const q = String(req.query.q || "").trim().slice(0, 80);
+    const qd = q.replace(/\D/g, "");
+    const before = Number.isFinite(Date.parse(req.query.before)) ? new Date(req.query.before).toISOString() : null;
+    const where = `a.action = 'call' AND lower(a.actor) = $1 AND a.at > now() - ($2::int * interval '1 day')
+      AND ($3 = '' OR a.meta->>'outcome' = $3)
+      AND ($4 = '' OR a.lead_name ILIKE '%' || $4 || '%'
+           OR ($5 <> '' AND regexp_replace(coalesce(a.meta->>'number', ''), '\\D', '', 'g') LIKE '%' || $5 || '%'))`;
+    const args = [me, days, outcome, q, qd.length >= 3 ? qd : ""];
+    const rows = (await query(
+      `SELECT a.id, a.at, a.lead_id, a.lead_name, l.kind AS lead_kind,
+              a.meta->>'number' AS number, a.meta->>'outcome' AS outcome,
+              coalesce((a.meta->>'seconds')::int, 0) AS seconds, a.meta->>'direction' AS direction,
+              a.meta->>'disposition' AS disposition, a.meta->>'dispo_note' AS note, a.meta->>'campaign' AS campaign
+         FROM activity_log a LEFT JOIN leads l ON l.id = a.lead_id AND l.deleted_at IS NULL
+        WHERE ${where} AND ($6::timestamptz IS NULL OR a.at < $6)
+        ORDER BY a.at DESC LIMIT 101`, [...args, before])).rows;
+    const sum = (await query(
+      `SELECT count(*)::int AS calls,
+              count(*) FILTER (WHERE a.meta->>'outcome' = 'connected')::int AS connected,
+              coalesce(sum((a.meta->>'seconds')::int) FILTER (WHERE a.meta->>'outcome' = 'connected'), 0)::int AS seconds
+         FROM activity_log a WHERE ${where}`, args)).rows[0];
+    res.json({ days, summary: sum, more: rows.length > 100,
+      list: rows.slice(0, 100).map((r) => ({ ...r, id: +r.id })) });
+  } catch (e) { next(e); }
+});
+
 /* ---------------- missed calls, for the dialler ----------------
 
    The rows missed.js logs (actor 'ringcentral', meta.missed), as the
