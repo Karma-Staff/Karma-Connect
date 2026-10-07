@@ -569,6 +569,25 @@ router.post("/api/crm/sync/recordings/retry", requireAdmin, async (req, res, nex
   } catch (e) { next(e); }
 });
 
+/* POST /api/crm/sync/failed/retry — re-queue calls that failed to send (not
+   yet in Zoho): clear the error and reset the attempt count so the sweeper
+   tries them again. With the bad-field handling, a call that kept failing on
+   a stale lead link now lands unattached rather than being given up on. */
+router.post("/api/crm/sync/failed/retry", requireAdmin, async (req, res, next) => {
+  try {
+    const cfg = await config();
+    if (!cfg.since) return res.json({ queued: 0 });
+    const { rows } = await query(
+      `UPDATE activity_log
+          SET meta = (meta - 'crm_error' - 'crm_state') || jsonb_build_object('crm_attempts', 0)
+        WHERE action = 'call' AND meta->>'provider' = 'ringcentral' AND at >= $1::timestamptz
+          AND NOT (meta ? 'crm_call_id')
+          AND (meta->>'crm_state' = 'error' OR coalesce((meta->>'crm_attempts')::int, 0) >= ${MAX_ATTEMPTS})
+        RETURNING id`, [cfg.since]);
+    res.json({ queued: rows.length });
+  } catch (e) { next(e); }
+});
+
 router.get("/api/crm/sync/preview", requireAdmin, async (req, res, next) => {
   try {
     if (!zoho.ENABLED) return res.status(503).json({ error: "Zoho CRM is not configured on this server" });

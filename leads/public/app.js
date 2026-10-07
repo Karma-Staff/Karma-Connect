@@ -10132,7 +10132,9 @@ async function openCrmSync() {
         <div><b>${dashN(st.today)}</b><span>in the last 24h</span></div>
         <div><b>${dashN(st.pending)}</b><span>waiting</span></div>
         <div class="${st.errors ? "bad" : ""}"><b>${dashN(st.errors)}</b><span>failed</span></div>
-      </div>${st.lastError ? `<p class="login-error">Last error: ${esc(st.lastError)}</p>` : ""}
+      </div>${st.lastError ? `<p class="login-error">Last error: ${esc(st.lastError)}</p>` : ""}${
+        st.errors ? `<p class="dash-mute"><button type="button" class="btn-ghost" id="crm-failed-retry"
+          title="Send the ${dashN(st.errors)} failed call${st.errors === 1 ? "" : "s"} again — a stale lead link is dropped so they still land (unattached)">Retry ${dashN(st.errors)} failed send${st.errors === 1 ? "" : "s"}</button></p>` : ""}
       <p class="dash-mute">Recordings: ${dashN(st.recAttached || 0)} attached in Zoho${st.recPending ? ` · ${dashN(st.recPending)} waiting for RingCentral` : ""}${
         st.recMissing ? ` · ${dashN(st.recMissing)} sent without one <button type="button" class="btn-ghost crm-retry" id="crm-rec-retry"
           title="Look again in RingCentral for these calls' recordings and attach any it has">Retry missing recordings</button>` : ""}</p>${
@@ -10168,6 +10170,14 @@ async function openCrmSync() {
       try {
         const r = await api("/api/crm/sync/recordings/retry", { method: "POST", body: "{}" });
         toast(`Looking again for ${r.queued} recording${r.queued === 1 ? "" : "s"} — any RingCentral has are attached within a few minutes`, 6000);
+        paint();
+      } catch (ex) { toast("Couldn't retry: " + ex.message, 6000); e.currentTarget.disabled = false; }
+    });
+    $("crm-failed-retry")?.addEventListener("click", async (e) => {
+      e.currentTarget.disabled = true;
+      try {
+        const r = await api("/api/crm/sync/failed/retry", { method: "POST", body: "{}" });
+        toast(`Re-queued ${r.queued} failed call${r.queued === 1 ? "" : "s"} — they send again within a few minutes`, 6000);
         paint();
       } catch (ex) { toast("Couldn't retry: " + ex.message, 6000); e.currentTarget.disabled = false; }
     });
