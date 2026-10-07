@@ -81,6 +81,45 @@ async function dispositionsIn(fromMs, toMs) {
   return by;
 }
 
+/* Karma Connect's own record of every call the dialler placed, logged the
+   moment the call ends (reportCall → calls.js). Used to fill the gaps in
+   RingCentral's log: a call shows here at once, before RingCentral publishes
+   it a minute or two later, and even for a leg RingCentral never logs. */
+const OWN_RESULT = { connected: "Connected", "no-answer": "No Answer", busy: "Busy",
+  failed: "Failed", cancelled: "Canceled", placed: "Placed" };
+async function ownCalls(fromMs, toMs) {
+  const { rows } = await query(
+    `SELECT a.at, a.actor, a.user_id, a.lead_id,
+            a.meta->>'number' AS number, a.meta->>'outcome' AS outcome,
+            coalesce((a.meta->>'seconds')::int, 0) AS seconds,
+            a.meta->>'direction' AS direction, a.meta->>'disposition' AS disposition,
+            l.kind AS lead_kind, coalesce(nullif(btrim(l.name), ''), l.company) AS lead_name,
+            coalesce(nullif(btrim(u.display_name), ''), a.actor) AS rep_name
+       FROM activity_log a
+       LEFT JOIN leads l ON l.id = a.lead_id AND l.deleted_at IS NULL
+       LEFT JOIN app_users u ON lower(u.email) = lower(a.actor)
+      WHERE a.action = 'call' AND a.meta ? 'number' AND a.at >= $1 AND a.at < $2`,
+    [new Date(fromMs).toISOString(), new Date(toMs).toISOString()]);
+  return rows.map((r) => ({ ...r, at: +new Date(r.at) }));
+}
+function ownRow(o, phones) {
+  const out = o.direction !== "inbound";
+  const theirs = o.number || "";
+  const lead = phones.get(digits10(theirs))
+    || (o.lead_id ? { id: o.lead_id, kind: o.lead_kind, name: o.lead_name } : null);
+  const party = { name: lead?.name || o.lead_name || "", number: theirs, place: "",
+    lead: lead ? { id: lead.id, kind: lead.kind } : null };
+  const us = { name: o.rep_name || "", number: "" };
+  return {
+    id: null, at: o.at, seconds: o.outcome === "connected" ? o.seconds : 0,
+    mode: out ? "outgoing" : "incoming",
+    from: out ? us : party, to: out ? party : us,
+    agent: us.name ? { id: null, name: us.name, ext: "" } : null,
+    ours: "", result: OWN_RESULT[o.outcome] || o.outcome || "Logged",
+    disposition: o.disposition || null, recording: null, source: "karma",
+  };
+}
+
 async function buildRows(req) {
   const uid = req.user.id;
   const tz = dash.safeTz(String(req.query.tz || ""));
@@ -148,7 +187,29 @@ async function buildRows(req) {
       agent: agent ? { id: agent.id, name: agent.name, ext: agent.ext } : us.name ? { id: null, name: us.name, ext: "" } : null,
       ours, result: c.res, disposition, recording: c.recId,
     };
-  }).sort((a, b) => b.at - a.at);
+  });
+
+  /* Fill the gaps with Karma Connect's own call records: add one only when
+     RingCentral has no row for the same number within fifteen minutes, so a
+     connected call RingCentral already logged is never listed twice. This
+     only ADDS rows — RingCentral's own are left exactly as they are. */
+  const rcByNum = new Map();
+  for (const r of rows) {
+    const d = digits10(r.mode === "outgoing" ? r.to.number : r.from.number);
+    if (!d) continue;
+    if (!rcByNum.has(d)) rcByNum.set(d, []);
+    rcByNum.get(d).push(r.at);
+  }
+  const MATCH_MS = 15 * 60e3;
+  const own = await ownCalls(winFrom, winTo).catch(() => []);
+  for (const o of own) {
+    const d = digits10(o.number);
+    if (!d || o.at < winFrom || o.at >= winTo) continue;
+    const near = rcByNum.get(d);
+    if (near && near.some((t) => Math.abs(t - o.at) < MATCH_MS)) continue;   // RingCentral already has it
+    rows.push(ownRow(o, phones));
+  }
+  rows.sort((a, b) => b.at - a.at);
 
   /* ---- filters (over the cached rows; none of them costs a request) ---- */
   const f = {
