@@ -4367,12 +4367,50 @@ async function kdFollowDone(id) {
 const KD_AUDIO_KEY = "kl_kd_audio";
 
 function kdAudioPrefs() {
-  const base = { system: true, input: "", output: "" };
+  /* ringtone: "default" is the built-in synth ring; "custom" plays the file
+     the person uploaded (held in IndexedDB, see kdRingStore). ringName is
+     only what the settings screen shows — the bytes never touch localStorage,
+     which is too small for an audio file. */
+  const base = { system: true, input: "", output: "", ringtone: "default", ringName: "" };
   try { return { ...base, ...JSON.parse(localStorage.getItem(KD_AUDIO_KEY) || "{}") }; }
   catch (e) { return base; }
 }
 function kdSaveAudio(p) {
   try { localStorage.setItem(KD_AUDIO_KEY, JSON.stringify(p)); } catch (e) { /* session only */ }
+}
+
+/* The custom ringtone's audio file, kept in IndexedDB rather than
+   localStorage because it is a blob and can be a megabyte or two. One
+   record under a fixed key: uploading replaces it, "Use default" leaves it
+   but the pref stops pointing at it. All wrapped so a private window or a
+   browser without IndexedDB simply falls back to the built-in ring. */
+const KD_RING_DB = "kl_ringtone", KD_RING_KEY = "current";
+function kdRingDB() {
+  return new Promise((resolve, reject) => {
+    let req;
+    try { req = indexedDB.open(KD_RING_DB, 1); }
+    catch (e) { return reject(e); }
+    req.onupgradeneeded = () => { req.result.createObjectStore("files"); };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function kdRingPut(blob) {
+  const db = await kdRingDB();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction("files", "readwrite");
+    tx.objectStore("files").put(blob, KD_RING_KEY);
+    tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
+  });
+}
+async function kdRingGet() {
+  const db = await kdRingDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("files", "readonly");
+    const r = tx.objectStore("files").get(KD_RING_KEY);
+    r.onsuccess = () => resolve(r.result || null);
+    r.onerror = () => reject(r.error);
+  });
 }
 
 /* The chosen device if it is still plugged in, otherwise the system default.
@@ -4580,6 +4618,22 @@ function kdRenderSettings() {
     <div class="kd-meter" aria-hidden="true"><i id="kd-meter-bar"></i></div>
     <button class="kd-primary kd-test" data-set="test"${KD.testing ? " disabled" : ""}>
       ${KD.testing ? "Testing — speak now…" : "Test speaker & microphone"}</button>
+    <div class="kd-group kd-ringgroup">
+      <div class="kd-row">
+        <div class="kd-row-t"><b>Ringtone</b>
+          <span>${p.ringtone === "custom"
+            ? "Playing your own: " + esc(p.ringName || "custom sound")
+            : "The built-in ring"}</span></div>
+      </div>
+      <div class="kd-ringbtns">
+        <button class="kd-linkbtn" data-set="ring-pick">Choose a sound…</button>
+        <button class="kd-linkbtn" data-set="ring-preview"${KD.ringPlaying ? " disabled" : ""}>
+          ${KD.ringPlaying ? "Playing…" : "Preview"}</button>
+        ${p.ringtone === "custom" ? `<button class="kd-linkbtn" data-set="ring-default">Use default ring</button>` : ""}
+      </div>
+      <input id="kd-ring-file" type="file" accept="audio/*" hidden>
+      <p class="kd-hint">An audio file from this computer (mp3, m4a, wav…), under 3&nbsp;MB. Kept on this browser only.</p>
+    </div>
     <p class="kd-hint">${KD.session ? "Changes apply to this call straight away."
       : "Changes apply from your next call."}</p>`;
 }
@@ -4590,6 +4644,14 @@ function kdSetting(which) {
   if (which === "retry") return rcRetry().then(kdRenderSettings);
   if (which === "perm") return kdAskMic();
   if (which === "test") return kdAudioTest();
+  if (which === "ring-pick") { kdEl("kd-ring-file")?.click(); return; }
+  if (which === "ring-preview") return kdRingPreview();
+  if (which === "ring-default") {
+    const p = kdAudioPrefs();
+    p.ringtone = "default"; p.ringName = "";
+    kdSaveAudio(p);
+    return kdRenderSettings();
+  }
   if (which === "system") {
     const p = kdAudioPrefs();
     p.system = !p.system;
@@ -4666,6 +4728,7 @@ function rcWireBar() {
   kdEl("kd-q")?.addEventListener("input", (e) => kdRenderQueue(KD.queue, e.target.value));
   root.addEventListener("change", (e) => {
     if (e.target.id === "kd-fu-on") { KD.wantFu = e.target.checked; return kdRenderDispos(); }
+    if (e.target.id === "kd-ring-file") { kdRingUpload(e.target.files?.[0]); e.target.value = ""; return; }
     if (e.target.id !== "kd-in" && e.target.id !== "kd-out") return;
     const p = kdAudioPrefs();
     p[e.target.id === "kd-in" ? "input" : "output"] = e.target.value;
@@ -5106,9 +5169,54 @@ function kdAudioCtx() {
 for (const ev of ["pointerdown", "keydown"])
   document.addEventListener(ev, () => kdAudioCtx(), { once: true, capture: true });
 
+/* The built-in ring: a US ring cadence synthesised on the audio clock, so a
+   background tab still plays the whole minute. */
+function kdSynthRing(r, seconds) {
+  const ctx = kdAudioCtx();
+  if (!ctx) return;
+  r.out = ctx.createGain();
+  r.out.gain.value = 0.25;
+  r.out.connect(ctx.destination);
+  const t0 = ctx.currentTime + 0.05;
+  for (let k = 0; k < Math.ceil(seconds / 3); k++) {
+    for (const [start, f] of [[0, 440], [0, 480], [0.5, 440], [0.5, 480]]) {
+      const o = ctx.createOscillator(), g = ctx.createGain(), a = t0 + k * 3 + start;
+      o.frequency.value = f;
+      g.gain.setValueAtTime(0, a);
+      g.gain.linearRampToValueAtTime(1, a + 0.02);
+      g.gain.setValueAtTime(1, a + 0.38);
+      g.gain.linearRampToValueAtTime(0, a + 0.4);
+      o.connect(g).connect(r.out);
+      o.start(a); o.stop(a + 0.42);
+    }
+  }
+}
+
+/* The person's own ringtone, looped through their chosen speaker. Returns
+   false — so the caller can fall back to the synth — when there is no file,
+   or the browser refuses to play it (e.g. no user gesture yet). r.stopped is
+   set if the ring was cancelled while the file was still loading. */
+async function kdCustomRing(r) {
+  let blob;
+  try { blob = await kdRingGet(); } catch (e) { return false; }
+  if (!blob || r.stopped) return !!r.stopped;        // stopped mid-load: don't also synth
+  try {
+    const el = new Audio(URL.createObjectURL(blob));
+    el.loop = true;
+    el.volume = 0.6;
+    r.el = el;
+    const p = kdAudioPrefs();
+    if (!p.system && p.output && el.setSinkId) { try { await el.setSinkId(p.output); } catch (e) { /* default */ } }
+    await el.play();
+    return true;
+  } catch (e) { try { r.el?.pause(); } catch (_) { /* fine */ } r.el = null; return false; }
+}
+
 function kdRing(on, seconds = 60) {
   if (kdRinger) {
+    kdRinger.stopped = true;
     try { kdRinger.out?.disconnect(); } catch (e) { /* already gone */ }
+    try { if (kdRinger.el) { kdRinger.el.pause(); URL.revokeObjectURL(kdRinger.el.src); } } catch (e) { /* fine */ }
     clearInterval(kdRinger.flash);
     document.title = kdRinger.title;
     try { kdRinger.note?.close(); } catch (e) { /* fine */ }
@@ -5116,28 +5224,66 @@ function kdRing(on, seconds = 60) {
   }
   if (!on) return;
   const r = { title: document.title };
-  const ctx = kdAudioCtx();
-  if (ctx) {
-    r.out = ctx.createGain();
-    r.out.gain.value = 0.25;
-    r.out.connect(ctx.destination);
-    const t0 = ctx.currentTime + 0.05;
-    for (let k = 0; k < Math.ceil(seconds / 3); k++) {
-      for (const [start, f] of [[0, 440], [0, 480], [0.5, 440], [0.5, 480]]) {
-        const o = ctx.createOscillator(), g = ctx.createGain(), a = t0 + k * 3 + start;
-        o.frequency.value = f;
-        g.gain.setValueAtTime(0, a);
-        g.gain.linearRampToValueAtTime(1, a + 0.02);
-        g.gain.setValueAtTime(1, a + 0.38);
-        g.gain.linearRampToValueAtTime(0, a + 0.4);
-        o.connect(g).connect(r.out);
-        o.start(a); o.stop(a + 0.42);
-      }
-    }
-  }
+  kdRinger = r;
+  /* A chosen ringtone plays the file; anything else (or a file that won't
+     load) uses the built-in ring. */
+  if (kdAudioPrefs().ringtone === "custom")
+    kdCustomRing(r).then((ok) => { if (!ok && kdRinger === r) kdSynthRing(r, seconds); });
+  else kdSynthRing(r, seconds);
   let alt = false;
   r.flash = setInterval(() => { alt = !alt; document.title = alt ? "📞 Incoming call" : r.title; }, 1000);
-  kdRinger = r;
+}
+
+/* Save an uploaded ringtone and switch to it. Kept small and local: audio
+   only, under 3 MB (a ring, not a song), stored on this browser. */
+async function kdRingUpload(file) {
+  if (!file) return;
+  if (!/^audio\//.test(file.type)) return kdToast("Pick an audio file (mp3, m4a, wav…)");
+  if (file.size > 3 * 1024 * 1024) return kdToast("That file is over 3 MB — pick a shorter clip");
+  try {
+    await kdRingPut(file);
+    const p = kdAudioPrefs();
+    p.ringtone = "custom"; p.ringName = String(file.name || "custom sound").slice(0, 60);
+    kdSaveAudio(p);
+    kdToast("Ringtone set — press Preview to hear it");
+    kdRenderSettings();
+  } catch (e) { kdToast("Couldn't save the ringtone on this browser"); }
+}
+
+/* Hear the current ringtone from Settings. A second press stops it. Does not
+   touch the real ringer (kdRinger) or the tab title. */
+let kdPreviewEl = null;
+async function kdRingPreview() {
+  if (KD.ringPlaying) {
+    try { kdPreviewEl?.pause(); if (kdPreviewEl) URL.revokeObjectURL(kdPreviewEl.src); } catch (e) { /* fine */ }
+    try { kdPreviewEl?.out?.disconnect?.(); } catch (e) { /* synth preview */ }
+    kdPreviewEl = null; KD.ringPlaying = false;
+    return kdRenderSettings();
+  }
+  const p = kdAudioPrefs();
+  if (p.ringtone === "custom") {
+    let blob = null;
+    try { blob = await kdRingGet(); } catch (e) { /* fall through to synth */ }
+    if (blob) {
+      const el = new Audio(URL.createObjectURL(blob));
+      el.volume = 0.6;
+      if (!p.system && p.output && el.setSinkId) { try { await el.setSinkId(p.output); } catch (e) { /* default */ } }
+      el.onended = () => { KD.ringPlaying = false; try { URL.revokeObjectURL(el.src); } catch (_) {} kdPreviewEl = null; if (KD.view === "settings") kdRenderSettings(); };
+      kdPreviewEl = el; KD.ringPlaying = true; kdRenderSettings();
+      try { await el.play(); }
+      catch (e) { KD.ringPlaying = false; kdPreviewEl = null; kdToast("Couldn't play it — click the page, then try again"); kdRenderSettings(); }
+      return;
+    }
+  }
+  /* default: a few seconds of the built-in ring */
+  const r = {}; kdSynthRing(r, 4);
+  kdPreviewEl = r; KD.ringPlaying = true; kdRenderSettings();
+  setTimeout(() => {
+    if (kdPreviewEl !== r) return;
+    try { r.out?.disconnect(); } catch (e) { /* fine */ }
+    kdPreviewEl = null; KD.ringPlaying = false;
+    if (KD.view === "settings") kdRenderSettings();
+  }, 4200);
 }
 
 /* The desktop notification for a ringing call — shown even when another

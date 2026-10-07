@@ -3258,6 +3258,14 @@ label.check input[type="checkbox"] { width: auto; margin: 0; accent-color: var(-
   color: var(--kd-blue); font: inherit; font-size: 12.5px; font-weight: 600;
   text-decoration: none; transition: background-color .15s ease; }
 .kd-linkbtn:hover { background: var(--accent-soft); }
+.kd-linkbtn:disabled { opacity: .5; pointer-events: none; }
+
+/* ringtone picker: the choose / preview / default buttons sit in a row and
+   wrap on a narrow panel */
+.kd-ringgroup { padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; background: var(--kd-key); }
+.kd-ringbtns { display: flex; flex-wrap: wrap; gap: 6px; }
+.kd-ringbtns .kd-linkbtn { flex: 1 1 auto; min-width: 96px; padding: 0 12px;
+  border: 1px solid var(--kd-line); min-height: 34px; }
 
 /* ---- bottom nav ---- */
 .kd-nav { flex: none; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
