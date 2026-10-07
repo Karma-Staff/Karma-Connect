@@ -15,13 +15,34 @@ const rc = require("./ringcentral");
 async function message(row) {
   const m = row.meta || {};
   if (!m.missed || !m.vm_msg) return null;
-  const tok = await rc.accessFor(row.user_id || m.reader_uid);
-  const r = await fetch(`${rc.SERVER}/restapi/v1.0/account/~/extension/${m.vm_ext || "~"}/message-store/${m.vm_msg}`,
-    { headers: { Authorization: "Bearer " + tok.access_token } });
-  if (!r.ok) throw new Error(r.status === 403
-    ? "RingCentral refused the voicemail — the app needs the Read Messages permission"
-    : r.status === 404 ? "RingCentral has no such voicemail" : `RingCentral voicemail ${r.status}`);
-  return { msg: await r.json(), tok };
+  /* A missed call is nobody's call (user_id is NULL), so there is no single
+     "right" login to read its voicemail. Try the connected RingCentral
+     accounts in turn — the one stored when it was logged first, then the
+     extension's own owner, then admins/owners (whose token can read any
+     extension's message store), then the rest — like recordings do. One bad
+     or under-permissioned login no longer means the voicemail won't play. */
+  const ids = (await query(
+    `SELECT v.user_id FROM voice_identities v
+       JOIN app_users u ON u.id = v.user_id
+       LEFT JOIN organization_memberships mm ON mm.user_id = u.id
+      WHERE v.provider = 'ringcentral' AND NOT u.disabled
+      ORDER BY (v.user_id = $1) DESC, (v.rc_owner_id = $2) DESC,
+               (mm.role IN ('owner', 'admin')) DESC, v.last_used_at DESC NULLS LAST`,
+    [row.user_id || m.reader_uid || 0, m.vm_ext || ""])).rows.map((r) => r.user_id);
+  if (!ids.length) throw new Error("No RingCentral account is connected to read voicemails");
+  let last = null;
+  for (const uid of ids) {
+    try {
+      const tok = await rc.accessFor(uid);
+      const r = await fetch(`${rc.SERVER}/restapi/v1.0/account/~/extension/${m.vm_ext || "~"}/message-store/${m.vm_msg}`,
+        { headers: { Authorization: "Bearer " + tok.access_token } });
+      if (r.ok) return { msg: await r.json(), tok };
+      last = Object.assign(new Error(r.status === 403
+        ? "RingCentral refused the voicemail — the app/account needs the Read Messages permission"
+        : r.status === 404 ? "RingCentral has no such voicemail" : `RingCentral voicemail ${r.status}`), { status: r.status });
+    } catch (e) { last = e; }
+  }
+  throw last || new Error("Couldn't read the voicemail from RingCentral");
 }
 
 /* The audio, as a fetch Response to pass on (or read). */
