@@ -301,8 +301,54 @@ router.get("/api/calls/mine", requireUser, async (req, res, next) => {
        required lazily to avoid a load-order cycle. null when there is none, or
        APP_URL is unset (local dev). */
     const recLink = require("./calllogs").recordingLink;
+    const list = rows.slice(0, 100);
+
+    /* Most calls have no rec_id yet — it is written only once the Zoho sync
+       captures it. So read the rep's own RingCentral call log for the days
+       these rows cover and match recordings by number and time, exactly as
+       the admin log does, and fall back to rec_id. Best-effort: if the rep's
+       RingCentral is not connected, or it rate-limits, the rows simply keep
+       whatever rec_id gave them. Bounded to the span actually shown (≤31
+       days) and the day reads are cached, so repeat loads are cheap. */
+    let recMap = null;
+    if (list.some((r) => !r.rec_id) && list.length) {
+      try {
+        const dash = require("./rc-dashboard");
+        const tz = dash.safeTz(String(req.query.tz || ""));
+        const ymd = (ms) => { const w = dash.wall(ms, tz); return `${w.year}-${w.month}-${w.day}`; };
+        const from = ymd(+new Date(list[list.length - 1].at)), to = ymd(+new Date(list[0].at));
+        /* The most recent days of the shown span first, capped at 31 — recent
+           recordings matter most and a 31-day cold read stays within limits. */
+        const days = [];
+        for (let d = to; d >= from && days.length < 31; d = dash.addDays(d, -1)) days.push(d);
+        recMap = new Map();
+        for (const d of days) {
+          let calls;
+          try { calls = await dash.fetchDay(req.user.id, d, tz, "extension"); }
+          catch (e) { continue; }                       // not connected / rate-limited: skip the day
+          for (const c of calls) {
+            if (!c.recId) continue;
+            const theirs = digits10(c.dir === "Outbound" ? c.toNum : c.fromNum);
+            if (!theirs) continue;
+            if (!recMap.has(theirs)) recMap.set(theirs, []);
+            recMap.get(theirs).push({ at: c.t, recId: c.recId });
+          }
+        }
+      } catch (e) { recMap = null; }
+    }
+    const recFor = (r) => {
+      if (r.rec_id) return recLink(r.rec_id);
+      if (!recMap) return null;
+      const near = recMap.get(digits10(r.number));
+      if (!near) return null;
+      const at = +new Date(r.at);
+      let best = null, gap = 10 * 60e3;
+      for (const x of near) { const g = Math.abs(x.at - at); if (g < gap) { gap = g; best = x.recId; } }
+      return best ? recLink(best) : null;
+    };
+
     res.json({ days, summary: sum, more: rows.length > 100,
-      list: rows.slice(0, 100).map((r) => ({ ...r, id: +r.id, recording: recLink(r.rec_id) || null })) });
+      list: list.map((r) => ({ ...r, id: +r.id, recording: recFor(r) || null })) });
   } catch (e) { next(e); }
 });
 
