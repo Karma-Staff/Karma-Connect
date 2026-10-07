@@ -312,6 +312,35 @@ const ROW = `
 
 const REC_WINDOW_MIN = 30;     // how long to keep looking for a late recording
 
+/* The fields a Zoho Call cannot do without. Everything else is extra we will
+   rather drop than lose the whole call to. */
+const CALL_CORE = new Set(["Subject", "Call_Type", "Call_Start_Time"]);
+/* The lead link is three fields that only mean anything together. */
+const LINK_FIELDS = ["Who_Id", "What_Id", "$se_module"];
+
+/* POST a call, and when Zoho rejects ONE field as invalid, drop that field
+   and send again — so a single bad value (the usual one: a Call_Result this
+   org's picklist does not have) never costs us the whole call. The call
+   still lands, just without that field, and what was dropped is returned so
+   it can be recorded. Core fields are never dropped; if Zoho rejects one of
+   those, or a field we are not even sending, we give up and surface it. */
+async function postCall(userId, call) {
+  const dropped = [];
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const w = await people.writeAs(userId, "/Calls", { method: "POST", body: JSON.stringify({ data: [call] }) });
+    const d = w.d?.data?.[0];
+    if (d && d.status === "success") return { d, as: w.as, dropped };
+    const field = d?.details?.api_name;
+    const invalid = d?.code === "INVALID_DATA" || /invalid data/i.test(d?.message || "");
+    if (!invalid || !field || CALL_CORE.has(field)) throw new Error(zErr(d, "Zoho refused the call"));
+    const keys = LINK_FIELDS.includes(field) ? LINK_FIELDS : [field];
+    let removed = false;
+    for (const k of keys) if (k in call) { delete call[k]; dropped.push(k); removed = true; }
+    if (!removed) throw new Error(zErr(d, "Zoho refused the call"));   // not a field we sent — cannot fix
+  }
+  throw new Error("Zoho refused the call after dropping every optional field");
+}
+
 /* Send one row that has already been claimed (crm_state = 'sending'). */
 async function sendClaimed(id) {
   const row = (await query(`${ROW} WHERE a.id = $1`, [id])).rows[0];
@@ -319,23 +348,26 @@ async function sendClaimed(id) {
   try {
     const { call, link, recording, recId } = await buildCall(row);
     /* As the rep, if they have signed in to Zoho themselves — then the
-       Call is theirs in the CRM. Otherwise as the service account. */
-    const w = await people.writeAs(row.user_id, "/Calls", { method: "POST", body: JSON.stringify({ data: [call] }) });
-    const d = w.d?.data?.[0];
-    if (!d || d.status !== "success") throw new Error(zErr(d, "Zoho refused the call"));
+       Call is theirs in the CRM. Otherwise as the service account. The call
+       is sent resiliently: a bad field is dropped, not the whole call. */
+    const { d, as, dropped } = await postCall(row.user_id, call);
+    /* If the lead link itself was dropped, the call is not attached to it. */
+    const finalLink = dropped.some((k) => LINK_FIELDS.includes(k)) ? null : link;
     const young = Date.now() - new Date(row.at).getTime() < REC_WINDOW_MIN * 60e3;
     await query(
       `UPDATE activity_log SET meta = meta || jsonb_build_object(
          'crm_state', 'done', 'crm_call_id', $2::text, 'crm_synced_at', now(),
-         'crm_related', $3::jsonb, 'crm_as', $4::text, 'crm_rec_pending', $5::boolean) - 'crm_error'
-        WHERE id = $1`, [id, String(d.details.id), JSON.stringify(link), w.as, !recId && young]);
+         'crm_related', $3::jsonb, 'crm_as', $4::text, 'crm_rec_pending', $5::boolean,
+         'crm_dropped', $6::jsonb) - 'crm_error'
+        WHERE id = $1`, [id, String(d.details.id), JSON.stringify(finalLink), as, !recId && young,
+        dropped.length ? JSON.stringify(dropped) : null]);
     /* The recording is already published: put the file on the Call now. A
        failure here never undoes the Call — it stays pending and is retried. */
     if (recId) {
       await query(`UPDATE activity_log SET meta = meta || jsonb_build_object('crm_rec_linked', $2::text) WHERE id = $1`, [id, LINK_V]);
       await attachAndMark(row, String(d.details.id), recId);
     }
-    return { sent: true, as: w.as, zohoId: String(d.details.id), link };
+    return { sent: true, as, zohoId: String(d.details.id), link: finalLink, dropped };
   } catch (e) {
     await query(
       `UPDATE activity_log SET meta = meta || jsonb_build_object(
