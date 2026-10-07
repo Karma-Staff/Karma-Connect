@@ -74,8 +74,10 @@ async function people() {
     `SELECT lower(u.email) AS email,
             coalesce(nullif(btrim(u.display_name), ''), u.email) AS name,
             nullif(btrim(v.extension), '') AS ext,
+            m.role AS role,
             lower(mu.email) AS manager
        FROM app_users u
+       LEFT JOIN organization_memberships m ON m.user_id = u.id
        LEFT JOIN voice_identities v ON v.user_id = u.id AND v.provider = 'ringcentral'
        LEFT JOIN app_users mu ON mu.id = u.manager_id
          AND NOT mu.disabled AND mu.deleted_at IS NULL
@@ -124,6 +126,12 @@ router.get("/api/calls/live", requireAdmin, async (req, res, next) => {
     const users = await people();
     const byExt = new Map(users.filter((u) => u.ext).map((u) => [u.ext, u]));
     const byEmail = new Map(users.map((u) => [u.email, u]));
+    /* Show only our own people — sales reps, admins, owners. Other RingCentral
+       users (other departments) stay off the board. Safety net: if nobody has
+       a role yet, show everyone rather than an empty board. */
+    const ROLE_OK = new Set(["owner", "admin", "sales_rep"]);
+    const filterRoles = users.some((u) => ROLE_OK.has(u.role));
+    const okUser = (u) => !filterRoles || (u && ROLE_OK.has(u.role));
 
     /* RingCentral presence, four seconds fresh: the board polls every five,
        and several managers watching it share one request. */
@@ -149,6 +157,7 @@ router.get("/api/calls/live", requireAdmin, async (req, res, next) => {
       const e = extById.get(String(p.extension?.id || ""));
       if (!e) continue;                                   // a queue or a device, not a person
       const u = byExt.get(e.ext);
+      if (!okUser(u)) continue;                  // another department's extension
       const app = u ? LIVE.get(u.email) : null;
       if (u) used.add(u.email);
       const call = (p.activeCalls || [])[0] || null;
@@ -186,6 +195,7 @@ router.get("/api/calls/live", requireAdmin, async (req, res, next) => {
     for (const [email, app] of LIVE) {
       if (used.has(email)) continue;
       const u = byEmail.get(email);
+      if (!okUser(u)) continue;
       agents.push({ name: u?.name || app.name, ext: u?.ext || "", status: app.state,
         lead: app.leadId ? slimLead(await leadById(app.leadId)) : null, number: app.number,
         direction: "Outbound", since: app.state === "ringing" ? app.dialAt : app.answerAt || app.dialAt,

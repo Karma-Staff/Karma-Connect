@@ -87,7 +87,7 @@ async function dispositionsIn(fromMs, toMs) {
    it a minute or two later, and even for a leg RingCentral never logs. */
 const OWN_RESULT = { connected: "Connected", "no-answer": "No Answer", busy: "Busy",
   failed: "Failed", cancelled: "Canceled", placed: "Placed" };
-async function ownCalls(fromMs, toMs) {
+async function ownCalls(fromMs, toMs, restrict) {
   const { rows } = await query(
     `SELECT a.at, a.actor, a.user_id, a.lead_id,
             a.meta->>'number' AS number, a.meta->>'outcome' AS outcome,
@@ -98,7 +98,9 @@ async function ownCalls(fromMs, toMs) {
        FROM activity_log a
        LEFT JOIN leads l ON l.id = a.lead_id AND l.deleted_at IS NULL
        LEFT JOIN app_users u ON lower(u.email) = lower(a.actor)
-      WHERE a.action = 'call' AND a.meta ? 'number' AND a.at >= $1 AND a.at < $2`,
+       LEFT JOIN organization_memberships mm ON mm.user_id = u.id
+      WHERE a.action = 'call' AND a.meta ? 'number' AND a.at >= $1 AND a.at < $2
+        ${restrict ? "AND mm.role IN ('owner', 'admin', 'sales_rep')" : ""}`,
     [new Date(fromMs).toISOString(), new Date(toMs).toISOString()]);
   return rows.map((r) => ({ ...r, at: +new Date(r.at) }));
 }
@@ -161,7 +163,7 @@ async function buildRows(req) {
   const winFrom = dash.localMidnight(days[0], tz), winTo = dash.localMidnight(dash.addDays(days[days.length - 1], 1), tz);
   const dispos = await dispositionsIn(winFrom, winTo).catch(() => new Map());
 
-  const rows = calls.map((c) => {
+  let rows = calls.map((c) => {
     const out = c.dir === "Outbound";
     const agent = (c.extId && extById.get(c.extId))
       || extByNum.get(out ? c.fromExt : c.toExt) || null;
@@ -189,6 +191,12 @@ async function buildRows(req) {
     };
   });
 
+  /* Show only our own people — sales reps, admins, owners. Everyone else on
+     the RingCentral account (other departments) is left out. Safety net: if
+     nobody is mapped yet, show everything rather than an empty log. */
+  const allow = await dash.allowedAgents().catch(() => ({ empty: true }));
+  if (!allow.empty) rows = rows.filter((r) => r.agent && dash.agentAllowed(allow, r.agent.ext, r.agent.id));
+
   /* Fill the gaps with Karma Connect's own call records: add one only when
      RingCentral has no row for the same number within fifteen minutes, so a
      connected call RingCentral already logged is never listed twice. This
@@ -201,7 +209,7 @@ async function buildRows(req) {
     rcByNum.get(d).push(r.at);
   }
   const MATCH_MS = 15 * 60e3;
-  const own = await ownCalls(winFrom, winTo).catch(() => []);
+  const own = await ownCalls(winFrom, winTo, !allow.empty).catch(() => []);
   for (const o of own) {
     const d = digits10(o.number);
     if (!d || o.at < winFrom || o.at >= winTo) continue;

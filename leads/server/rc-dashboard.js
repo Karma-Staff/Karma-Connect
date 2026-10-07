@@ -25,6 +25,7 @@
    than presenting one person's calls as the company's. */
 
 const express = require("express");
+const { query } = require("./db");
 const { requireAdmin } = require("./auth");
 const rc = require("./ringcentral");
 const { regionOf, countryOf } = require("./areacodes");
@@ -388,5 +389,33 @@ router.get("/api/voice/rc/dashboard", requireAdmin, async (req, res, next) => {
   }
 });
 
+/* The RingCentral people Karma Connect shows: only those who are a sales
+   rep, admin or owner here. Everyone else on the same RingCentral account —
+   other departments using it for their own reasons — is left out of the call
+   logs, the live board and the reports. Returns the allowed extension numbers
+   and extension ids, and `empty` when nobody is mapped yet: callers must then
+   NOT filter, so a fresh or mis-set deployment never blanks everything out.
+   Cached a minute; roles change rarely and this is read on every board poll. */
+let _allowed = { at: 0, v: null };
+async function allowedAgents() {
+  if (_allowed.v && Date.now() - _allowed.at < 60e3) return _allowed.v;
+  const { rows } = await query(
+    `SELECT nullif(btrim(v.extension), '') AS ext, v.rc_owner_id AS id
+       FROM voice_identities v
+       JOIN app_users u ON u.id = v.user_id
+       LEFT JOIN organization_memberships m ON m.user_id = u.id
+      WHERE v.provider = 'ringcentral' AND NOT u.disabled AND u.deleted_at IS NULL
+        AND m.role IN ('owner', 'admin', 'sales_rep')`);
+  const exts = new Set(), ids = new Set();
+  for (const r of rows) { if (r.ext) exts.add(r.ext); if (r.id) ids.add(String(r.id)); }
+  const v = { exts, ids, empty: exts.size === 0 && ids.size === 0 };
+  _allowed = { at: Date.now(), v };
+  return v;
+}
+/* Is this extension (by number and/or id) one we show? */
+const agentAllowed = (allow, ext, id) =>
+  allow.empty || (ext && allow.exts.has(ext)) || (id != null && allow.ids.has(String(id)));
+
 module.exports = { router, rcGet, cached, extensions, companyNumbers, fetchDay, safeTz, wall, localMidnight, addDays,
+  allowedAgents, agentAllowed,
   _test: { localMidnight, addDays, shape, wall } };
