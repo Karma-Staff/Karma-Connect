@@ -5360,6 +5360,28 @@ function kdIncoming(session) {
   });
 }
 
+/* Compulsory recording: every connected call records itself, so a recording
+   never depends on a rep remembering to press Record. Needs on-demand
+   recording enabled on the RingCentral account; if it is refused the call
+   still goes through un-recorded (we never drop a call over this) and the rep
+   is told once where the switch is. The Record control still works, so a rep
+   can stop it for a moment if they must. */
+function kdAutoRecord(s) {
+  if (!s || KD.rec || typeof s.startRecording !== "function") return;
+  s.startRecording()
+    .then((r) => {
+      if (r && r.code !== undefined && +r.code !== 0) throw new Error(r.description || r.message || "code " + r.code);
+      KD.rec = true; kdRender();
+    })
+    .catch((e) => {
+      console.warn("[karma] auto-record:", e);
+      if (!KD.autoRecWarned) {
+        KD.autoRecWarned = true;
+        kdToast("This call isn't recording — turn on on-demand recording for your RingCentral account");
+      }
+    });
+}
+
 async function kdAnswer() {
   const inc = KD.incoming;
   if (!inc) return;
@@ -5379,6 +5401,7 @@ async function kdAnswer() {
   kdStartClock();
   kdLive("live");
   kdRender();
+  kdAutoRecord(s);
   const answeredAt = Date.now();
   s.on("disposed", () => {
     VOICE.call.seconds = Math.max(0, Math.round((Date.now() - answeredAt) / 1000));
@@ -5473,6 +5496,7 @@ async function rcCall(digits, name, leadId) {
       kdLive("live");
       kdRender();
       kdToast("Connected to " + (name || kdFmtNum(digits)));
+      kdAutoRecord(session);
     });
     /* A refused call fires "failed" and then "disposed"; finish runs once. */
     session.on("disposed", () => finish(VOICE.call.connected ? "connected" : "no-answer"));
