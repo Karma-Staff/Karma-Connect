@@ -2542,20 +2542,42 @@ label.check input[type="checkbox"] { width: auto; margin: 0; accent-color: var(-
 .pd-join { margin-left: auto; }
 
 /* "your manager started a campaign" — wherever the rep is in the app */
-.pd-banner { position: fixed; z-index: 95; left: 50%; top: 18px; transform: translateX(-50%);
-  display: flex; align-items: center; gap: 14px; max-width: min(640px, calc(100vw - 32px));
-  padding: 12px 12px 12px 14px; border-radius: 16px; background: var(--surface);
-  border: 1px solid color-mix(in srgb, var(--good) 45%, var(--border));
-  box-shadow: 0 18px 50px -10px rgba(0,0,0,.55); animation: kd-pop .25s ease-out both; }
-.pd-banner-ic { width: 36px; height: 36px; flex: none; border-radius: 50%; display: flex; align-items: center;
-  justify-content: center; background: color-mix(in srgb, var(--good) 16%, transparent); color: var(--good); }
-.pd-banner-ic svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linejoin: round; }
-.pd-banner-t { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.pd-banner-t b { font-size: 13.5px; color: var(--ink); }
-.pd-banner-t span { font-size: 12px; color: var(--ink-3); }
-.pd-banner-x { width: 30px; height: 30px; flex: none; border: 0; border-radius: 50%; background: transparent;
-  color: var(--ink-3); cursor: pointer; font-size: 14px; }
+/* Campaign-start alert. Calling is the whole job, so when a manager starts a
+   run this is not a quiet corner toast — it takes the centre of the screen,
+   over a dimmed page, and pulses until the rep joins or dismisses it. Built
+   from the same tokens as everything else so it reads as Karma Connect, just
+   louder: the accent, a big ring, one obvious button. */
+.pd-banner { position: fixed; inset: 0; z-index: 95; display: flex; align-items: center; justify-content: center;
+  padding: 24px; background: rgba(4,8,16,.55); -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+  animation: pd-fade .18s ease-out both; }
+.pd-alert { position: relative; width: min(440px, calc(100vw - 48px)); box-sizing: border-box;
+  display: flex; flex-direction: column; align-items: center; text-align: center; gap: 16px;
+  padding: 34px 28px 28px; border-radius: 22px; background: var(--surface); border: 2px solid var(--accent);
+  box-shadow: 0 30px 80px -12px rgba(0,0,0,.7);
+  animation: pd-pop .28s cubic-bezier(.2,.8,.2,1.15) both, pd-alarm 1.5s ease-in-out .3s infinite; }
+.pd-alert-ic { position: relative; width: 76px; height: 76px; flex: none; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--accent-soft); color: var(--accent-ink); }
+.pd-alert-ic::after { content: ""; position: absolute; inset: -6px; border-radius: 50%;
+  border: 2px solid var(--accent); animation: pd-ping 1.5s ease-out infinite; }
+.pd-alert-ic svg { width: 36px; height: 36px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linejoin: round; }
+.pd-alert-t b { display: block; font-size: 20px; font-weight: 800; letter-spacing: -.01em; color: var(--ink); line-height: 1.25; }
+.pd-alert-t span { display: block; margin-top: 7px; font-size: 14px; line-height: 1.45; color: var(--ink-2); }
+.pd-alert-go { min-width: 220px; height: 48px; padding: 0 28px; font-size: 15.5px; font-weight: 700; border-radius: 24px; }
+.pd-banner-x { position: absolute; top: 12px; right: 12px; width: 30px; height: 30px; flex: none; border: 0;
+  border-radius: 50%; background: transparent; color: var(--ink-3); cursor: pointer; font-size: 14px; line-height: 1; }
 .pd-banner-x:hover { background: var(--surface-2); color: var(--ink); }
+@keyframes pd-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pd-pop { from { opacity: 0; transform: scale(.9); } to { opacity: 1; transform: scale(1); } }
+@keyframes pd-alarm {
+  0%, 100% { box-shadow: 0 30px 80px -12px rgba(0,0,0,.7), 0 0 0 4px var(--accent-soft); }
+  50% { box-shadow: 0 30px 80px -12px rgba(0,0,0,.7), 0 0 0 12px color-mix(in srgb, var(--accent) 32%, transparent); }
+}
+@keyframes pd-ping { 0% { opacity: .7; transform: scale(1); } 70%, 100% { opacity: 0; transform: scale(1.35); } }
+@media (prefers-reduced-motion: reduce) {
+  .pd-alert { animation: pd-pop .2s ease-out both; }
+  .pd-alert-ic::after { animation: none; opacity: 0; }
+}
 
 /* ---- Users (team directory) ---------------------------------------------- */
 #team-pane { position: relative; }

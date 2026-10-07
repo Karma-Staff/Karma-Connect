@@ -10532,11 +10532,15 @@ function pdBanner(c) {
     });
   }
   const left = Math.max(0, c.total - c.pos);
-  el.innerHTML = `<span class="pd-banner-ic">${dashIc("M13 3 5 13.5h6L10 21l8-10.5h-6L13 3Z")}</span>
-    <div class="pd-banner-t"><b>${esc(c.createdBy || "Your manager")} started “${esc(c.name)}”</b>
-      <span>${dashN(left)} lead${left === 1 ? "" : "s"} to call — join and they ring one after another</span></div>
-    <button class="btn-primary" id="pd-banner-go">Join</button>
-    <button class="pd-banner-x" id="pd-banner-x" aria-label="Dismiss">✕</button>`;
+  el.innerHTML = `<div class="pd-alert" role="alertdialog" aria-label="A power-dialer campaign has started">
+      <button class="pd-banner-x" id="pd-banner-x" aria-label="Dismiss">✕</button>
+      <span class="pd-alert-ic">${dashIc("M13 3 5 13.5h6L10 21l8-10.5h-6L13 3Z")}</span>
+      <div class="pd-alert-t">
+        <b>${esc(c.createdBy || "Your manager")} started “${esc(c.name)}”</b>
+        <span>${dashN(left)} lead${left === 1 ? "" : "s"} to call — join now and they ring one after another</span>
+      </div>
+      <button class="btn-primary pd-alert-go" id="pd-banner-go">Join the campaign</button>
+    </div>`;
 }
 
 /* ================= Caller reputation =================
