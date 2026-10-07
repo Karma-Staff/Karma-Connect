@@ -333,7 +333,10 @@ async function postCall(userId, call) {
     const field = d?.details?.api_name;
     const invalid = d?.code === "INVALID_DATA" || /invalid data/i.test(d?.message || "");
     if (!invalid || !field || CALL_CORE.has(field)) throw new Error(zErr(d, "Zoho refused the call"));
-    const keys = LINK_FIELDS.includes(field) ? LINK_FIELDS : [field];
+    /* Zoho reports a bad lead link as the nested "id" (Who_Id.id / What_Id.id)
+       — not a top-level field we could find. Treat it as the link and drop
+       all three together, so the call still lands, just unattached. */
+    const keys = (LINK_FIELDS.includes(field) || field === "id") ? LINK_FIELDS : [field];
     let removed = false;
     for (const k of keys) if (k in call) { delete call[k]; dropped.push(k); removed = true; }
     if (!removed) throw new Error(zErr(d, "Zoho refused the call"));   // not a field we sent — cannot fix
