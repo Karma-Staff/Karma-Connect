@@ -6367,9 +6367,24 @@ function cancelAutoDial(reason) {
   const was = !!CAMP.timer;
   if (CAMP.timer) { clearInterval(CAMP.timer); CAMP.timer = null; }
   CAMP.countdown = 0;
+  CAMP.nextDial = null;
   const el = $("camp-auto-state");
   if (el && reason) el.textContent = reason;
   if (was) campPaintLive();
+}
+
+/* "Call now": skip the rest of the countdown and ring the next lead straight
+   away. The wait is there so a rep can gather themselves, but it is theirs to
+   skip — nobody should have to watch a timer when they are ready. Same
+   dialInPage path as the countdown, so the call is logged identically. */
+function campSkipWait() {
+  const next = CAMP.nextDial;
+  if (!CAMP.timer || !next) return;
+  cancelAutoDial();
+  const placed = dialInPage(next.phone, next.name, next.id);
+  const el = $("camp-auto-state");
+  if (el) el.textContent = placed ? "calling " + next.name + "…" : "could not dial — call it by hand";
+  if (!placed) setAutoOn(false);
 }
 
 /* Start the countdown to the current lead. Called after an outcome, never
@@ -6378,6 +6393,9 @@ function armAutoDial(r, name) {
   const ready = autoReady();
   if (!autoOn() || !ready.ok) return;
   cancelAutoDial();
+  /* The lead the countdown will ring, so "Call now" can ring it immediately
+     without waiting out the gap. */
+  CAMP.nextDial = { phone: r.Phone, name, id: r.Id };
   CAMP.countdown = autoGap();
   const paint = () => {
     const el = $("camp-auto-state");
@@ -6414,6 +6432,7 @@ function wireCampAction(r, name) {
     cancelAutoDial("paused — press the number when you are ready");
     campPaintLive();
   });
+  $("camp-skip")?.addEventListener("click", campSkipWait);
   $("pd-pause")?.addEventListener("click", () => campPause(false));
   $("pd-resume")?.addEventListener("click", () => campPause(true));
   $("cs-dispo")?.addEventListener("click", campOpenWrap);
@@ -6610,12 +6629,19 @@ function campAction(d, phase) {
     if (c.status === "ongoing" && ready.ok && !CAMP.joined && !kdActive())
       return `<button type="button" class="cs-btn cs-primary" id="pd-join">${CS_IC.play}<span>Start calling</span></button>`;
     if (c.status === "ongoing")
-      return `<button type="button" class="cs-btn cs-dark" id="pd-pause" title="Take a break: nothing else rings until you resume">${CS_IC.pause}<span>Pause</span></button>`;
+      return campSkipBtn() + `<button type="button" class="cs-btn cs-dark" id="pd-pause" title="Take a break: nothing else rings until you resume">${CS_IC.pause}<span>Pause</span></button>`;
     return "";
   }
   if (phase === "calling" || phase === "connected") return "";
-  if (CAMP.timer) return `<button type="button" class="cs-btn cs-dark" id="camp-auto-pause">${CS_IC.pause}<span>Pause</span></button>`;
+  if (CAMP.timer) return campSkipBtn() + `<button type="button" class="cs-btn cs-dark" id="camp-auto-pause">${CS_IC.pause}<span>Pause</span></button>`;
   return "";
+}
+
+/* The "Call now" button, shown only while the between-call countdown runs. */
+function campSkipBtn() {
+  return CAMP.timer
+    ? `<button type="button" class="cs-btn cs-primary" id="camp-skip" title="Skip the wait and call the next lead now">${CS_IC.play}<span>Call now</span></button>`
+    : "";
 }
 
 /* What the state line in the bar says when nothing more specific is
