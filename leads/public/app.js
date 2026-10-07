@@ -3674,11 +3674,22 @@ async function kdVmDrop() {
       KD.vmDropped = true;
       kdVmDropCleanup();
       if (KD.session === s) kdGuard(() => s.hangup(), "hang up").catch(() => {});
+      /* The line is free now — ring the next lead if one was held back while
+         the voicemail was playing (armAutoDial deferred it). */
+      const pend = CAMP.vmPendingArm; CAMP.vmPendingArm = null;
+      if (pend) armAutoDial(pend.r, pend.name);
     };
     src.start();
     VM.drop.tick = setInterval(() => kdRender(), 500);
+    /* Free the rep at once (what Zoho Voice does): the voicemail plays to the
+       end in the background and the call hangs up on its own. Open the
+       disposition now so the rep logs and moves on; the next lead is armed
+       but held until the line is free (see armAutoDial + onended above). */
+    if (CAMP.s?.current && String(CAMP.s.current.lead?.id) === String(KD.lead?.id))
+      campaignCallEnded(KD.lead.id, "no-answer");
+    else kdOpenWrap();
     kdRender();
-    kdToast("Leaving your voicemail — the call ends when it finishes");
+    kdToast("Leaving your voicemail — disposition it now; the next call rings when it finishes");
   } catch (e) {
     console.warn("[karma] voicemail drop:", e);
     kdVmDropCleanup();
@@ -3690,6 +3701,7 @@ async function kdVmDrop() {
 function kdVmDropCancel() {
   if (!VM.drop) return;
   VM.drop.done = true;
+  CAMP.vmPendingArm = null;          // back on the line — the held next lead is off
   const { sender, mic } = VM.drop;
   kdVmDropCleanup();
   if (sender && mic && mic.readyState === "live") sender.replaceTrack(mic).catch(() => {});
@@ -5379,7 +5391,11 @@ async function kdAnswer() {
     KD.session = null;
     KD.muted = KD.held = KD.rec = false;
     kdRender();
-    kdOpenWrap(); if (KD.lead) kdLoadLead(KD.lead.id);
+    /* A voicemail drop already opened the disposition when it was pressed, and
+       may already have moved the session on — so do not pop it a second time
+       here. The flag is per call; clear it for the next one. */
+    if (!KD.vmDropped) { kdOpenWrap(); if (KD.lead) kdLoadLead(KD.lead.id); }
+    KD.vmDropped = false;
     if (VOICE.rcSession === s) VOICE.rcSession = null;
   });
 }
@@ -6403,6 +6419,15 @@ function campSkipWait() {
 function armAutoDial(r, name) {
   const ready = autoReady();
   if (!autoOn() || !ready.ok) return;
+  /* The one line is still busy leaving a voicemail: hold the next lead until
+     it finishes (the VM-drop's onended fires this again when the line frees),
+     so we never ring a stranger over the voicemail still playing. */
+  if (VM.drop) {
+    CAMP.vmPendingArm = { r, name };
+    const el = $("camp-auto-state");
+    if (el) el.textContent = "leaving your voicemail — the next lead rings when it finishes";
+    return;
+  }
   cancelAutoDial();
   /* The lead the countdown will ring, so "Call now" can ring it immediately
      without waiting out the gap. */
