@@ -5374,11 +5374,11 @@ function kdAutoRecord(s) {
       KD.rec = true; kdRender();
     })
     .catch((e) => {
-      console.warn("[karma] auto-record:", e);
-      if (!KD.autoRecWarned) {
-        KD.autoRecWarned = true;
-        kdToast("This call isn't recording — turn on on-demand recording for your RingCentral account");
-      }
+      /* Quiet: with RingCentral's Automatic Call Recording on (the usual
+         setup), server-side recording already covers the call and the app's
+         on-demand request is simply declined — not a problem to flag. The
+         app attempt stays as a fallback for accounts using On-Demand only. */
+      console.warn("[karma] auto-record (likely covered by Automatic Call Recording):", e?.message || e);
     });
 }
 
