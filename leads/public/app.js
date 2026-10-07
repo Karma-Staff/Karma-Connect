@@ -7075,7 +7075,7 @@ async function loadMyHistory(more) {
   const rows = MC.rows;
   $("mc-list").innerHTML = !rows.length ? `<p class="act-empty">No calls${MC.q || MC.outcome ? " match" : " in this period"}.</p>` : `
     <div class="cl-tablewrap"><table class="cl-table mc-table">
-      <thead><tr><th>When</th><th>Lead</th><th>Number</th><th>Outcome</th><th class="n">Length</th><th>Disposition</th><th>Campaign</th></tr></thead>
+      <thead><tr><th>When</th><th>Lead</th><th>Number</th><th>Outcome</th><th class="n">Length</th><th>Recording</th><th>Disposition</th><th>Campaign</th></tr></thead>
       <tbody>${rows.map((r) => `<tr>
         <td><div class="cl-party"><b>${esc(new Date(r.at).toLocaleDateString([], { month: "short", day: "numeric" }))}</b>
           <span>${esc(new Date(r.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }))}${r.direction === "inbound" ? " · incoming" : ""}</span></div></td>
@@ -7084,11 +7084,18 @@ async function loadMyHistory(more) {
         <td>${esc(r.number ? dashPhone(r.number) : "—")}</td>
         <td><span class="mc-out ${esc(r.outcome || "")}">${esc(OUTCOME_WORDS[r.outcome] || r.outcome || "—")}</span></td>
         <td class="n">${r.outcome === "connected" ? esc(dashDur(r.seconds)) : "—"}</td>
+        <td>${r.recording ? `<button type="button" class="mc-play" data-rec="${esc(r.recording)}" title="Play this call">▶ Play</button>` : `<span class="dash-mute">—</span>`}</td>
         <td>${r.disposition ? `<span class="dash-chip">${esc(r.disposition)}</span>` : `<span class="dash-mute">—</span>`}${
           r.note ? `<div class="mc-note">${esc(r.note)}</div>` : ""}</td>
         <td>${esc(r.campaign || "")}</td></tr>`).join("")}</tbody></table></div>
     ${MC.more ? `<div class="mc-more"><button class="btn-ghost" id="mc-more">Show more</button></div>` : ""}`;
   $("mc-more")?.addEventListener("click", () => loadMyHistory(true));
+  $("mc-list").querySelectorAll(".mc-play").forEach((b) =>
+    b.addEventListener("click", () => {
+      const a = document.createElement("audio");
+      a.controls = true; a.autoplay = true; a.preload = "none"; a.className = "mc-audio"; a.src = b.dataset.rec;
+      b.replaceWith(a);
+    }));
 }
 
 /* ---------------- My settings ----------------

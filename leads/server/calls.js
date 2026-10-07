@@ -287,7 +287,8 @@ router.get("/api/calls/mine", requireUser, async (req, res, next) => {
       `SELECT a.id, a.at, a.lead_id, a.lead_name, l.kind AS lead_kind,
               a.meta->>'number' AS number, a.meta->>'outcome' AS outcome,
               coalesce((a.meta->>'seconds')::int, 0) AS seconds, a.meta->>'direction' AS direction,
-              a.meta->>'disposition' AS disposition, a.meta->>'dispo_note' AS note, a.meta->>'campaign' AS campaign
+              a.meta->>'disposition' AS disposition, a.meta->>'dispo_note' AS note, a.meta->>'campaign' AS campaign,
+              a.meta->>'rec_id' AS rec_id
          FROM activity_log a LEFT JOIN leads l ON l.id = a.lead_id AND l.deleted_at IS NULL
         WHERE ${where} AND ($6::timestamptz IS NULL OR a.at < $6)
         ORDER BY a.at DESC LIMIT 101`, [...args, before])).rows;
@@ -296,8 +297,12 @@ router.get("/api/calls/mine", requireUser, async (req, res, next) => {
               count(*) FILTER (WHERE a.meta->>'outcome' = 'connected')::int AS connected,
               coalesce(sum((a.meta->>'seconds')::int) FILTER (WHERE a.meta->>'outcome' = 'connected'), 0)::int AS seconds
          FROM activity_log a WHERE ${where}`, args)).rows[0];
+    /* A signed, self-authorising link to the rep's own recording (calllogs.js);
+       required lazily to avoid a load-order cycle. null when there is none, or
+       APP_URL is unset (local dev). */
+    const recLink = require("./calllogs").recordingLink;
     res.json({ days, summary: sum, more: rows.length > 100,
-      list: rows.slice(0, 100).map((r) => ({ ...r, id: +r.id })) });
+      list: rows.slice(0, 100).map((r) => ({ ...r, id: +r.id, recording: recLink(r.rec_id) || null })) });
   } catch (e) { next(e); }
 });
 

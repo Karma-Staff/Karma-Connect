@@ -354,13 +354,17 @@ async function sendClaimed(id) {
     /* If the lead link itself was dropped, the call is not attached to it. */
     const finalLink = dropped.some((k) => LINK_FIELDS.includes(k)) ? null : link;
     const young = Date.now() - new Date(row.at).getTime() < REC_WINDOW_MIN * 60e3;
+    /* Keep the RingCentral recording id on the row so a rep can play their
+       own call back from My calls (a signed link, calls.js). Not a voicemail
+       id; coalesce so a null never wipes one already found. */
+    const storeRec = recId && !String(recId).startsWith("vm:") ? String(recId) : null;
     await query(
       `UPDATE activity_log SET meta = meta || jsonb_build_object(
          'crm_state', 'done', 'crm_call_id', $2::text, 'crm_synced_at', now(),
          'crm_related', $3::jsonb, 'crm_as', $4::text, 'crm_rec_pending', $5::boolean,
-         'crm_dropped', $6::jsonb) - 'crm_error'
+         'crm_dropped', $6::jsonb, 'rec_id', coalesce($7::text, meta->>'rec_id')) - 'crm_error'
         WHERE id = $1`, [id, String(d.details.id), JSON.stringify(finalLink), as, !recId && young,
-        dropped.length ? JSON.stringify(dropped) : null]);
+        dropped.length ? JSON.stringify(dropped) : null, storeRec]);
     /* The recording is already published: put the file on the Call now. A
        failure here never undoes the Call — it stays pending and is retried. */
     if (recId) {
@@ -419,6 +423,10 @@ async function backfillRecordings() {
     try {
       const recId = await recordingFor(row);
       if (!recId) continue;                  // not published yet; next minute
+      /* Found it late — keep it on the row so My calls can play it back. */
+      if (!String(recId).startsWith("vm:"))
+        await query(`UPDATE activity_log SET meta = meta || jsonb_build_object('rec_id', $2::text) WHERE id = $1`,
+          [row.id, String(recId)]);
       if (row.meta.crm_rec_linked !== LINK_V) {
         const { call, recording } = await buildCall(row, { recId });
         await people.writeAs(row.user_id, "/Calls", { method: "PUT", body: JSON.stringify({ data: [{
