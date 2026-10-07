@@ -481,6 +481,12 @@ router.post("/api/dialer/campaigns", requireAdmin, express.json({ limit: "4kb" }
     const name = String(b.name || "").trim().slice(0, NAME_MAX);
     const owner = String(b.owner || "").trim().toLowerCase();
     const statuses = (Array.isArray(b.statuses) ? b.statuses : OPEN_STATUSES).filter((x) => STATUSES.includes(x));
+    /* Which kinds of lead go in: companies, people, job postings — or any.
+       Lets a manager build a campaign of just the people, or just the
+       companies, rather than everything the rep has. */
+    const KINDS = ["company", "person", "job"];
+    let kinds = (Array.isArray(b.kinds) ? b.kinds : KINDS).filter((x) => KINDS.includes(x));
+    if (!kinds.length) kinds = KINDS;
     const gap = Math.max(2, Math.min(60, Math.round(+b.gap || 6)));
     const limit = Math.max(1, Math.min(MAX_CAMPAIGN, Math.round(+b.limit || MAX_CAMPAIGN)));
     if (!name) return res.status(400).json({ error: "Give the campaign a name." });
@@ -501,9 +507,9 @@ router.post("/api/dialer/campaigns", requireAdmin, express.json({ limit: "4kb" }
          LEFT JOIN recents r ON r.lead_id = l.id AND r.user_id = $3
         WHERE btrim(l.owner) = $1 AND l.deleted_at IS NULL AND NOT l.removed
           AND nullif(btrim(l.phone), '') IS NOT NULL
-          AND l.status = ANY($2)
+          AND l.status = ANY($2) AND l.kind = ANY($4)
         ORDER BY r.touched_at ASC NULLS FIRST, l.date_added DESC NULLS LAST, l.id
-        LIMIT ${limit}`, [rep.email, statuses, rep.id])).rows.map((r) => r.id) : null;
+        LIMIT ${limit}`, [rep.email, statuses, rep.id, kinds])).rows.map((r) => r.id) : null;
     if (ids && !ids.length) return res.status(400).json({
       error: `${rep.email} has no assigned leads with a phone number and those statuses. Assign them some first.` });
 
@@ -518,7 +524,7 @@ router.post("/api/dialer/campaigns", requireAdmin, express.json({ limit: "4kb" }
 
     const status = b.start ? "ongoing" : "draft";
     const filters = JSON.stringify({ kind: "campaign", name, created_by: me(req), status, gap, source,
-      statuses, hasPhone: true, callback, ...(b.start ? { started: new Date().toISOString() } : {}) });
+      statuses, kinds, hasPhone: true, callback, ...(b.start ? { started: new Date().toISOString() } : {}) });
     const out = await tx(async (client) => {
       let leadIds = ids;
       if (source === "unassigned") {
@@ -529,10 +535,11 @@ router.post("/api/dialer/campaigns", requireAdmin, express.json({ limit: "4kb" }
             WHERE id IN (SELECT id FROM leads
                           WHERE nullif(btrim(owner), '') IS NULL AND deleted_at IS NULL AND NOT removed
                             AND nullif(btrim(phone), '') IS NOT NULL AND status = ANY($2)
+                            AND kind = ANY($3)
                           ORDER BY date_added DESC NULLS LAST, id
                           LIMIT ${limit}
                           FOR UPDATE SKIP LOCKED)
-            RETURNING id`, [rep.email, statuses])).rows.map((r) => r.id);
+            RETURNING id`, [rep.email, statuses, kinds])).rows.map((r) => r.id);
         if (!leadIds.length) return null;
         await activity.log({
           actor: me(req), user_id: req.user.id, action: "owner",

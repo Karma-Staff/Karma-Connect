@@ -10553,6 +10553,11 @@ async function openNewCampaign() {
       <fieldset class="modal-field pd-statuses"><legend>Lead statuses to include</legend>
         ${reps.statuses.map((s) => `<label><input type="checkbox" name="pd-st" value="${esc(s)}" checked> ${esc(s)}</label>`).join("")}
       </fieldset>
+      <fieldset class="modal-field pd-kinds"><legend>Lead types to include</legend>
+        <label><input type="checkbox" name="pd-kind" value="company" checked> Companies</label>
+        <label><input type="checkbox" name="pd-kind" value="person" checked> People</label>
+        <label><input type="checkbox" name="pd-kind" value="job" checked> Job postings</label>
+      </fieldset>
       <div class="pd-row">
         <label class="modal-field">Max contacts
           <input id="pd-limit" type="number" min="1" max="${reps.max}" value="${reps.max}"></label>
@@ -10579,9 +10584,12 @@ async function openNewCampaign() {
     const n = Math.min(avail, Math.max(0, +$("pd-limit").value || 0));
     const out = $("pd-count");
     if (src === "assigned" && !rep) { out.textContent = "Choose a person to see how many of their leads go in."; return; }
+    /* The counts are per status, not per type, so note when the type filter
+       will narrow it further — the exact total is shown after it's made. */
+    const kindsOff = document.querySelectorAll('input[name="pd-kind"]:checked').length < 3;
     out.innerHTML = n
       ? `<b>${dashN(n)}</b> lead${n === 1 ? "" : "s"} will be in this campaign${avail > n ? ` (of ${dashN(avail)} available)` : ""}${
-          src === "unassigned" && rep ? ` and assigned to <b>${esc(rep.name)}</b>` : ""}.`
+          src === "unassigned" && rep ? ` and assigned to <b>${esc(rep.name)}</b>` : ""}${kindsOff ? ", or fewer after the lead-type filter" : ""}.`
       : `<span class="login-error">No ${src === "unassigned" ? "unassigned" : "assigned"} leads with a phone number in those statuses.</span>`;
   };
   $("pd-form").addEventListener("input", count);
@@ -10596,6 +10604,7 @@ async function openNewCampaign() {
       const out = await api("/api/dialer/campaigns", { method: "POST", body: JSON.stringify({
         name: $("pd-name").value, owner: $("pd-owner").value,
         statuses: [...document.querySelectorAll('input[name="pd-st"]:checked')].map((x) => x.value),
+        kinds: [...document.querySelectorAll('input[name="pd-kind"]:checked')].map((x) => x.value),
         limit: +$("pd-limit").value, gap: +$("pd-gap").value, start: $("pd-start").checked,
         source: document.querySelector('input[name="pd-src"]:checked')?.value || "assigned",
         callback_ext: $("pd-callback").value || undefined }) });
