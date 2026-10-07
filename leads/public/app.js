@@ -3392,8 +3392,17 @@ function kdRender() {
      (the obvious version) meant the keypad silently did nothing whenever the
      field was focused, which is every time the panel opens. */
   const numInput = kdEl("kd-num");
-  if (numInput && numInput.value.replace(/[^0-9*#+]/g, "") !== KD.number)
-    numInput.value = kdFmtNum(KD.number);
+  const onCallPad = KD.phase === "live" && KD.session;
+  if (numInput) {
+    if (onCallPad) {
+      const want = (KD.dtmf || "").slice(-18);          // the tones sent, not the dial number
+      if (numInput.value !== want) numInput.value = want;
+      numInput.placeholder = "Keypad tones for the menu";
+    } else {
+      if (numInput.value.replace(/[^0-9*#+]/g, "") !== KD.number) numInput.value = kdFmtNum(KD.number);
+      numInput.placeholder = "(201) 555-0123";
+    }
+  }
   const go = kdEl("kd-go");
   if (go) go.disabled = active || !KD.number || !!err;
 
@@ -4726,7 +4735,10 @@ function rcWireBar() {
     if (t("[data-cancel-fu]")) return kdCancelFollowup();
 
     if (e.target.closest("#kd-return")) { KD.view = "lead"; return kdRender(); }
-    if (e.target.closest("#kd-del")) { KD.number = KD.number.slice(0, -1); return kdRender(); }
+    if (e.target.closest("#kd-del")) {
+      if (KD.phase === "live" && KD.session) return;   // can't un-send a tone mid-call
+      KD.number = KD.number.slice(0, -1); return kdRender();
+    }
     if (e.target.closest("#kd-go")) return kdDial(true);
     if (e.target.closest("#kd-call") || e.target.closest("#kd-again")) return kdDial();
     if (e.target.closest("#kd-end")) return kdHangup();
@@ -4740,6 +4752,17 @@ function rcWireBar() {
   });
 
   kdEl("kd-num")?.addEventListener("input", (e) => {
+    /* On a live call the field is a tone sender, not the dial box: send the
+       digits the rep just typed as DTMF and keep the field showing what has
+       been sent, rather than editing the company's number. */
+    if (KD.phase === "live" && KD.session) {
+      const typed = e.target.value.replace(/[^0-9*#]/g, "");
+      const prev = KD.dtmf || "";
+      if (typed.length > prev.length && typed.startsWith(prev))
+        for (const ch of typed.slice(prev.length)) kdKey(ch);   // sends each new tone
+      e.target.value = (KD.dtmf || "").slice(-18);               // resync; never the dial number
+      return;
+    }
     KD.number = e.target.value.replace(/[^0-9*#+]/g, "").slice(0, 18);
     /* The Call button is enabled by kdRender, so without this a pasted (or
        typed) number left it greyed out until some other click repainted the
@@ -4747,7 +4770,9 @@ function rcWireBar() {
        so kdRender leaves the field alone. */
     kdRender();
   });
-  kdEl("kd-num")?.addEventListener("keydown", (e) => { if (e.key === "Enter") kdDial(true); });
+  kdEl("kd-num")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !(KD.phase === "live" && KD.session)) kdDial(true);
+  });
   kdEl("kd-q")?.addEventListener("input", (e) => kdRenderQueue(KD.queue, e.target.value));
   root.addEventListener("change", (e) => {
     if (e.target.id === "kd-fu-on") { KD.wantFu = e.target.checked; return kdRenderDispos(); }
@@ -4783,10 +4808,17 @@ function kdNav(which) {
 /* A key types when idle and sends a tone when on a call — the behaviour of
    every phone anyone has used. */
 function kdKey(k) {
+  /* On a live call the keypad sends touch-tones (DTMF) to the far end — for
+     "press 2 for sales" menus — and never edits the number being shown. The
+     digits sent are kept in KD.dtmf and mirrored into the number field so the
+     rep sees what they have entered into the menu, not the company's number. */
   if (KD.phase === "live" && KD.session) {
     kdGuard(() => KD.session.sendDtmf(k), "send " + k).catch(() => {});
+    KD.dtmf = ((KD.dtmf || "") + k).slice(-32);
     const sent = kdEl("kd-dtmf-sent");
-    if (sent) sent.textContent = (sent.textContent + k).slice(-18);
+    if (sent) sent.textContent = KD.dtmf.slice(-18);
+    const numInput = kdEl("kd-num");
+    if (numInput) numInput.value = KD.dtmf.slice(-18);
     return;
   }
   if (KD.number.length < 18) { KD.number += k; kdRender(); }
@@ -5395,6 +5427,7 @@ async function kdAnswer() {
   VOICE.rcSession = s;
   KD.session = s;
   KD.phase = "live";
+  KD.dtmf = "";
   KD.muted = KD.held = KD.rec = false;
   KD.started = Date.now(); KD.elapsed = 0;
   KD.dialAt = inc.at; KD.answerAt = KD.started;
@@ -5465,7 +5498,7 @@ async function rcCall(digits, name, leadId) {
 
   KD.phase = "calling";
   KD.number = digits;
-  KD.muted = false; KD.held = false; KD.rec = false; KD.vmDropped = false;
+  KD.muted = false; KD.held = false; KD.rec = false; KD.vmDropped = false; KD.dtmf = "";
   KD.elapsed = 0; KD.started = started;
   KD.lastOutcome = null;
   KD.view = "lead";
