@@ -3648,7 +3648,18 @@ async function kdVmDrop() {
   if (!sender) return kdToast("Voicemail drop isn't available on this call");
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    /* A context made on a click can start suspended; without this the
+       voicemail plays into the line silent — the caller hears nothing. */
+    await ctx.resume().catch(() => {});
     const buf = await ctx.decodeAudioData((await vmBytes()).slice(0));
+    /* An empty or near-empty recording would "finish" the instant it starts,
+       and onended hangs up — so the call would appear to drop the moment VM
+       drop is pressed. Stop here and say why instead. */
+    if (!buf || buf.duration < 0.5) {
+      try { await ctx.close(); } catch (e) { /* fine */ }
+      KD.view = "settings"; KD.stab = "vm"; kdRender();
+      return kdToast("Your saved voicemail is empty — re-record it in Settings → Voicemail");
+    }
     const src = ctx.createBufferSource();
     src.buffer = buf;
     const dest = ctx.createMediaStreamDestination();
