@@ -37,10 +37,13 @@ async function message(row) {
       const r = await fetch(`${rc.SERVER}/restapi/v1.0/account/~/extension/${m.vm_ext || "~"}/message-store/${m.vm_msg}`,
         { headers: { Authorization: "Bearer " + tok.access_token } });
       if (r.ok) return { msg: await r.json(), tok };
-      last = Object.assign(new Error(r.status === 403
+      const err = Object.assign(new Error(r.status === 403
         ? "RingCentral refused the voicemail — the app/account needs the Read Messages permission"
         : r.status === 404 ? "RingCentral has no such voicemail" : `RingCentral voicemail ${r.status}`), { status: r.status });
-    } catch (e) { last = e; }
+      /* Keep a 403 once seen: a permission refusal is the actionable cause, and
+         a later login's 404 would hide it. */
+      if (!last || last.status !== 403) last = err;
+    } catch (e) { if (!last || last.status !== 403) last = e; }
   }
   throw last || new Error("Couldn't read the voicemail from RingCentral");
 }

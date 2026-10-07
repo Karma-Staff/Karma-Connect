@@ -2547,7 +2547,10 @@ label.check input[type="checkbox"] { width: auto; margin: 0; accent-color: var(-
    over a dimmed page, and pulses until the rep joins or dismisses it. Built
    from the same tokens as everything else so it reads as Karma Connect, just
    louder: the accent, a big ring, one obvious button. */
-.pd-banner { position: fixed; inset: 0; z-index: 95; display: flex; align-items: center; justify-content: center;
+/* Below the soft dialer (.kd / the call bar, z-index 90) on purpose: it still
+   dims the page and takes the centre, but must never cover the phone — a rep
+   has to be able to answer an incoming call while this is up. */
+.pd-banner { position: fixed; inset: 0; z-index: 85; display: flex; align-items: center; justify-content: center;
   padding: 24px; background: rgba(4,8,16,.55); -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
   animation: pd-fade .18s ease-out both; }
 .pd-alert { position: relative; width: min(440px, calc(100vw - 48px)); box-sizing: border-box;

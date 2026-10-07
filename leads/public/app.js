@@ -6492,7 +6492,7 @@ function wireCampAction(r, name) {
     cancelAutoDial("paused — press the number when you are ready");
     campPaintLive();
   });
-  $("camp-skip")?.addEventListener("click", campSkipWait);
+  $("camp-callnow")?.addEventListener("click", campSkipWait);
   $("pd-pause")?.addEventListener("click", () => campPause(false));
   $("pd-resume")?.addEventListener("click", () => campPause(true));
   $("cs-dispo")?.addEventListener("click", campOpenWrap);
@@ -6700,7 +6700,7 @@ function campAction(d, phase) {
 /* The "Call now" button, shown only while the between-call countdown runs. */
 function campSkipBtn() {
   return CAMP.timer
-    ? `<button type="button" class="cs-btn cs-primary" id="camp-skip" title="Skip the wait and call the next lead now">${CS_IC.play}<span>Call now</span></button>`
+    ? `<button type="button" class="cs-btn cs-primary" id="camp-callnow" title="Skip the wait and call the next lead now">${CS_IC.play}<span>Call now</span></button>`
     : "";
 }
 

@@ -317,22 +317,21 @@ router.get("/api/calls/mine", requireUser, async (req, res, next) => {
         const tz = dash.safeTz(String(req.query.tz || ""));
         const ymd = (ms) => { const w = dash.wall(ms, tz); return `${w.year}-${w.month}-${w.day}`; };
         const from = ymd(+new Date(list[list.length - 1].at)), to = ymd(+new Date(list[0].at));
-        /* The most recent days of the shown span first, capped at 31 — recent
-           recordings matter most and a 31-day cold read stays within limits. */
+        /* The most recent days of the shown span, capped — recent recordings
+           matter most. Read in parallel (each day is cached after its first
+           read); a day that is not connected or gets rate-limited just returns
+           nothing and those rows fall back to rec_id. */
         const days = [];
-        for (let d = to; d >= from && days.length < 31; d = dash.addDays(d, -1)) days.push(d);
+        for (let d = to; d >= from && days.length < 14; d = dash.addDays(d, -1)) days.push(d);
         recMap = new Map();
-        for (const d of days) {
-          let calls;
-          try { calls = await dash.fetchDay(req.user.id, d, tz, "extension"); }
-          catch (e) { continue; }                       // not connected / rate-limited: skip the day
-          for (const c of calls) {
-            if (!c.recId) continue;
-            const theirs = digits10(c.dir === "Outbound" ? c.toNum : c.fromNum);
-            if (!theirs) continue;
-            if (!recMap.has(theirs)) recMap.set(theirs, []);
-            recMap.get(theirs).push({ at: c.t, recId: c.recId });
-          }
+        const perDay = await Promise.all(days.map((d) =>
+          dash.fetchDay(req.user.id, d, tz, "extension").catch(() => [])));
+        for (const calls of perDay) for (const c of calls) {
+          if (!c.recId) continue;
+          const theirs = digits10(c.dir === "Outbound" ? c.toNum : c.fromNum);
+          if (!theirs) continue;
+          if (!recMap.has(theirs)) recMap.set(theirs, []);
+          recMap.get(theirs).push({ at: c.t, recId: c.recId });
         }
       } catch (e) { recMap = null; }
     }

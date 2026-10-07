@@ -98,9 +98,9 @@ async function ownCalls(fromMs, toMs, restrict) {
        FROM activity_log a
        LEFT JOIN leads l ON l.id = a.lead_id AND l.deleted_at IS NULL
        LEFT JOIN app_users u ON lower(u.email) = lower(a.actor)
-       LEFT JOIN organization_memberships mm ON mm.user_id = u.id
       WHERE a.action = 'call' AND a.meta ? 'number' AND a.at >= $1 AND a.at < $2
-        ${restrict ? "AND mm.role IN ('owner', 'admin', 'sales_rep')" : ""}`,
+        AND a.actor <> 'ringcentral'
+        ${restrict ? "AND u.id IS NOT NULL" : ""}`,
     [new Date(fromMs).toISOString(), new Date(toMs).toISOString()]);
   return rows.map((r) => ({ ...r, at: +new Date(r.at) }));
 }

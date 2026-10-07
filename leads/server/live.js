@@ -126,12 +126,11 @@ router.get("/api/calls/live", requireAdmin, async (req, res, next) => {
     const users = await people();
     const byExt = new Map(users.filter((u) => u.ext).map((u) => [u.ext, u]));
     const byEmail = new Map(users.map((u) => [u.email, u]));
-    /* Show only our own people — sales reps, admins, owners. Other RingCentral
-       users (other departments) stay off the board. Safety net: if nobody has
-       a role yet, show everyone rather than an empty board. */
-    const ROLE_OK = new Set(["owner", "admin", "sales_rep"]);
-    const filterRoles = users.some((u) => ROLE_OK.has(u.role));
-    const okUser = (u) => !filterRoles || (u && ROLE_OK.has(u.role));
+    /* Show only our own people — anyone with a Karma Connect account. Other
+       RingCentral users (other departments never added here) stay off the
+       board. Not narrowed by role: 'member' is the default and ranks the same
+       as a sales rep, so narrowing would hide a rep left on the default. */
+    const okUser = (u) => !!u;
 
     /* RingCentral presence, four seconds fresh: the board polls every five,
        and several managers watching it share one request. */
