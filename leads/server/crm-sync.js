@@ -89,6 +89,19 @@ const config = () => settings.get(KEY, { on: false });
 const zIso = (d) => new Date(d).toISOString().replace(/\.\d{3}Z$/, "+00:00");
 const mmss = (s) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 
+/* Zoho's "invalid data" on its own says nothing — the useful part is in
+   details (which field it rejected). Pull it out so the error that lands on
+   the call row, and in the settings screen, names the field instead of
+   leaving us guessing (a Call_Result value this org's picklist doesn't have
+   is the usual cause). */
+function zErr(d, fallback) {
+  const base = d?.message || d?.code || fallback;
+  const dt = d?.details;
+  const field = dt?.api_name || dt?.json_path
+    || (dt && typeof dt === "object" && Object.keys(dt).length ? JSON.stringify(dt).slice(0, 140) : "");
+  return field ? `${base} [${field}]` : base;
+}
+
 /* ---------------- building one CRM call ---------------- */
 
 async function recordingFor(row) {
@@ -169,7 +182,7 @@ async function attachRecording(row, zohoCallId, recId) {
         + `The MP3 is attached to this note (saved by Karma Connect; kept in Zoho after RingCentral deletes its copy at 90 days).`,
       Parent_Id: { module: { api_name: "Calls" }, id: String(zohoCallId) } }] }) });
     const nd = n.d?.data?.[0];
-    if (!nd || nd.code !== "SUCCESS") throw new Error("Zoho refused the recording note: " + (nd?.message || nd?.code || "unknown"));
+    if (!nd || nd.code !== "SUCCESS") throw new Error("Zoho refused the recording note: " + zErr(nd, "unknown"));
     noteId = String(nd.details.id);
     await query(`UPDATE activity_log SET meta = meta || jsonb_build_object('crm_rec_note', $2::text) WHERE id = $1`, [row.id, noteId]);
   }
@@ -177,7 +190,7 @@ async function attachRecording(row, zohoCallId, recId) {
   form.append("file", new Blob([buf], { type }), name);
   const w = await people.writeAs(row.user_id, `/Notes/${noteId}/Attachments`, { method: "POST", body: form });
   const d = w.d?.data?.[0];
-  if (!d || d.code !== "SUCCESS") throw new Error("Zoho refused the recording file: " + (d?.message || w.d?.message || d?.code || "unknown"));
+  if (!d || d.code !== "SUCCESS") throw new Error("Zoho refused the recording file: " + (zErr(d, null) || w.d?.message || "unknown"));
   return { id: String(d.details?.id || ""), noteId, name, bytes: buf.length, as: w.as };
 }
 
@@ -309,7 +322,7 @@ async function sendClaimed(id) {
        Call is theirs in the CRM. Otherwise as the service account. */
     const w = await people.writeAs(row.user_id, "/Calls", { method: "POST", body: JSON.stringify({ data: [call] }) });
     const d = w.d?.data?.[0];
-    if (!d || d.status !== "success") throw new Error(d?.message || d?.code || "Zoho refused the call");
+    if (!d || d.status !== "success") throw new Error(zErr(d, "Zoho refused the call"));
     const young = Date.now() - new Date(row.at).getTime() < REC_WINDOW_MIN * 60e3;
     await query(
       `UPDATE activity_log SET meta = meta || jsonb_build_object(
