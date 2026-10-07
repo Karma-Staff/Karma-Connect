@@ -2709,6 +2709,28 @@ label.check input[type="checkbox"] { width: auto; margin: 0; accent-color: var(-
   .live-card, .live-card::before, .live-badge i { animation: none; }
 }
 
+/* a rep you are the designated manager for (migration 020): marked on the
+   live board so you can see at a glance which calls are yours to cover */
+.live-cover { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--accent-ink); background: var(--accent-soft); border-radius: 8px; padding: 1px 6px;
+  align-self: flex-start; margin-top: 2px; }
+.live-card.yours { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+/* their phone is ringing and it is yours to pick up — the one card that should
+   pull the eye across the floor */
+.live-card.pickup { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.live-pickup { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 700;
+  color: var(--accent-ink); background: var(--accent-soft); border-radius: 10px; padding: 7px 10px;
+  animation: dash-pulse 1.2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .live-pickup { animation: none; } }
+
+/* Manage team: the designated-manager picker sits beside the role select;
+   the gap keeps rows that have no picker (admins, owners) aligned with it */
+.team-panel .user-row .user-manager { height: 30px; padding: 0 8px; font-size: 12.5px;
+  border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--ink);
+  max-width: 150px; }
+.user-manager-gap { flex: none; width: 150px; }
+@media (max-width: 560px) { .user-manager-gap { display: none; } }
+
 /* ---- The soft dialler ---------------------------------------------------
 
    RingCentral's web-phone SDK is headless — SIP engine, no interface — so

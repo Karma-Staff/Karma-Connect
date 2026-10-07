@@ -38,6 +38,30 @@ function mayGrant(actor, role) {
   return rankOf(role) < rankOf(actor.role);
 }
 
+/* Who may be a rep's designated manager (migration 020).
+
+   A designation says "this person covers that rep's calls", so only someone
+   who could actually take the call belongs on the other end: an admin or
+   owner, present on the team. Pure so it can be tested without a database —
+   the caller fetches target and candidate first and hands the rows in. null
+   candidate means "clear the designation", which is always allowed once the
+   actor is cleared to edit the target.
+
+   target:    { id, role }           the person being covered
+   candidate: { id, role, disabled } the proposed manager, or null to clear
+   -> an error string for the client, or null when the assignment is fine. */
+function managerAssignmentError(target, candidate) {
+  if (candidate === null) return null;                 // clearing it
+  if (!candidate) return "no such manager";
+  if (candidate.id === target.id) return "a person can't be their own manager";
+  if (candidate.disabled) return "that manager's account is disabled";
+  if (rankOf(candidate.role) < RANK.admin)
+    return "a designated manager must be an admin or owner";
+  if (rankOf(target.role) >= RANK.admin)
+    return "only reps have a designated manager";
+  return null;
+}
+
 async function targetOf(id) {
   return (await query(
     `SELECT u.id, u.email, u.disabled, m.role
@@ -50,9 +74,12 @@ router.get("/api/users", async (req, res, next) => {
   try {
     const rows = (await query(
       `SELECT u.id, u.email, u.display_name, u.disabled, u.created_at, m.role,
+              u.manager_id,
+              coalesce(nullif(btrim(mu.display_name), ''), mu.email) AS manager_name,
               (SELECT max(at) FROM activity_log a WHERE a.user_id = u.id) AS last_active
        FROM app_users u
        LEFT JOIN organization_memberships m ON m.user_id = u.id
+       LEFT JOIN app_users mu ON mu.id = u.manager_id AND mu.deleted_at IS NULL
        WHERE u.deleted_at IS NULL
        ORDER BY u.email`)).rows;
     /* Report the rank the person will actually get, not just the row: an
@@ -141,6 +168,36 @@ router.patch("/api/users/:id", express.json({ limit: "4kb" }), async (req, res, 
           error: `Only the owner can appoint ${b.role === "owner" ? "an owner" : "an admin"}.` });
     }
 
+    /* The rep's designated manager (migration 020): null clears it, a user
+       id sets it. The candidate is checked against the same ladder the rest
+       of this file uses — effective role, so an OWNER_EMAILS owner qualifies
+       whatever the table says. The role the target will HAVE after this save
+       is what we test against, so demoting someone to admin and clearing
+       their manager in one go is coherent. */
+    let managerId;                                        // undefined = not touched
+    if ("manager_id" in b) {
+      const raw = b.manager_id;
+      if (raw === null || raw === "" ) managerId = null;
+      else if (Number.isInteger(+raw) && +raw > 0) managerId = +raw;
+      else return res.status(400).json({ error: "manager_id must be a user id or null" });
+
+      let candidate = null;
+      if (managerId !== null) {
+        const c = (await query(
+          `SELECT u.id, u.email, u.disabled, m.role
+             FROM app_users u
+             LEFT JOIN organization_memberships m ON m.user_id = u.id
+            WHERE u.id = $1 AND u.deleted_at IS NULL`, [managerId])).rows[0];
+        candidate = c && { id: c.id, disabled: c.disabled,
+          role: isOwnerEmail(c.email) ? "owner" : (c.role || "member") };
+      }
+      const effectiveTargetRole = isOwnerEmail(target.email)
+        ? "owner" : (("role" in b) ? b.role : targetRole);
+      const problem = managerAssignmentError(
+        { id, role: effectiveTargetRole }, managerId === null ? null : candidate);
+      if (problem) return res.status(400).json({ error: problem });
+    }
+
     /* Nobody may empty the top of the ladder. Counted per rank rather than
        once for 'admin', because demoting the last owner to admin would pass
        an admin-only check while leaving the owner-only actions — purging the
@@ -170,6 +227,9 @@ router.patch("/api/users/:id", express.json({ limit: "4kb" }), async (req, res, 
         await client.query(
           "UPDATE organization_memberships SET role = $1 WHERE user_id = $2",
           [b.role, id]);
+      if (managerId !== undefined)
+        await client.query(
+          "UPDATE app_users SET manager_id = $1 WHERE id = $2", [managerId, id]);
     });
 
     /* Said plainly rather than left for them to discover: OWNER_EMAILS wins
@@ -223,6 +283,11 @@ router.delete("/api/users/:id", async (req, res, next) => {
     const out = await tx(async (client) => {
       await client.query("UPDATE app_users SET disabled = true, deleted_at = now() WHERE id = $1", [id]);
       await client.query("DELETE FROM organization_memberships WHERE user_id = $1", [id]);
+      /* This is a soft delete, so the manager_id foreign key's ON DELETE SET
+         NULL never fires: clear it by hand, both the reps this person covered
+         and (tidiness) their own, so nobody is left covered by a ghost. */
+      await client.query(
+        "UPDATE app_users SET manager_id = NULL WHERE manager_id = $1 OR id = $1", [id]);
       for (const t of ["voice_identities", "crm_identities", "voicemail_drops"])
         await client.query(`DELETE FROM ${t} WHERE user_id = $1`, [id]);
       const sessions = (await client.query(
@@ -249,4 +314,4 @@ router.delete("/api/users/:id", async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-module.exports = { router };
+module.exports = { router, managerAssignmentError };

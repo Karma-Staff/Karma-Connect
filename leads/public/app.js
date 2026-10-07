@@ -1550,11 +1550,22 @@ const roleLabelOr = (r) => roleLabel(r || "member");
 
 function paintUsers() {
   const list = USR.list;
+  /* Who can be picked as a rep's designated manager (migration 020): admins
+     and owners who are on the team and not pending deletion. */
+  const managers = list.filter((x) => rankOf(x.role) >= RANK.admin
+    && !x.disabled && !USR.pending.get(x.id)?.delete);
+  const mgrName = (idv) => {
+    if (!idv) return "no manager";
+    const m = list.find((x) => x.id === idv);
+    return m ? (m.display_name || m.email.split("@")[0]) : ("#" + idv);
+  };
   const rows = list.map((u) => {
     const me = u.id === S.me.id;
     const p = USR.pending.get(u.id) || {};
     const role = p.role ?? u.role;
     const disabled = p.disabled ?? u.disabled;
+    const isRep = rankOf(u.role) < RANK.admin;
+    const mgr = ("manager_id" in p) ? p.manager_id : (u.manager_id || null);
     /* A manager may build their own team but not change its shape: they can
        grant member, and they cannot touch anyone who already outranks one.
        Locked here as well as on the route so the control reads as
@@ -1570,6 +1581,8 @@ function paintUsers() {
     const changes = [
       p.role && p.role !== u.role ? `${roleLabelOr(u.role)} → ${roleLabelOr(p.role)}` : "",
       "disabled" in p && p.disabled !== u.disabled ? (p.disabled ? "will be disabled" : "will be restored") : "",
+      "manager_id" in p && (p.manager_id ?? null) !== (u.manager_id ?? null)
+        ? `manager → ${mgrName(p.manager_id)}` : "",
     ].filter(Boolean);
     if (p.delete) return `
     <div class="user-row user-deleting">
@@ -1588,6 +1601,13 @@ function paintUsers() {
         <div class="user-sub">${changes.length ? `<b class="user-change">${esc(changes.join(" · "))}</b>`
           : esc(u.email) + (u.disabled ? " · disabled" : u.last_active ? " · active " + relTime(u.last_active) : "")}</div>
       </div>
+      ${isRep ? `<select class="user-manager" data-id="${u.id}" ${disabled ? "disabled" : ""}
+              title="Who covers this rep's calls — picks up when they don't">
+        <option value="">— no manager —</option>
+        ${(mgr && !managers.some((x) => x.id === mgr)
+          ? `<option value="${mgr}" selected>${esc(u.manager_name || ("#" + mgr))}</option>` : "")}
+        ${managers.map((x) => `<option value="${x.id}"${x.id === mgr ? " selected" : ""}>${esc(x.display_name || x.email.split("@")[0])}</option>`).join("")}
+      </select>` : `<span class="user-manager-gap"></span>`}
       <select class="user-role" data-id="${u.id}"
               ${disabled || locked ? "disabled" : ""}
               title="${locked ? "Only the owner can change this" : "Set this person's access"}">
@@ -1610,12 +1630,15 @@ function paintUsers() {
     // a change back to how it was is no change
     if (p.role === u.role) delete p.role;
     if (p.disabled === u.disabled) delete p.disabled;
+    if ("manager_id" in p && (p.manager_id ?? null) === (u.manager_id ?? null)) delete p.manager_id;
     if (!p.delete) delete p.delete;
     if (Object.keys(p).length) USR.pending.set(id, p); else USR.pending.delete(id);
     paintUsers();
   };
   $("users-list").querySelectorAll(".user-role").forEach((sel) =>
     sel.addEventListener("change", () => stage(+sel.dataset.id, { role: sel.value })));
+  $("users-list").querySelectorAll(".user-manager").forEach((sel) =>
+    sel.addEventListener("change", () => stage(+sel.dataset.id, { manager_id: sel.value ? +sel.value : null })));
   $("users-list").querySelectorAll(".user-toggle").forEach((btn) =>
     btn.addEventListener("click", () => {
       const u = USR.list.find((x) => x.id === +btn.dataset.id);
@@ -1658,6 +1681,7 @@ async function saveUsers() {
         const body = {};
         if ("role" in p) body.role = p.role;
         if ("disabled" in p) body.disabled = p.disabled;
+        if ("manager_id" in p) body.manager_id = p.manager_id;
         const r = await api(`/api/users/${id}`, { method: "PATCH", body: JSON.stringify(body) });
         if (r?.warning) notes.push(r.warning);
       }
@@ -10984,17 +11008,24 @@ function renderLive() {
   const card = (a) => {
     const [label, cls] = LIVE_STATE[a.status];
     const L = a.lead;
+    /* A rep you are the designated manager for (migration 020). When their
+       phone is ringing an inbound call, it is yours to pick up — the thing
+       the RingCentral call queue actually rings you for; the flag here is so
+       you can see at a glance which ringing call on the floor is that one. */
+    const mine = !!(a.manager && d.you && a.manager === d.you);
+    const pickup = mine && a.status === "ringing" && a.direction === "Inbound";
     const where = L ? [L.company && L.company !== L.name ? L.company : "", [L.city, L.state].filter(Boolean).join(", ")]
       .filter(Boolean).join(" · ") : "";
     const who = L
       ? `<button class="live-lead" data-live-lead="${L.id}" data-kind="${esc(L.kind || "")}" title="Open this lead">${esc(L.name || "Unnamed lead")}</button>`
       : `<span class="live-lead none">${a.number ? "Not a lead in Karma Connect" : "Number not shown"}</span>`;
-    return `<article class="live-card ${cls}">
+    return `<article class="live-card ${cls}${mine ? " yours" : ""}${pickup ? " pickup" : ""}">
       <header>
         <span class="live-av">${esc(initials(a.name))}</span>
-        <div class="live-agent"><b>${esc(a.name)}</b>${a.ext ? `<span>x${esc(a.ext)}</span>` : ""}</div>
+        <div class="live-agent"><b>${esc(a.name)}</b>${a.ext ? `<span>x${esc(a.ext)}</span>` : ""}${mine ? `<span class="live-cover">your rep</span>` : ""}</div>
         <span class="live-badge ${cls}"><i></i>${label}</span>
       </header>
+      ${pickup ? `<div class="live-pickup">📞 Your rep's phone is ringing — pick up</div>` : ""}
       <div class="live-timer" ${a.since ? `data-since="${a.since}"` : ""}>${a.since ? liveClock(Date.now() + LIVEB.skew - a.since) : "—"}</div>
       <div class="live-to">
         <span class="live-dir">${a.direction === "Inbound" ? "← Inbound from" : "→ Calling"}</span>

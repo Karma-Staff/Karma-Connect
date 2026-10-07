@@ -73,9 +73,12 @@ async function people() {
   const v = (await query(
     `SELECT lower(u.email) AS email,
             coalesce(nullif(btrim(u.display_name), ''), u.email) AS name,
-            nullif(btrim(v.extension), '') AS ext
+            nullif(btrim(v.extension), '') AS ext,
+            lower(mu.email) AS manager
        FROM app_users u
        LEFT JOIN voice_identities v ON v.user_id = u.id AND v.provider = 'ringcentral'
+       LEFT JOIN app_users mu ON mu.id = u.manager_id
+         AND NOT mu.disabled AND mu.deleted_at IS NULL
       WHERE NOT u.disabled`)).rows;
   userCache.set("all", { v, until: Date.now() + 60e3 });
   return v;
@@ -175,7 +178,8 @@ router.get("/api/calls/live", requireAdmin, async (req, res, next) => {
          is theirs, the seat is not. */
       const by = app && u && u.name !== e.name ? u.name : null;
       agents.push({ name: e.name, ext: e.ext, status, lead, number, direction,
-        since, source, by, presence: p.presenceStatus || null });
+        since, source, by, presence: p.presenceStatus || null,
+        manager: u?.manager || null });
     }
     /* Dialler reports from people with no RingCentral presence row (no
        connected seat, or presence unavailable) still belong on the board. */
@@ -185,14 +189,14 @@ router.get("/api/calls/live", requireAdmin, async (req, res, next) => {
       agents.push({ name: u?.name || app.name, ext: u?.ext || "", status: app.state,
         lead: app.leadId ? slimLead(await leadById(app.leadId)) : null, number: app.number,
         direction: "Outbound", since: app.state === "ringing" ? app.dialAt : app.answerAt || app.dialAt,
-        source: "dialler", presence: null });
+        source: "dialler", presence: null, manager: u?.manager || null });
     }
 
     agents.sort((a, b) => (RANK[a.status] - RANK[b.status]) || ((a.since || now) - (b.since || now))
       || a.name.localeCompare(b.name));
     const count = (s) => agents.filter((a) => a.status === s).length;
     res.json({
-      now, presenceError,
+      now, presenceError, you: String(req.user.email).toLowerCase(),
       counts: { live: count("live"), hold: count("hold"), ringing: count("ringing"),
         available: count("available") + count("busy"), offline: count("offline") },
       agents,
