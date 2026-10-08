@@ -3678,6 +3678,12 @@ async function kdVmDrop() {
        while it finishes on its own. */
     await sender.replaceTrack(dest.stream.getAudioTracks()[0]);
     try { pc.getReceivers?.().forEach((r) => { if (r.track && r.track.kind === "audio") r.track.enabled = false; }); } catch (e) { /* fine */ }
+    /* Record this call so the dropped voicemail is captured — the rep can
+       prove the message was left. Server-side, so the local mute above does
+       not affect it; the recording runs until this line hangs up on its own.
+       (Backgrounding the call stops the auto-record retry loop, so start it
+       here directly if it has not already.) */
+    if (!KD.rec && typeof s.startRecording === "function") { try { s.startRecording().catch(() => {}); } catch (e) { /* fine */ } }
     /* Self-contained so it survives in the background whatever the rep does
        next: it plays to the end, then hangs up its own line. Nothing here
        touches KD.session, which is about to be freed (or the next call). */
