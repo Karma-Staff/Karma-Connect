@@ -36,8 +36,9 @@
   --surface: #0e1a30;
   --surface-2: #142442;
   --border: rgba(74,134,200,.20);
-  --sm-ocean-0: #0d2142; --sm-ocean-1: #0a1830; --sm-ocean-2: #060e20;
-  --sm-grat: rgba(90,130,200,.14);
+  --sm-ocean-0: #114155; --sm-ocean-1: #0a2735; --sm-ocean-2: #05121b;
+  --sm-land-0: #36503a; --sm-land-1: #243a2b; --sm-land-edge: #0c1a12;
+  --sm-grat: rgba(120,170,210,.11);
   --ink: #eef2fb;
   --ink-2: #9aa7c4;
   --ink-3: #808cb6;
@@ -71,8 +72,9 @@
   --surface: #ffffff;
   --surface-2: #fafaf8;
   --border: #e7e6e1;
-  --sm-ocean-0: #eef4fb; --sm-ocean-1: #e6eef8; --sm-ocean-2: #dce7f3;
-  --sm-grat: rgba(40,70,120,.10);
+  --sm-ocean-0: #cfe6ef; --sm-ocean-1: #bcdae6; --sm-ocean-2: #a9ccdb;
+  --sm-land-0: #dbe6cf; --sm-land-1: #cad8b9; --sm-land-edge: #93a97f;
+  --sm-grat: rgba(40,70,120,.09);
   --ink: #1c1c1a;
   --ink-2: #5f5e58;
   --ink-3: #92918a;
@@ -456,30 +458,32 @@ body.zv-collapsed .zohovoice-container { display: none !important; }
 .sm-reg.off { cursor: default; }
 .sm-reg:focus { outline: none; }
 .sm-reg:focus-visible .sm-face { stroke: var(--accent-ink); stroke-width: 2.5; }
-.sm-face { fill: var(--surface-2); stroke: var(--border); stroke-width: .8;
+/* Land reads as terrain; a state lights up by SEVERITY as a heat ramp
+   (quiet green → yellow → orange → red), not by height. */
+.sm-face { fill: url(#sm-terrain); stroke: var(--sm-land-edge); stroke-width: .55;
   vector-effect: non-scaling-stroke; transition: fill .15s ease; }
-.sm-reg.ca.off .sm-face { fill: rgba(255,255,255,.025); stroke-dasharray: 3 3; }
+.sm-reg.ca.off .sm-face { fill: url(#sm-terrain); opacity: .72; }
 
-.sm-reg.t1 .sm-face { fill: rgba(74,134,200,.30); stroke: #4a86c8; stroke-width: 1; }
-.sm-reg.t2 .sm-face { fill: rgba(232,163,61,.36); stroke: #e8a33d; stroke-width: 1.6; }
-.sm-reg.t3 .sm-face { fill: rgba(224,87,74,.46); stroke: #e0574a; stroke-width: 2.2; }
-.sm-reg:not(.off):hover .sm-face { fill: var(--accent-soft); stroke: var(--accent-ink); }
+.sm-reg.t1 .sm-face { fill: #c8a63a; stroke: #8f7620; }
+.sm-reg.t2 .sm-face { fill: #dd7f33; stroke: #a2561c; }
+.sm-reg.t3 .sm-face { fill: #cf3b2b; stroke: #902519; }
+.sm-reg:not(.off):hover .sm-face { filter: brightness(1.12); }
 
-.sm-lab { pointer-events: none; text-anchor: middle; font-family: inherit; }
-.sm-labc { font-size: 11px; font-weight: 700; fill: var(--ink); }
-.sm-labn { font-size: 9px; fill: var(--ink-2); }
-.sm-lab.t3 .sm-labc { fill: #ffd9d4; }
-.sm-lab.t2 .sm-labc { fill: #ffe2b3; }
-.sm-lab.t1 .sm-labc { fill: #cfe0f6; }
+.sm-lab { pointer-events: none; text-anchor: middle; font-family: inherit;
+  paint-order: stroke; stroke: rgba(6,14,10,.6); stroke-width: 2.6px; stroke-linejoin: round; }
+.sm-labc { font-size: 11px; font-weight: 700; fill: #eef3ea; }
+.sm-labn { font-size: 9px; fill: #d4e0d2; }
+.sm-lab.t3 .sm-labc, .sm-lab.t2 .sm-labc, .sm-lab.t1 .sm-labc { fill: #fff; }
+.sm-lab.t1 .sm-labn, .sm-lab.t2 .sm-labn, .sm-lab.t3 .sm-labn { fill: #f0f4ec; }
 
 .sm-key { display: flex; flex-wrap: wrap; gap: 14px; align-items: center;
   color: var(--ink-3); font-size: 11.5px; margin-top: 10px; }
 .sm-key span { display: inline-flex; align-items: center; gap: 6px; }
 .sm-sw { width: 11px; height: 11px; border-radius: 3px; display: inline-block;
-  background: var(--surface-2); border: 1px solid var(--border); }
-.sm-sw.t1 { background: rgba(74,134,200,.30); border-color: #4a86c8; }
-.sm-sw.t2 { background: rgba(232,163,61,.36); border-color: #e8a33d; border-width: 2px; }
-.sm-sw.t3 { background: rgba(224,87,74,.46); border-color: #e0574a; border-width: 2px; }
+  background: var(--sm-land-0); border: 1px solid var(--sm-land-edge); }
+.sm-sw.t1 { background: #c8a63a; border-color: #8f7620; }
+.sm-sw.t2 { background: #dd7f33; border-color: #a2561c; }
+.sm-sw.t3 { background: #cf3b2b; border-color: #902519; }
 .sm-note { margin-left: auto; font-style: italic; }
 
 .sm-alert { cursor: pointer; }
@@ -560,6 +564,8 @@ body.zv-collapsed .zohovoice-container { display: none !important; }
 .sm-o0 { stop-color: var(--sm-ocean-0); }
 .sm-o1 { stop-color: var(--sm-ocean-1); }
 .sm-o2 { stop-color: var(--sm-ocean-2); }
+.sm-l0 { stop-color: var(--sm-land-0); }
+.sm-l1 { stop-color: var(--sm-land-1); }
 .sm-ocean-r { fill: url(#sm-ocean); }
 .sm-grat path { fill: none; stroke: var(--sm-grat); stroke-width: .5; }
 

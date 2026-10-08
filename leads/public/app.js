@@ -7352,13 +7352,8 @@ function renderStorm(d) {
     </div>` : ""}
 
     <div class="act-card">
-      <h4>North America — click a state to work its leads
-        <button type="button" class="btn-ghost sm-3d" id="sm-3d"
-          aria-pressed="${storm3d() ? "true" : "false"}"
-          title="Tilt the map. Height shows severity, not lead count — see the note below.">
-          ${storm3d() ? "Flatten" : "3D"}</button>
-      </h4>
-      <div class="sm-scene${storm3d() ? " on" : ""}">
+      <h4>North America — click a state to work its leads</h4>
+      <div class="sm-scene">
         ${naMapSvg(byState, d.storms)}
       </div>
       <div class="sm-key">
@@ -7366,10 +7361,8 @@ function renderStorm(d) {
         <span><i class="sm-sw t2"></i>Damage likely</span>
         <span><i class="sm-sw t1"></i>Worth watching</span>
         <span><i class="sm-sw t0"></i>Nothing active</span>
-        ${(d.storms || []).length ? `<span class="sm-storm-leg">🌀 Storm — the dot is where it is, the arrow where it's heading</span>` : ""}
-        <span class="sm-note">${storm3d()
-          ? "Height is severity, not lead count — the number on each state is the leads."
-          : "The number is leads on file there."}
+        ${(d.storms || []).length ? `<span class="sm-storm-leg">🌀 Storm — the cyclone is where it is, the cone where it's heading</span>` : ""}
+        <span class="sm-note">A state's colour is how severe the weather is; the number is leads on file there.
           Canada is unlit — US feed only. Equal-area projection; Hawaii is an inset.</span>
       </div>
     </div>
@@ -7397,10 +7390,6 @@ function renderStorm(d) {
         ${(d.down || []).length ? `<span class="sm-down">Not answering right now: ${esc(d.down.join(", "))}.</span>` : ""}</p>
     </div>`;
 
-  $("sm-3d")?.addEventListener("click", () => {
-    try { localStorage.setItem("kl_storm_3d", storm3d() ? "" : "1"); } catch (e) { /* fine */ }
-    renderStorm(STORM.data);
-  });
   el.querySelectorAll(".sm-reg:not(.off)").forEach((gEl) => {
     const go = () => openStateLeads(gEl.dataset.state);
     gEl.addEventListener("click", go);
@@ -7483,8 +7472,6 @@ function stormModal(i) {
 function naMapSvg(byState, storms) {
   const g = window.NA_GEO;
   if (!g) return `<p class="act-empty">Map data did not load (na-geo.js).</p>`;
-  const lift = { 0: 0, 1: 4, 2: 9, 3: 15 };
-  const tilted = storm3d();
 
   const shapes = Object.keys(g.shapes).map((code) => {
     const st = byState.get(code);
@@ -7494,16 +7481,10 @@ function naMapSvg(byState, storms) {
       ? `${st.name}: ${st.alerts} alert(s) — ${st.events.join(", ")}. ${st.leads} leads, ${st.unassigned} unassigned.`
       : m.country === "CA" ? `${m.name || code} — no Canadian alert feed`
         : `${m.name || code} — nothing active`;
-    /* the wall: copies of the outline stepped downward behind the face */
-    const wall = (tilted && t)
-      ? Array.from({ length: lift[t] }, (_, i) =>
-          `<path class="sm-wall w${t}" d="${g.shapes[code]}" transform="translate(0 ${lift[t] - i})"/>`).join("")
-      : "";
     return `<g class="sm-reg t${t}${m.country === "CA" ? " ca" : ""}${st ? "" : " off"}"
-      data-state="${esc(code)}" role="button" tabindex="${st ? 0 : -1}"
-      transform="translate(0 ${tilted ? -lift[t] : 0})">
+      data-state="${esc(code)}" role="button" tabindex="${st ? 0 : -1}">
       <title>${esc(title)}</title>
-      ${wall}<path class="sm-face" d="${g.shapes[code]}"/>
+      <path class="sm-face" d="${g.shapes[code]}"/>
     </g>`;
   }).join("");
 
@@ -7511,9 +7492,8 @@ function naMapSvg(byState, storms) {
     const st = byState.get(code);
     if (!st || !st.leads) return "";
     const [x, y] = g.labels[code];
-    const t = st.tier;
     const n = st.leads > 999 ? (st.leads / 1000).toFixed(1) + "k" : st.leads;
-    return `<text class="sm-lab t${t}" x="${x}" y="${y - (tilted ? lift[t] : 0)}">
+    return `<text class="sm-lab t${st.tier}" x="${x}" y="${y}">
       <tspan class="sm-labc" x="${x}" dy="0">${esc(code)}</tspan>
       <tspan class="sm-labn" x="${x}" dy="9">${esc(String(n))}</tspan>
     </text>`;
@@ -7536,12 +7516,20 @@ function naMapSvg(byState, storms) {
   return `<svg class="sm-map" viewBox="${vb}"
     preserveAspectRatio="xMidYMid meet" role="img"
     aria-label="Severe weather by state and province across the United States and Canada">
-    <defs><radialGradient id="sm-ocean" cx="42%" cy="28%" r="95%">
-      <stop class="sm-o0" offset="0%"/><stop class="sm-o1" offset="55%"/><stop class="sm-o2" offset="100%"/>
-    </radialGradient></defs>
+    <defs>
+      <radialGradient id="sm-ocean" cx="42%" cy="28%" r="95%">
+        <stop class="sm-o0" offset="0%"/><stop class="sm-o1" offset="55%"/><stop class="sm-o2" offset="100%"/>
+      </radialGradient>
+      <linearGradient id="sm-terrain" x1="0" y1="0" x2="0" y2="1">
+        <stop class="sm-l0" offset="0%"/><stop class="sm-l1" offset="100%"/>
+      </linearGradient>
+      <filter id="sm-landsh" x="-5%" y="-5%" width="110%" height="110%">
+        <feDropShadow dx="0" dy="1.5" stdDeviation="2" flood-color="#030a06" flood-opacity="0.5"/>
+      </filter>
+    </defs>
     <rect class="sm-ocean-r" x="${view[0]}" y="${view[1]}" width="${view[2]}" height="${view[3]}"/>
     <g class="sm-grat">${grat}</g>
-    <g class="sm-land">${shapes}</g>
+    <g class="sm-land" filter="url(#sm-landsh)">${shapes}</g>
     <g class="sm-labels">${labels}</g>
     ${stormOverlay(storms)}
   </svg>`;
