@@ -135,11 +135,19 @@ async function quakes() {
    alerts.js already reads. This is the heads-up above the map. */
 async function storms() {
   const d = await getJson("https://www.nhc.noaa.gov/CurrentStorms.json", "NHC");
+  const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
   return (d.activeStorms || []).map((s) => ({
     name: String(s.name || "").slice(0, 40),
-    kind: String(s.classification || "").toUpperCase(),
-    intensityKt: Number(s.intensity) || null,
+    kind: String(s.classification || "").toUpperCase(),       // TD / TS / HU / MH …
+    intensityKt: num(s.intensity),                            // max sustained wind, knots
+    pressureMb: num(s.pressure),                              // central pressure, mb
+    lat: num(s.latitudeNumeric),
+    lon: num(s.longitudeNumeric),
+    moveDir: num(s.movementDir),                              // degrees, the way it is heading
+    moveKt: num(s.movementSpeed),                             // knots
     basin: String(s.binNumber || "").slice(0, 8),
+    /* Where to see the official forecast track / cone — the NHC's own map. */
+    track: s.forecastGraphics?.url || s.trackCone?.zoomURL || s.publicAdvisory?.url || null,
     at: s.lastUpdate || null,
   })).slice(0, 8);
 }

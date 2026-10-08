@@ -7343,14 +7343,11 @@ function renderStorm(d) {
     </div>
 
     ${(d.storms || []).length ? `<div class="act-card sm-tropical">
-      <h4>🌀 Active tropical systems</h4>
-      <div class="sm-storms">${d.storms.map((s) => `
-        <span class="sm-storm${/^HU|^MH/.test(s.kind) ? " hurricane" : ""}">
-          <b>${esc(s.kind)} ${esc(s.name)}</b>${s.intensityKt ? ` · ${s.intensityKt} kt` : ""}
-        </span>`).join("")}</div>
-      <p class="asg-foot">From the National Hurricane Center. Not placed on the map — a
-        system at sea has no landfall yet, and when it threatens one the weather service
-        issues hurricane and storm-surge warnings, which are already above.</p>
+      <h4>🌀 Active tropical systems <span class="sm-count">${d.storms.length}</span></h4>
+      <div class="sm-storm-grid">${d.storms.map((s) => stormCard(s, d)).join("")}</div>
+      <p class="asg-foot">Live from the National Hurricane Center. Position, strength and track are
+        the NHC's official advisory; "threatening" lists the US states under an active hurricane,
+        tropical-storm or storm-surge warning right now. Follow a storm's link for the full forecast cone.</p>
     </div>` : ""}
 
     <div class="act-card">
@@ -7478,6 +7475,48 @@ function naMapSvg(byState) {
 }
 
 const TIER_WORD = { 0: "—", 1: "Watch", 2: "Likely", 3: "Severe" };
+
+/* ---------------- active tropical systems ---------------- */
+const KT_TO_MPH = (kt) => (kt == null ? null : Math.round(kt * 1.151));
+const STORM_CAT = (kt) => (kt == null ? null
+  : kt >= 137 ? 5 : kt >= 113 ? 4 : kt >= 96 ? 3 : kt >= 83 ? 2 : kt >= 64 ? 1 : 0);
+const STORM_KIND = { TD: "Tropical Depression", TS: "Tropical Storm", HU: "Hurricane",
+  MH: "Major Hurricane", STS: "Subtropical Storm", SD: "Subtropical Depression",
+  SS: "Subtropical Storm", STD: "Subtropical Depression", PTC: "Potential Tropical Cyclone" };
+const COMPASS16 = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
+const dirToCompass = (deg) => (deg == null ? "" : COMPASS16[Math.round((((deg % 360) + 360) % 360) / 22.5) % 16]);
+const stormCoord = (lat, lon) => (lat == null || lon == null) ? ""
+  : `${Math.abs(lat).toFixed(1)}°${lat >= 0 ? "N" : "S"}, ${Math.abs(lon).toFixed(1)}°${lon < 0 ? "W" : "E"}`;
+
+/* One card per active storm: where it is, how strong, which way it is heading,
+   and which US states are under a related warning right now. */
+function stormCard(s, d) {
+  const cat = STORM_CAT(s.intensityKt);
+  const isHurr = s.kind === "HU" || s.kind === "MH" || (cat != null && cat >= 1);
+  const kindName = STORM_KIND[s.kind] || "Tropical system";
+  const mph = KT_TO_MPH(s.intensityKt), moveMph = KT_TO_MPH(s.moveKt);
+  const states = [...new Set((d.alerts || [])
+    .filter((a) => /hurricane|tropical storm|storm surge|typhoon/i.test(a.event || ""))
+    .flatMap((a) => a.states || []))];
+  const sev = (cat != null && cat >= 3) ? "sev3" : (isHurr ? "sev2" : "sev1");
+  return `<article class="sm-sys ${sev}">
+    <header class="sm-sys-h">
+      <div class="sm-sys-name"><b>${esc(s.name || "Unnamed")}</b><span>${esc(kindName)}</span></div>
+      ${cat ? `<span class="sm-cat">Cat ${cat}</span>` : `<span class="sm-cat ts">${esc(s.kind || "")}</span>`}
+    </header>
+    <div class="sm-sys-stats">
+      ${mph != null ? `<div><span class="k">Winds</span><b>${mph} mph</b></div>` : ""}
+      ${s.pressureMb != null ? `<div><span class="k">Pressure</span><b>${s.pressureMb} mb</b></div>` : ""}
+      ${s.moveKt != null ? `<div><span class="k">Moving</span><b>${s.moveDir != null ? esc(dirToCompass(s.moveDir)) + " " : ""}${moveMph} mph</b></div>` : ""}
+      ${stormCoord(s.lat, s.lon) ? `<div><span class="k">Position</span><b>${esc(stormCoord(s.lat, s.lon))}</b></div>` : ""}
+    </div>
+    ${states.length ? `<div class="sm-threat"><span class="k">Threatening</span>${states.map((x) => `<span class="sm-st">${esc(x)}</span>`).join("")}</div>` : ""}
+    <footer class="sm-sys-f">
+      ${s.track ? `<a href="${esc(s.track)}" target="_blank" rel="noopener" class="sm-track">See forecast track →</a>` : "<span></span>"}
+      <span class="sm-upd">${s.at ? "updated " + esc(relTime(s.at)) : ""}</span>
+    </footer>
+  </article>`;
+}
 
 /* Flat by default. A tilted map is better at "where is it bad" and worse at
    reading any single tile, so the choice is the reader's and it sticks. */
