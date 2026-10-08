@@ -3646,8 +3646,7 @@ async function vmSettingAction(which) {
 
 async function kdVmDrop() {
   const s = KD.session;
-  if (!s || KD.phase !== "live") return;
-  if (VM.drop) return kdVmDropCancel();
+  if (!s || KD.phase !== "live") return;        // phase leaves "live" the instant we background it, so a double-press is a no-op
   if (!VM.meta?.has) {
     KD.view = "settings"; KD.stab = "vm"; kdRender();
     return kdToast("Record your voicemail first — Settings → Voicemail");
@@ -3673,32 +3672,32 @@ async function kdVmDrop() {
     src.buffer = buf;
     const dest = ctx.createMediaStreamDestination();
     src.connect(dest);
-    const mic = sender.track;
+    /* The voicemail replaces the outgoing mic, and we stop listening to the
+       far end: from here this call needs NEITHER the rep's microphone NOR
+       their ears, which is exactly what frees them to start the next call
+       while it finishes on its own. */
     await sender.replaceTrack(dest.stream.getAudioTracks()[0]);
-    KD.muted = false;
-    VM.drop = { ctx, src, sender, mic, ends: Date.now() + buf.duration * 1000, done: false };
+    try { pc.getReceivers?.().forEach((r) => { if (r.track && r.track.kind === "audio") r.track.enabled = false; }); } catch (e) { /* fine */ }
+    /* Self-contained so it survives in the background whatever the rep does
+       next: it plays to the end, then hangs up its own line. Nothing here
+       touches KD.session, which is about to be freed (or the next call). */
     src.onended = () => {
-      if (!VM.drop || VM.drop.done) return;
-      VM.drop.done = true;
-      KD.vmDropped = true;
-      kdVmDropCleanup();
-      if (KD.session === s) kdGuard(() => s.hangup(), "hang up").catch(() => {});
-      /* The line is free now — ring the next lead if one was held back while
-         the voicemail was playing (armAutoDial deferred it). */
-      const pend = CAMP.vmPendingArm; CAMP.vmPendingArm = null;
-      if (pend) armAutoDial(pend.r, pend.name);
+      try { src.onended = null; src.stop(); } catch (e) { /* done */ }
+      try { ctx.close(); } catch (e) { /* done */ }
+      kdGuard(() => s.hangup(), "hang up").catch(() => {});
     };
     src.start();
-    VM.drop.tick = setInterval(() => kdRender(), 500);
-    kdRender();
-    /* Stay on the call while the message plays. The line has to carry the
-       voicemail, so hanging up now would cut it off before the person hears
-       it — kdHangup blocks that. It plays to the end on its own and the line
-       hangs up by itself, then the disposition opens (src.onended / finish). */
-    kdToast("Leaving your voicemail — stay on the line; it ends by itself when the message finishes");
+    VM.drop = null;                 // nothing is playing in the FOREGROUND
+    KD.vmDropped = true;            // finish() records this call as a Voicemail
+    kdToast("Voicemail is sending in the background — go ahead, call the next one");
+    /* Free the rep at once: log the call and move the session on WITHOUT
+       hanging up the line — finish() resets the UI but never kills the RTC,
+       so the call above keeps carrying the voicemail until it ends itself. */
+    if (typeof VOICE.endCall === "function") VOICE.endCall("no-answer");
+    else { reportCall(null, "no-answer"); kdLive("ended"); kdStopClock(); KD.phase = "ended"; KD.session = null; kdRender(); kdOpenWrap(); }
   } catch (e) {
     console.warn("[karma] voicemail drop:", e);
-    kdVmDropCleanup();
+    try { pc.getReceivers?.().forEach((r) => { if (r.track && r.track.kind === "audio") r.track.enabled = true; }); } catch (_) { /* fine */ }
     kdToast("Couldn't play your voicemail — " + (describeErr(e) || "unknown"));
   }
 }
@@ -4872,12 +4871,6 @@ async function kdDial(fromPad) {
 
 function kdHangup() {
   if (!KD.session) return;
-  /* A voicemail is still playing into the line — ending the call now would cut
-     the message off before the person hears it. It hangs up by itself the
-     moment the message finishes; to stop it early, press VM drop (Stop). */
-  if (VM.drop && !VM.drop.done) {
-    return kdToast("Your voicemail is still playing — it hangs up by itself when the message finishes (press VM drop to stop it)");
-  }
   const s = KD.session;
   const ringing = KD.phase === "calling";
   /* Before the far end answers there is only an invitation: SIP withdraws it
@@ -5615,6 +5608,11 @@ async function rcCall(digits, name, leadId) {
     }
     if (VOICE.rcSession === session) VOICE.rcSession = null;
   };
+  /* Exposed so a voicemail drop can free the UI for this call (log it, move
+     on) WITHOUT hanging up the line — the drop keeps the call alive in the
+     background to finish the message. finish() is idempotent (the later real
+     disposed event is a no-op), and never touches the RTC session itself. */
+  VOICE.endCall = finish;
 
   VOICE.rc.on("outboundCall", onOutbound);
   try {
