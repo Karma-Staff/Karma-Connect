@@ -331,14 +331,22 @@ router.get("/api/voice/rc/dashboard", requireAdmin, async (req, res, next) => {
       presence(uid).catch((e) => { warnings.push("Live presence unavailable: " + e.message); return null; }),
       companyNumbers(uid).catch(() => []),
     ]);
-    const extById = new Map(exts.map((e) => [e.id, e]));
+    /* Show only our own people — sales reps, admins, owners who connected
+       RingCentral here. Everyone else on the account (other departments) is
+       dropped from the agents, the calls, and the filter options. Safety net:
+       if nobody is mapped yet, show everyone rather than an empty dashboard. */
+    const allow = await allowedAgents().catch(() => ({ empty: true }));
+    const shown = allow.empty ? exts : exts.filter((e) => agentAllowed(allow, e.ext, e.id));
+    const allowedIds = new Set(shown.map((e) => String(e.id)));
+    const extById = new Map(shown.map((e) => [e.id, e]));
 
     /* Filters run over cached records — changing one never costs a request. */
     const agentF = String(req.query.agent || "");
     const deptF = String(req.query.dept || "");
     const numF = String(req.query.number || "");
-    const inDept = deptF ? new Set(exts.filter((e) => e.dept === deptF).map((e) => e.id)) : null;
+    const inDept = deptF ? new Set(shown.filter((e) => e.dept === deptF).map((e) => e.id)) : null;
     const filtered = calls.filter((c) => {
+      if (!allow.empty && !allowedIds.has(String(c.extId))) return false;   // another department's call
       if (numF && (c.dir === "Outbound" ? c.fromNum : c.toNum) !== numF) return false;
       if (agentF && c.extId !== agentF) return false;
       if (inDept && !inDept.has(c.extId)) return false;
@@ -349,7 +357,7 @@ router.get("/api/voice/rc/dashboard", requireAdmin, async (req, res, next) => {
 
     let agents = null;
     if (pres) {
-      const scoped = exts.filter((e) => (!inDept || inDept.has(e.id)) && (!agentF || e.id === agentF));
+      const scoped = shown.filter((e) => (!inDept || inDept.has(e.id)) && (!agentF || e.id === agentF));
       const byId = new Map(pres.map((p) => [p.id, p]));
       const list = scoped.map((e) => {
         const p = byId.get(e.id) || { status: "Offline", phone: "NoCall" };
@@ -370,8 +378,8 @@ router.get("/api/voice/rc/dashboard", requireAdmin, async (req, res, next) => {
       scope, warnings, updatedAt: new Date().toISOString(),
       agents, ...body,
       filters: {
-        departments: [...new Set(exts.map((e) => e.dept).filter(Boolean))].sort(),
-        agents: exts.map((e) => ({ id: e.id, name: e.name, ext: e.ext }))
+        departments: [...new Set(shown.map((e) => e.dept).filter(Boolean))].sort(),
+        agents: shown.map((e) => ({ id: e.id, name: e.name, ext: e.ext }))
           .sort((a, b) => a.name.localeCompare(b.name)),
         numbers: [...new Set([...nums.map((n) => n.number),
           ...body.byNumber.filter((n) => !n.other).map((n) => n.number)])].sort(),
