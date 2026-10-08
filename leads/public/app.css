@@ -532,6 +532,21 @@ body.zv-collapsed .zohovoice-container { display: none !important; }
 .sm-track:hover { text-decoration: underline; }
 .sm-upd { font-size: 11px; color: var(--ink-3); }
 
+/* storms plotted on the map: a marker where each is, an arrow where it heads */
+.sm-storm-layer { pointer-events: none; }
+#sm-arrow path { fill: #ff6b5a; }
+.sm-trk { stroke: #ff6b5a; stroke-width: 2.2; stroke-dasharray: 2.5 4; stroke-linecap: round; fill: none; opacity: .92; }
+.sm-eye-halo { fill: #ff5a46; animation: sm-pulse 1.9s ease-in-out infinite; }
+.sm-eye.sev2 .sm-eye-halo { fill: #ffb43d; }
+.sm-eye.sev1 .sm-eye-halo { fill: var(--cat-1); }
+.sm-eye-dot { fill: #ff5a46; stroke: #fff; stroke-width: 1.5; }
+.sm-eye.sev2 .sm-eye-dot { fill: #ffb43d; }
+.sm-eye.sev1 .sm-eye-dot { fill: var(--cat-1); }
+.sm-eye-lab { font-size: 12px; font-weight: 800; fill: #fff; text-anchor: middle;
+  paint-order: stroke; stroke: rgba(4,10,24,.7); stroke-width: 3.2px; stroke-linejoin: round; }
+@keyframes sm-pulse { 0%, 100% { opacity: .24; } 50% { opacity: .06; } }
+@media (prefers-reduced-motion: reduce) { .sm-eye-halo { animation: none; opacity: .18; } }
+
 /* ---------- storm watch: the tilted view ----------
    An SVG cannot extrude, so a lit state is drawn as a stack of copies
    stepped downward (the wall) with the face on top, and the whole map is

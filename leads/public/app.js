@@ -7358,13 +7358,14 @@ function renderStorm(d) {
           ${storm3d() ? "Flatten" : "3D"}</button>
       </h4>
       <div class="sm-scene${storm3d() ? " on" : ""}">
-        ${naMapSvg(byState)}
+        ${naMapSvg(byState, d.storms)}
       </div>
       <div class="sm-key">
         <span><i class="sm-sw t3"></i>Destroying property now</span>
         <span><i class="sm-sw t2"></i>Damage likely</span>
         <span><i class="sm-sw t1"></i>Worth watching</span>
         <span><i class="sm-sw t0"></i>Nothing active</span>
+        ${(d.storms || []).length ? `<span class="sm-storm-leg">🌀 Storm — the dot is where it is, the arrow where it's heading</span>` : ""}
         <span class="sm-note">${storm3d()
           ? "Height is severity, not lead count — the number on each state is the leads."
           : "The number is leads on file there."}
@@ -7425,7 +7426,7 @@ function renderStorm(d) {
    Drawn twice when tilted. An SVG cannot extrude, so the "3D" view stacks
    copies of each lit state behind itself to make a wall, then puts the face
    on top. Cheap, and it needs no WebGL. */
-function naMapSvg(byState) {
+function naMapSvg(byState, storms) {
   const g = window.NA_GEO;
   if (!g) return `<p class="act-empty">Map data did not load (na-geo.js).</p>`;
   const lift = { 0: 0, 1: 4, 2: 9, 3: 15 };
@@ -7471,6 +7472,7 @@ function naMapSvg(byState) {
     aria-label="Severe weather by state and province across the United States and Canada">
     <g class="sm-land">${shapes}</g>
     <g class="sm-labels">${labels}</g>
+    ${stormOverlay(storms)}
   </svg>`;
 }
 
@@ -7487,6 +7489,70 @@ const COMPASS16 = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW",
 const dirToCompass = (deg) => (deg == null ? "" : COMPASS16[Math.round((((deg % 360) + 360) % 360) / 22.5) % 16]);
 const stormCoord = (lat, lon) => (lat == null || lon == null) ? ""
   : `${Math.abs(lat).toFixed(1)}°${lat >= 0 ? "N" : "S"}, ${Math.abs(lon).toFixed(1)}°${lon < 0 ? "W" : "E"}`;
+
+/* lon/lat -> the na-geo map's coordinate space. The same Albers equal-area
+   conic the geometry is built with (leads/scripts/build-na-geo.mjs), then the
+   affine fit to the shipped state centroids (change-report/calibrate.mjs:
+   RMS ~11px on a 1000px map — close enough for a storm marker; the NHC link
+   has the exact cone). */
+const stormXY = (() => {
+  const D = Math.PI / 180, lam0 = -100 * D, phi0 = 45 * D, phi1 = 29.5 * D, phi2 = 57 * D;
+  const n = 0.5 * (Math.sin(phi1) + Math.sin(phi2));
+  const C = Math.cos(phi1) ** 2 + 2 * n * Math.sin(phi1);
+  const rho0 = Math.sqrt(C - 2 * n * Math.sin(phi0)) / n;
+  const S = 845.3959, TX = 575.413, TY = 511.331;
+  return (lon, lat) => {
+    const phi = lat * D; let lam = lon * D - lam0;
+    while (lam > Math.PI) lam -= 2 * Math.PI;
+    while (lam < -Math.PI) lam += 2 * Math.PI;
+    const q = C - 2 * n * Math.sin(phi);
+    const rho = Math.sqrt(Math.max(q, 0)) / n, theta = n * lam;
+    return [S * (rho * Math.sin(theta)) + TX, S * (rho * Math.cos(theta) - rho0) + TY];
+  };
+})();
+/* A point `miles` ahead on bearing `brg` (great-circle), to draw the heading. */
+function stormAhead(lat, lon, brg, miles) {
+  const R = 3958.8, d = miles / R, b = brg * Math.PI / 180;
+  const la1 = lat * Math.PI / 180, lo1 = lon * Math.PI / 180;
+  const la2 = Math.asin(Math.sin(la1) * Math.cos(d) + Math.cos(la1) * Math.sin(d) * Math.cos(b));
+  const lo2 = lo1 + Math.atan2(Math.sin(b) * Math.sin(d) * Math.cos(la1), Math.cos(d) - Math.sin(la1) * Math.sin(la2));
+  return [lo2 * 180 / Math.PI, la2 * 180 / Math.PI];
+}
+const stormSev = (s) => {
+  const cat = STORM_CAT(s.intensityKt);
+  return (cat != null && cat >= 3) ? "sev3"
+    : (s.kind === "HU" || s.kind === "MH" || (cat != null && cat >= 1)) ? "sev2" : "sev1";
+};
+
+/* The storm layer drawn over the map: a marker where each system is, and a
+   dashed arrow in the way it is heading (its position a day ahead at its
+   current speed and bearing). Systems far out at sea fall outside the frame
+   and are simply clipped. */
+function stormOverlay(storms) {
+  const marks = (storms || []).map((s) => {
+    if (s.lat == null || s.lon == null) return "";
+    const [x, y] = stormXY(s.lon, s.lat);
+    const cls = stormSev(s);
+    const cat = STORM_CAT(s.intensityKt);
+    let arrow = "";
+    if (s.moveDir != null && s.moveKt) {
+      const miles = Math.min(s.moveKt * 1.151 * 24, 900);
+      const [alon, alat] = stormAhead(s.lat, s.lon, s.moveDir, miles);
+      const [ax, ay] = stormXY(alon, alat);
+      arrow = `<line class="sm-trk ${cls}" x1="${x.toFixed(1)}" y1="${y.toFixed(1)}" x2="${ax.toFixed(1)}" y2="${ay.toFixed(1)}" marker-end="url(#sm-arrow)"/>`;
+    }
+    const r = cat != null && cat >= 3 ? 7 : 5.5;
+    return `${arrow}<g class="sm-eye ${cls}">
+      <circle class="sm-eye-halo" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${(r + 6).toFixed(1)}"/>
+      <circle class="sm-eye-dot" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r}"/>
+      <text class="sm-eye-lab" x="${x.toFixed(1)}" y="${(y - r - 6).toFixed(1)}">${esc(s.name || "")}${cat ? " C" + cat : ""}</text>
+    </g>`;
+  }).join("");
+  if (!marks) return "";
+  return `<defs><marker id="sm-arrow" viewBox="0 0 10 10" refX="7.5" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto">
+      <path d="M0 0L10 5L0 10z"/></marker></defs>
+    <g class="sm-storm-layer">${marks}</g>`;
+}
 
 /* One card per active storm: where it is, how strong, which way it is heading,
    and which US states are under a related warning right now. */
