@@ -7524,33 +7524,57 @@ const stormSev = (s) => {
     : (s.kind === "HU" || s.kind === "MH" || (cat != null && cat >= 1)) ? "sev2" : "sev1";
 };
 
-/* The storm layer drawn over the map: a marker where each system is, and a
-   dashed arrow in the way it is heading (its position a day ahead at its
-   current speed and bearing). Systems far out at sea fall outside the frame
-   and are simply clipped. */
+/* A stylised cyclone glyph: two spiral arms around a bright eye, in the
+   storm's category colour (set via currentColor), with a soft glow. */
+function stormCyc(x, y, r) {
+  const a = `M0 ${(-r * 0.16).toFixed(2)}`
+    + ` C ${(r * 0.52).toFixed(2)} ${(-r * 0.62).toFixed(2)} ${(r * 0.98).toFixed(2)} ${(-r * 0.38).toFixed(2)} ${r.toFixed(2)} ${(r * 0.1).toFixed(2)}`
+    + ` C ${(r * 0.72).toFixed(2)} ${(-r * 0.02).toFixed(2)} ${(r * 0.4).toFixed(2)} ${(r * 0.02).toFixed(2)} ${(r * 0.2).toFixed(2)} ${(-r * 0.05).toFixed(2)}`
+    + ` C ${(r * 0.1).toFixed(2)} ${(-r * 0.09).toFixed(2)} ${(r * 0.04).toFixed(2)} ${(-r * 0.12).toFixed(2)} 0 ${(-r * 0.16).toFixed(2)} Z`;
+  return `<g class="sm-cyc" filter="url(#sm-glow)" transform="translate(${x.toFixed(1)} ${y.toFixed(1)})">
+    <circle class="sm-cyc-halo" r="${(r * 0.95).toFixed(1)}"/>
+    <g class="sm-cyc-arm" transform="rotate(20)"><path d="${a}"/><path d="${a}" transform="rotate(180)"/></g>
+    <circle class="sm-cyc-ring" r="${(r * 0.3).toFixed(1)}"/>
+    <circle class="sm-cyc-eye" r="${(r * 0.16).toFixed(1)}"/>
+  </g>`;
+}
+
+/* The storm layer drawn over the map: where each system is (a cyclone glyph),
+   a forecast cone + track dots in the way it is heading (its place a day ahead
+   at its current bearing and speed), and a name/strength label. Systems far
+   out at sea fall outside the frame and are simply clipped. */
 function stormOverlay(storms) {
   const marks = (storms || []).map((s) => {
     if (s.lat == null || s.lon == null) return "";
     const [x, y] = stormXY(s.lon, s.lat);
     const cls = stormSev(s);
-    const cat = STORM_CAT(s.intensityKt);
-    let arrow = "";
+    const cat = STORM_CAT(s.intensityKt), mph = KT_TO_MPH(s.intensityKt);
+    let cone = "", track = "", dots = "";
     if (s.moveDir != null && s.moveKt) {
-      const miles = Math.min(s.moveKt * 1.151 * 24, 900);
-      const [alon, alat] = stormAhead(s.lat, s.lon, s.moveDir, miles);
+      const mi = Math.min(s.moveKt * 1.151 * 24, 780);
+      const [alon, alat] = stormAhead(s.lat, s.lon, s.moveDir, mi);
       const [ax, ay] = stormXY(alon, alat);
-      arrow = `<line class="sm-trk ${cls}" x1="${x.toFixed(1)}" y1="${y.toFixed(1)}" x2="${ax.toFixed(1)}" y2="${ay.toFixed(1)}" marker-end="url(#sm-arrow)"/>`;
+      const dx = ax - x, dy = ay - y, len = Math.hypot(dx, dy) || 1, px = -dy / len, py = dx / len, W = len * 0.34 + 7;
+      cone = `<path class="sm-cone ${cls}" d="M${x.toFixed(1)} ${y.toFixed(1)} L${(ax + px * W).toFixed(1)} ${(ay + py * W).toFixed(1)} L${(ax - px * W).toFixed(1)} ${(ay - py * W).toFixed(1)} Z"/>`;
+      track = `<path class="sm-trk ${cls}" d="M${x.toFixed(1)} ${y.toFixed(1)} L${ax.toFixed(1)} ${ay.toFixed(1)}"/>`;
+      for (const f of [0.4, 0.7, 1.0]) {
+        const [lo, la] = stormAhead(s.lat, s.lon, s.moveDir, mi * f);
+        const [fx, fy] = stormXY(lo, la);
+        dots += `<circle class="sm-fdot ${cls}" cx="${fx.toFixed(1)}" cy="${fy.toFixed(1)}" r="2.6"/>`;
+      }
     }
-    const r = cat != null && cat >= 3 ? 7 : 5.5;
-    return `${arrow}<g class="sm-eye ${cls}">
-      <circle class="sm-eye-halo" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${(r + 6).toFixed(1)}"/>
-      <circle class="sm-eye-dot" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r}"/>
-      <text class="sm-eye-lab" x="${x.toFixed(1)}" y="${(y - r - 6).toFixed(1)}">${esc(s.name || "")}${cat ? " C" + cat : ""}</text>
+    const r = cat >= 4 ? 12 : cat >= 3 ? 10 : cls !== "sev1" ? 8.5 : 7;
+    const label = `<g class="sm-lab-g ${cls}" transform="translate(${x.toFixed(1)} ${(y - r - 16).toFixed(1)})">
+      <rect class="sm-pill" x="-35" y="-11" width="70" height="22" rx="7"/>
+      <text class="sm-name" y="-1">${esc(s.name || "")}</text>
+      <text class="sm-meta" y="8.5">${cat ? "Cat " + cat : "TS"}${mph != null ? " · " + mph + " mph" : ""}</text>
     </g>`;
+    return `<g class="sm-sys-g ${cls}">${cone}${track}${dots}${stormCyc(x, y, r)}${label}</g>`;
   }).join("");
   if (!marks) return "";
-  return `<defs><marker id="sm-arrow" viewBox="0 0 10 10" refX="7.5" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto">
-      <path d="M0 0L10 5L0 10z"/></marker></defs>
+  return `<defs><filter id="sm-glow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="2.3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter></defs>
     <g class="sm-storm-layer">${marks}</g>`;
 }
 
