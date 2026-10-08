@@ -36,6 +36,8 @@
   --surface: #0e1a30;
   --surface-2: #142442;
   --border: rgba(74,134,200,.20);
+  --sm-ocean-0: #0d2142; --sm-ocean-1: #0a1830; --sm-ocean-2: #060e20;
+  --sm-grat: rgba(90,130,200,.14);
   --ink: #eef2fb;
   --ink-2: #9aa7c4;
   --ink-3: #808cb6;
@@ -69,6 +71,8 @@
   --surface: #ffffff;
   --surface-2: #fafaf8;
   --border: #e7e6e1;
+  --sm-ocean-0: #eef4fb; --sm-ocean-1: #e6eef8; --sm-ocean-2: #dce7f3;
+  --sm-grat: rgba(40,70,120,.10);
   --ink: #1c1c1a;
   --ink-2: #5f5e58;
   --ink-3: #92918a;
@@ -550,6 +554,14 @@ body.zv-collapsed .zohovoice-container { display: none !important; }
 .sm-meta { fill: #ccd8ef; font-size: 10px; font-weight: 600; text-anchor: middle; }
 @keyframes sm-pulse { 0%, 100% { opacity: .2; } 50% { opacity: .06; } }
 @media (prefers-reduced-motion: reduce) { .sm-cyc-halo { animation: none; opacity: .14; } }
+
+/* the sea behind the land: a soft radial depth + a faint lat/long graticule,
+   both theme-aware so the light map stays light */
+.sm-o0 { stop-color: var(--sm-ocean-0); }
+.sm-o1 { stop-color: var(--sm-ocean-1); }
+.sm-o2 { stop-color: var(--sm-ocean-2); }
+.sm-ocean-r { fill: url(#sm-ocean); }
+.sm-grat path { fill: none; stroke: var(--sm-grat); stroke-width: .5; }
 
 /* ---------- storm watch: the tilted view ----------
    An SVG cannot extrude, so a lit state is drawn as a stack of copies

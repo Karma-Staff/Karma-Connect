@@ -7466,10 +7466,27 @@ function naMapSvg(byState, storms) {
   }).join("");
 
   // the generator's frame: the US with headroom for southern Canada
-  const vb = (g.view || [0, 0, g.width, g.height]).join(" ");
+  const view = g.view || [0, 0, g.width, g.height];
+  const vb = view.join(" ");
+  /* A faint lat/long graticule over the sea — drawn before the land, which
+     covers it, so only the water shows the lines. */
+  let grat = "";
+  for (let lon = -170; lon <= -40; lon += 10) {
+    let d = ""; for (let lat = 8; lat <= 76; lat += 3) { const [x, y] = stormXY(lon, lat); d += (d ? "L" : "M") + x.toFixed(1) + " " + y.toFixed(1); }
+    grat += `<path d="${d}"/>`;
+  }
+  for (let lat = 20; lat <= 70; lat += 10) {
+    let d = ""; for (let lon = -170; lon <= -40; lon += 3) { const [x, y] = stormXY(lon, lat); d += (d ? "L" : "M") + x.toFixed(1) + " " + y.toFixed(1); }
+    grat += `<path d="${d}"/>`;
+  }
   return `<svg class="sm-map" viewBox="${vb}"
     preserveAspectRatio="xMidYMid meet" role="img"
     aria-label="Severe weather by state and province across the United States and Canada">
+    <defs><radialGradient id="sm-ocean" cx="42%" cy="28%" r="95%">
+      <stop class="sm-o0" offset="0%"/><stop class="sm-o1" offset="55%"/><stop class="sm-o2" offset="100%"/>
+    </radialGradient></defs>
+    <rect class="sm-ocean-r" x="${view[0]}" y="${view[1]}" width="${view[2]}" height="${view[3]}"/>
+    <g class="sm-grat">${grat}</g>
     <g class="sm-land">${shapes}</g>
     <g class="sm-labels">${labels}</g>
     ${stormOverlay(storms)}
