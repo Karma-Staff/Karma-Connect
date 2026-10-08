@@ -4875,11 +4875,36 @@ async function kdDial(fromPad) {
 
 function kdHangup() {
   if (!KD.session) return;
-  /* Before the far end answers there is no call to hang up yet, only an
-     invitation: SIP withdraws that with CANCEL, and a BYE is refused. */
   const s = KD.session;
-  const ringing = KD.phase === "calling" && typeof s.cancel === "function";
-  kdGuard(() => (ringing ? s.cancel() : s.hangup()), ringing ? "cancel the call" : "hang up").catch(() => {});
+  const ringing = KD.phase === "calling";
+  /* Before the far end answers there is only an invitation: SIP withdraws it
+     with CANCEL, and a BYE is refused. The SDK can throw inside cancel() on an
+     early/odd session state ("reading 'match'"), so try the sensible methods
+     in turn and swallow the error — the rep has still ended the call, and a
+     failure must not leave a scary toast or a call stuck on "Calling". */
+  (async () => {
+    const order = ringing ? ["cancel", "hangup", "dispose", "terminate"]
+      : ["hangup", "bye", "dispose", "terminate"];
+    for (const m of order) {
+      if (typeof s[m] !== "function") continue;
+      try { await s[m](); return; } catch (e) { console.warn("[karma] end call (" + m + "):", e); }
+    }
+  })();
+  /* Safety net: if the SDK never fires its end event (because it threw), the
+     call would sit on "Calling" forever. After a moment, if this is still the
+     session and it has not ended, return the UI to idle ourselves. A real end
+     event firing first moves KD.phase off calling/live, making this a no-op;
+     reportCall's own guard stops a double-log. */
+  setTimeout(() => {
+    if (KD.session !== s || (KD.phase !== "calling" && KD.phase !== "live")) return;
+    reportCall(null, ringing ? "cancelled" : "connected");
+    kdLive("ended");
+    kdStopClock();
+    KD.phase = "ended"; KD.session = null; KD.dialAt = KD.answerAt = null;
+    KD.muted = KD.held = KD.rec = false;
+    if (VOICE.rcSession === s) VOICE.rcSession = null;
+    kdRender();
+  }, 1500);
 }
 
 function kdControl(which) {
