@@ -3690,15 +3690,12 @@ async function kdVmDrop() {
     };
     src.start();
     VM.drop.tick = setInterval(() => kdRender(), 500);
-    /* Free the rep at once (what Zoho Voice does): the voicemail plays to the
-       end in the background and the call hangs up on its own. Open the
-       disposition now so the rep logs and moves on; the next lead is armed
-       but held until the line is free (see armAutoDial + onended above). */
-    if (CAMP.s?.current && String(CAMP.s.current.lead?.id) === String(KD.lead?.id))
-      campaignCallEnded(KD.lead.id, "no-answer");
-    else kdOpenWrap();
     kdRender();
-    kdToast("Leaving your voicemail — disposition it now; the next call rings when it finishes");
+    /* Stay on the call while the message plays. The line has to carry the
+       voicemail, so hanging up now would cut it off before the person hears
+       it — kdHangup blocks that. It plays to the end on its own and the line
+       hangs up by itself, then the disposition opens (src.onended / finish). */
+    kdToast("Leaving your voicemail — stay on the line; it ends by itself when the message finishes");
   } catch (e) {
     console.warn("[karma] voicemail drop:", e);
     kdVmDropCleanup();
@@ -4875,6 +4872,12 @@ async function kdDial(fromPad) {
 
 function kdHangup() {
   if (!KD.session) return;
+  /* A voicemail is still playing into the line — ending the call now would cut
+     the message off before the person hears it. It hangs up by itself the
+     moment the message finishes; to stop it early, press VM drop (Stop). */
+  if (VM.drop && !VM.drop.done) {
+    return kdToast("Your voicemail is still playing — it hangs up by itself when the message finishes (press VM drop to stop it)");
+  }
   const s = KD.session;
   const ringing = KD.phase === "calling";
   /* Before the far end answers there is only an invitation: SIP withdraws it
