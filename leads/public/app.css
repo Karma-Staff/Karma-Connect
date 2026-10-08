@@ -2941,6 +2941,23 @@ label.check input[type="checkbox"] { width: auto; margin: 0; accent-color: var(-
 .kd.dragging { box-shadow: 0 32px 80px -12px rgba(0,0,0,.6), 0 10px 24px -8px rgba(0,0,0,.4); }
 .kd.dragging .kd-head { cursor: grabbing; }
 @media (max-width: 520px) { .kd-head { cursor: default; touch-action: auto; } }
+
+/* ---------------- embed mode (?embed=dialer) ----------------
+   The dialler on its own, to be framed inside the browser extension's floating
+   panel so it rides over every website. The dashboard is hidden and the panel
+   is docked to fill the frame; the extension owns the position and the drag, so
+   the in-panel header is not a handle and there is no close button (closing the
+   softphone inside the frame would strand it). The login screen still shows
+   when the rep is not signed in. */
+body.kc-embed { background: var(--surface); }
+body.kc-embed #app, body.kc-embed #rc-launch { display: none !important; }
+body.kc-embed #rc-call.kd {
+  position: fixed; inset: 0; width: 100%; height: 100%;
+  max-height: none; border: none; border-radius: 0;
+  box-shadow: none; animation: none;
+}
+body.kc-embed #rc-call .kd-head { cursor: default; }
+body.kc-embed #kd-close { display: none; }
 .kd-presence { display: flex; align-items: center; gap: 7px;
   font-size: 12px; font-weight: 600; color: var(--kd-ink2); white-space: nowrap; }
 .kd-live { width: 7px; height: 7px; flex: none; border-radius: 50%;

@@ -4011,6 +4011,28 @@ function rcPanelToggle(show) {
   kdLoadMe();
 }
 
+/* Embed mode plumbing. The extension injects this app as an <iframe> and can
+   ask it to dial — click-to-call from a number selected on any website. We only
+   obey a dial message that carries the one-time token the extension also put in
+   our URL (?k=…), so a host page that happens to find the iframe cannot drive
+   the softphone. Within the iframe the header is not a drag handle — the
+   extension drags the whole floating panel — so kdPlace/kdWireDrag stand down
+   (see the guards there). */
+function kcWireEmbed(token) {
+  window.addEventListener("message", (e) => {
+    const m = e.data;
+    if (!m || m.kc !== "dial" || !m.number) return;
+    if (token && m.k !== token) return;
+    KD.number = String(m.number).replace(/[^0-9*#+]/g, "");
+    KD.lead = null;
+    KD.view = "keypad";
+    rcPanelToggle(true);
+    kdRender();
+    if (m.now) kdDial(true);
+  });
+}
+const kcEmbedded = () => document.body.classList.contains("kc-embed");
+
 /* Caller ID is fetched once per page, not per open: it is a round trip to
    RingCentral and the number does not change between calls. */
 let kdMeDone = false;
@@ -4038,6 +4060,7 @@ const kdPhone = () => window.matchMedia("(max-width: 520px)").matches;
 function kdPlace(pos) {
   const el = kdEl("rc-call");
   if (!el || el.classList.contains("hidden")) return;
+  if (kcEmbedded()) return;   // the extension docks and carries the panel, not this
   if (pos === undefined) {
     try { pos = JSON.parse(localStorage.getItem(KD_POS_KEY) || "null"); } catch (e) { pos = null; }
   }
@@ -4058,7 +4081,7 @@ function kdWireDrag(root) {
   let drag = null;
 
   head.addEventListener("pointerdown", (e) => {
-    if (e.button !== 0 || kdPhone() || e.target.closest("button, input, a")) return;
+    if (e.button !== 0 || kdPhone() || kcEmbedded() || e.target.closest("button, input, a")) return;
     const r = root.getBoundingClientRect();
     drag = { dx: e.clientX - r.left, dy: e.clientY - r.top, at: null };
     head.setPointerCapture(e.pointerId);
@@ -11706,6 +11729,7 @@ async function boot() {
   // had a beat to paint — any exit sets kl_tour_done, so it never nags
   if (!localStorage.getItem("kl_tour_done")) setTimeout(startTour, 800);
   S.booted = true;             // from here on, a 401 means the session died
+  if (document.body.classList.contains("kc-embed")) rcPanelToggle(true);
   kdStartReminders();
   pdRepStart();
   crmStart();
@@ -11715,6 +11739,15 @@ async function boot() {
 
 async function init() {
   const usp = new URLSearchParams(location.search);
+  /* Embed mode: this app, loaded in the browser-extension's floating panel as
+     an <iframe> at ?embed=dialer, runs as a bare softphone over every website.
+     The CSS hides the dashboard and docks the dialler to fill the frame; the
+     extension carries it around any page. Flagged here, before paint, so the
+     dashboard never flashes. */
+  if (usp.get("embed") === "dialer") {
+    document.body.classList.add("kc-embed");
+    kcWireEmbed(usp.get("k") || "");
+  }
   // a failed hosted-login bounce lands back here with the reason in the URL
   const authError = usp.get("authError");
   if (authError) {

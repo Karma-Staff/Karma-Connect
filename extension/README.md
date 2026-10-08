@@ -1,56 +1,75 @@
-# Karma Connect — Lead Finder (Chrome extension)
+# Karma Connect Dialer — browser extension
 
-A small Chrome extension that finds B2B leads using your Karma Connect backend's Claude
-web-research proxy, and saves the ones you like straight into Karma Connect as prospects.
+A floating Karma Connect softphone that rides over **every website** — drag it
+anywhere, and call a number you select on any page. This is the only way to get
+a dialler on top of other sites (Gmail, another CRM, a Google Sheet): a web page
+is sandboxed to its own site, so it takes a browser extension to draw over the
+rest. This is the same mechanism Zoho's dialler uses.
 
-It does **not** scrape LinkedIn or any other site. It asks Claude (with web search) to
-research the open web — the same "ask Claude to find leads" flow the app already uses.
+## How it works (so the next person understands it)
 
-## What it talks to
+The extension is deliberately thin. The dialler **is the real Karma Connect
+softphone** — it is loaded in an `<iframe>` pointed at `<app>/?embed=dialer`:
 
-All calls go to your existing backend — nothing new server-side is required:
+- **`content.js`** injects a draggable bubble/panel into every page, inside a
+  Shadow DOM so the host site's CSS can't touch it. Position and open state are
+  saved in `chrome.storage`, so it's where the rep left it on the next page and
+  the next site.
+- The panel's iframe loads the app in **embed mode** (`?embed=dialer`, added to
+  `app.js`/`app.css`). Embed mode hides the dashboard and docks just the
+  softphone to fill the frame. Because the iframe is the **same origin** as the
+  app, it inherits the rep's Karma Connect login and reuses everything that
+  already exists — RingCentral, call recording, voicemail drop. Nothing is
+  rebuilt.
+- **`background.js`** adds the right-click *"Call … with Karma Connect"* and
+  makes the toolbar icon show/hide the widget. The number is posted into the
+  dialler, which dials it. A one-time token (in the iframe URL and every dial
+  message) stops a random page from driving the softphone.
 
-| Action | Endpoint |
-|---|---|
-| Sign in (needed to save) | `POST /api/auth/signin` |
-| Research leads | `POST /api/claude` (web search) |
-| Save a lead | `POST /api/history` |
+### Phase-1 limit — read this
+A **full page load of the host site** reloads the content script and the iframe,
+which **drops a call in progress**. Fine while the rep stays on one page during a
+call; not yet true "call survives everywhere." The fix is an MV3 **offscreen
+document** that owns the RingCentral WebPhone (audio lives in the extension, not
+a tab), with the visible panel reduced to UI that talks to it through
+`background.js`. That's the next phase and is stubbed in `background.js`.
 
-## Install (load unpacked)
+## Install (for testing — no store needed)
 
-1. Open `chrome://extensions` in Chrome.
-2. Turn on **Developer mode** (top-right).
-3. Click **Load unpacked** and select this `extension/` folder.
-4. Pin the extension and click its icon to open the popup.
+1. **Set your app URL.** Either edit `config.js` (`KC_APP_URL_DEFAULT`) or, after
+   loading, open the extension's **Options** and paste it there (that wins).
+   Example: `https://karma-connect.onrender.com` — no trailing slash.
+2. Chrome/Edge → `chrome://extensions` → turn on **Developer mode** →
+   **Load unpacked** → pick this `extension/` folder.
+3. (Optional) add two PNGs, `icon48.png` / `icon128.png`, and reference them in
+   `manifest.json` under `"icons"` and `"action".default_icon` for a real icon.
+4. Open any website. A blue phone bubble appears bottom-right. Click it → the
+   dialler opens (sign in to Karma Connect the first time). Drag the bubble or
+   the panel's top bar anywhere — it stays there across pages and sites.
 
-## Configure
+### Try it
+- **Drag:** grab the bubble or the panel's top bar, drop it anywhere.
+- **Call from a page:** select a phone number on any site → right-click →
+  *Call … with Karma Connect*. Or click any `tel:` link.
+- **Show/hide:** click the toolbar icon.
 
-Open the popup, click the **⚙ gear**:
+## Rolling it out to reps
+Loading unpacked is per-machine and for testing. For a real rollout, either
+publish to the **Chrome Web Store** (a few days' review) or **force-install** via
+Google Workspace / Edge enterprise policy so every rep gets it automatically.
+Microphone permission is granted once per rep in the dialler iframe.
 
-- **Backend URL**
-  - Local dev: `http://localhost:8787` (the Express server; default)
-  - Production: your Render URL, e.g. `https://karma-connect.onrender.com`
-- **Sign in** with your Karma Connect email + password. Required to **save** leads.
-  (On a local dev server, searching works without signing in; saving still needs login.)
+## Files
+| File | What it is |
+|------|------------|
+| `manifest.json` | MV3 manifest, permissions, content-script registration |
+| `config.js` | the one setting: your app URL (or set it in Options) |
+| `content.js` | the floating, draggable widget + the dialler iframe + click-to-call |
+| `background.js` | right-click call, toolbar toggle, Phase-2 offscreen stub |
+| `options.html` / `options.js` | set the app URL per machine |
 
-## Use
-
-1. Type what you're after, e.g.
-   *"owners of water-damage restoration companies in Texas, 10–50 staff, hiring admins"*.
-2. Set how many leads (1–15) and click **Find leads**.
-3. Review the cards (company, signal, why it fits, website + source links).
-4. Click **Save to Karma Connect** on the good ones — they appear on your board as `new`.
-
-The search runs in the background service worker, so you can close the popup while it
-works; results are waiting when you reopen it.
-
-## Requirements / notes
-
-- The backend needs a **real `ANTHROPIC_API_KEY`** for search to work. With the placeholder
-  key you'll see `invalid x-api-key`. Set the key in the backend `.env` (local) or the Render
-  dashboard (prod) and restart.
-- Results are AI-generated from web search — **verify before outreach**. The model is told
-  never to fabricate and to cite a source URL, but always sanity-check.
-- The icons are the shared Karma Staff mark, not the extension's own artwork.
-  Regenerate every surface's icons together: `node scripts/gen-icons.mjs`
-  from the repo root.
+## App side (already added, in the main repo)
+- `?embed=dialer` in `leads/public/app.js` — boots as a bare softphone, accepts
+  a token-checked dial message.
+- `.kc-embed` styles in `leads/public/app.css` — hides the dashboard, docks the
+  dialler to fill the frame.
