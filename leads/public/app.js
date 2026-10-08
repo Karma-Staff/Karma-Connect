@@ -7345,7 +7345,7 @@ function renderStorm(d) {
 
     ${(d.storms || []).length ? `<div class="act-card sm-tropical">
       <h4>🌀 Active tropical systems <span class="sm-count">${d.storms.length}</span></h4>
-      <div class="sm-storm-grid">${d.storms.map((s) => stormCard(s, d)).join("")}</div>
+      <div class="sm-storm-grid">${d.storms.map((s, i) => stormCard(s, d, i)).join("")}</div>
       <p class="asg-foot">Live from the National Hurricane Center. Position, strength and track are
         the NHC's official advisory; "threatening" lists the US states under an active hurricane,
         tropical-storm or storm-surge warning right now. Follow a storm's link for the full forecast cone.</p>
@@ -7414,6 +7414,59 @@ function renderStorm(d) {
       const first = (row.dataset.states || "").split(",")[0];
       if (first) openStateLeads(first);
     }));
+  el.querySelectorAll(".sm-sys.sm-click").forEach((c) => {
+    const open = () => stormModal(+c.dataset.storm);
+    c.addEventListener("click", open);
+    c.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
+  });
+}
+
+/* Everything we know about one storm, in-app — no trip to a website. Position,
+   strength, how it is moving, who it threatens, and a straight-line projection
+   of where its current track points over the next couple of days. */
+function stormModal(i) {
+  const d = STORM.data; if (!d) return;
+  const s = (d.storms || [])[i]; if (!s) return;
+  const cat = STORM_CAT(s.intensityKt), mph = KT_TO_MPH(s.intensityKt), moveMph = KT_TO_MPH(s.moveKt);
+  const kindName = STORM_KIND[s.kind] || "Tropical system";
+  const states = [...new Set((d.alerts || [])
+    .filter((a) => /hurricane|tropical storm|storm surge|typhoon/i.test(a.event || ""))
+    .flatMap((a) => a.states || []))];
+  const proj = [];
+  if (s.lat != null && s.lon != null && s.moveDir != null && s.moveKt) {
+    for (const h of [12, 24, 48]) {
+      const [lo, la] = stormAhead(s.lat, s.lon, s.moveDir, s.moveKt * 1.151 * h);
+      proj.push({ h, label: stormCoord(la, lo) });
+    }
+  }
+  const stat = (lbl, val) => val ? `<div><span>${lbl}</span><b>${esc(val)}</b></div>` : "";
+  $("modal-title").textContent = s.name || "Tropical system";
+  $("modal-body").innerHTML = `
+    <div class="st-modal ${stormSev(s)}">
+      <div class="st-m-head">
+        <b>${esc(kindName)}${cat ? " · Category " + cat : ""}</b>
+        ${cat ? `<span class="sm-cat">Cat ${cat}</span>` : `<span class="sm-cat ts">${esc(s.kind || "")}</span>`}
+      </div>
+      <div class="st-m-stats">
+        ${stat("Max winds", mph != null ? mph + " mph" : "")}
+        ${stat("Pressure", s.pressureMb != null ? s.pressureMb + " mb" : "")}
+        ${stat("Moving", s.moveKt != null ? `${s.moveDir != null ? dirToCompass(s.moveDir) + " " : ""}${moveMph} mph` : "")}
+        ${stat("Position now", stormCoord(s.lat, s.lon))}
+        ${stat("Basin", s.basin)}
+        ${stat("Updated", s.at ? relTime(s.at) : "")}
+      </div>
+      ${states.length ? `<div class="st-m-threat"><span>Threatening right now</span><div>${states.map((x) => `<span class="sm-st">${esc(x)}</span>`).join("")}</div></div>` : ""}
+      ${proj.length ? `<h4 class="st-m-h">Where its current track points</h4>
+        <div class="st-m-fc">
+          <div class="st-m-row"><span>Now</span><b>${esc(stormCoord(s.lat, s.lon))}</b></div>
+          ${proj.map((p) => `<div class="st-m-row"><span>in ${p.h}h</span><b>${esc(p.label)}</b></div>`).join("")}
+        </div>
+        <p class="dash-mute crm-fine">A straight-line projection from the current heading and speed — real storms curve, so read it as a direction, not a destination. The official forecast curve is the NHC's.</p>` : ""}
+      ${s.track ? `<p class="st-m-link"><a href="${esc(s.track)}" target="_blank" rel="noopener">Open the NHC's official forecast cone ↗</a></p>` : ""}
+      <div class="modal-actions"><button type="button" class="btn-secondary" id="modal-cancel">Close</button></div>
+    </div>`;
+  $("modal-backdrop").classList.remove("hidden");
+  $("modal-cancel").addEventListener("click", closeModal);
 }
 
 /* The map itself. Real geometry — Natural Earth admin-1, Albers equal-area,
@@ -7598,7 +7651,7 @@ function stormOverlay(storms) {
 
 /* One card per active storm: where it is, how strong, which way it is heading,
    and which US states are under a related warning right now. */
-function stormCard(s, d) {
+function stormCard(s, d, i) {
   const cat = STORM_CAT(s.intensityKt);
   const isHurr = s.kind === "HU" || s.kind === "MH" || (cat != null && cat >= 1);
   const kindName = STORM_KIND[s.kind] || "Tropical system";
@@ -7607,7 +7660,7 @@ function stormCard(s, d) {
     .filter((a) => /hurricane|tropical storm|storm surge|typhoon/i.test(a.event || ""))
     .flatMap((a) => a.states || []))];
   const sev = (cat != null && cat >= 3) ? "sev3" : (isHurr ? "sev2" : "sev1");
-  return `<article class="sm-sys ${sev}">
+  return `<article class="sm-sys sm-click ${sev}" data-storm="${i}" role="button" tabindex="0" title="See everything about this storm">
     <header class="sm-sys-h">
       <div class="sm-sys-name"><b>${esc(s.name || "Unnamed")}</b><span>${esc(kindName)}</span></div>
       ${cat ? `<span class="sm-cat">Cat ${cat}</span>` : `<span class="sm-cat ts">${esc(s.kind || "")}</span>`}
@@ -7620,7 +7673,7 @@ function stormCard(s, d) {
     </div>
     ${states.length ? `<div class="sm-threat"><span class="k">Threatening</span>${states.map((x) => `<span class="sm-st">${esc(x)}</span>`).join("")}</div>` : ""}
     <footer class="sm-sys-f">
-      ${s.track ? `<a href="${esc(s.track)}" target="_blank" rel="noopener" class="sm-track">See forecast track →</a>` : "<span></span>"}
+      <span class="sm-track">Full details &amp; forecast →</span>
       <span class="sm-upd">${s.at ? "updated " + esc(relTime(s.at)) : ""}</span>
     </footer>
   </article>`;
