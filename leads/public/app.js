@@ -5419,19 +5419,24 @@ function kdIncoming(session) {
    still goes through un-recorded (we never drop a call over this) and the rep
    is told once where the switch is. The Record control still works, so a rep
    can stop it for a moment if they must. */
-function kdAutoRecord(s) {
+function kdAutoRecord(s, attempt = 0) {
   if (!s || KD.rec || typeof s.startRecording !== "function") return;
+  /* Only keep trying while THIS call is still the live one. */
+  if (KD.session !== s || KD.phase !== "live") return;
   s.startRecording()
     .then((r) => {
       if (r && r.code !== undefined && +r.code !== 0) throw new Error(r.description || r.message || "code " + r.code);
       KD.rec = true; kdRender();
     })
     .catch((e) => {
-      /* Quiet: with RingCentral's Automatic Call Recording on (the usual
-         setup), server-side recording already covers the call and the app's
-         on-demand request is simply declined — not a problem to flag. The
-         app attempt stays as a fallback for accounts using On-Demand only. */
-      console.warn("[karma] auto-record (likely covered by Automatic Call Recording):", e?.message || e);
+      /* RingCentral often refuses the very first request — the call is not
+         ready to record the instant it answers — so retry a few times with a
+         short backoff instead of giving up. This is what was leaving some
+         connected calls un-recorded. If every attempt is refused the call
+         still goes through; Automatic Call Recording (if on) covers it. */
+      console.warn("[karma] auto-record attempt " + attempt + ":", e?.message || e);
+      if (attempt < 5 && KD.session === s && KD.phase === "live")
+        setTimeout(() => kdAutoRecord(s, attempt + 1), 600 + attempt * 600);
     });
 }
 
