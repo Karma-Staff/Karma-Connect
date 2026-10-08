@@ -7594,18 +7594,56 @@ const stormSev = (s) => {
     : (s.kind === "HU" || s.kind === "MH" || (cat != null && cat >= 1)) ? "sev2" : "sev1";
 };
 
-/* A stylised cyclone glyph: two spiral arms around a bright eye, in the
-   storm's category colour (set via currentColor), with a soft glow. */
+/* The cyclone glyph, meant to read like the satellite view rather than a
+   symbol: a tinted cloud mass in the storm's colour, three tapered rain bands
+   in white spiralling out from a bright eyewall, and a dark, calm eye.
+
+   The bands are logarithmic spirals — the curve real bands follow — traced
+   clockwise outward, which is how a northern-hemisphere storm looks from
+   above; the whole cloud then turns slowly anticlockwise, the way the storm
+   itself does. A soft glow in the category colour lifts the glyph off the
+   terrain, and the shadow under the cloud keeps it legible on land that has
+   lit up the same hue.
+
+   Drawn once in unit space (cloud radius 1) and scaled to `r`, so one set of
+   shapes serves every category. Colour arrives through currentColor from the
+   severity class on the enclosing group; the masks and filters it leans on
+   are shared, and live in stormOverlay's <defs>. */
 function stormCyc(x, y, r) {
-  const a = `M0 ${(-r * 0.16).toFixed(2)}`
-    + ` C ${(r * 0.52).toFixed(2)} ${(-r * 0.62).toFixed(2)} ${(r * 0.98).toFixed(2)} ${(-r * 0.38).toFixed(2)} ${r.toFixed(2)} ${(r * 0.1).toFixed(2)}`
-    + ` C ${(r * 0.72).toFixed(2)} ${(-r * 0.02).toFixed(2)} ${(r * 0.4).toFixed(2)} ${(r * 0.02).toFixed(2)} ${(r * 0.2).toFixed(2)} ${(-r * 0.05).toFixed(2)}`
-    + ` C ${(r * 0.1).toFixed(2)} ${(-r * 0.09).toFixed(2)} ${(r * 0.04).toFixed(2)} ${(-r * 0.12).toFixed(2)} 0 ${(-r * 0.16).toFixed(2)} Z`;
-  return `<g class="sm-cyc" filter="url(#sm-glow)" transform="translate(${x.toFixed(1)} ${y.toFixed(1)})">
-    <circle class="sm-cyc-halo" r="${(r * 0.95).toFixed(1)}"/>
-    <g class="sm-cyc-arm" transform="rotate(20)"><path d="${a}"/><path d="${a}" transform="rotate(180)"/></g>
-    <circle class="sm-cyc-ring" r="${(r * 0.3).toFixed(1)}"/>
-    <circle class="sm-cyc-eye" r="${(r * 0.16).toFixed(1)}"/>
+  /* One band: a log spiral rad = R0·e^(K·t). It starts under the core so it
+     emerges from the cloud mass rather than butting against it, swells, then
+     tapers to a point; the radial fade on the whole cloud (sm-m-cloud)
+     dissolves the tails instead of leaving hairlines. `span` is the sweep in
+     radians, `wmax` the half-width at its fullest. */
+  const band = (th0, R0, R1, span, wmax) => {
+    const K = Math.log(R1 / R0) / span, N = 32, outer = [], inner = [];
+    for (let i = 0; i <= N; i++) {
+      const u = i / N, rad = R0 * Math.exp(K * span * u), th = th0 + span * u;
+      const w = 0.004 + wmax * Math.pow(1 - u, 1.3) * Math.min(1, u * 5);
+      const c = Math.cos(th), s = Math.sin(th);
+      outer.push([(rad + w) * c, (rad + w) * s]);
+      inner.push([(rad - w) * c, (rad - w) * s]);
+    }
+    const pt = (p) => `${p[0].toFixed(3)} ${p[1].toFixed(3)}`;
+    return `M${pt(outer[0])} L${outer.slice(1).map(pt).join(" L")} L${inner.reverse().map(pt).join(" L")} Z`;
+  };
+  // three main bands, and three fainter wisps between them further out
+  const main = [0, 2.094, 4.189].map((a) => `<path class="sm-cyc-cloud" d="${band(a, 0.36, 1.15, 4.0, 0.115)}"/>`).join("");
+  const wisp = [1.047, 3.142, 5.236].map((a) => `<path class="sm-cyc-wisp" d="${band(a, 0.5, 1.2, 3.3, 0.06)}"/>`).join("");
+  return `<g class="sm-cyc" transform="translate(${x.toFixed(1)} ${y.toFixed(1)})">
+    <circle class="sm-cyc-glow" r="${(r * 1.85).toFixed(1)}" mask="url(#sm-m-glow)"/>
+    <g transform="scale(${r.toFixed(2)})">
+      <circle class="sm-cyc-disc" r="1.04" mask="url(#sm-m-disc)"/>
+      <g filter="url(#sm-cloudsh)">
+        <g class="sm-cyc-spin" mask="url(#sm-m-cloud)">
+          <circle r="1.2" fill="none"/>
+          ${wisp}
+          <circle class="sm-cyc-cloud" r="0.5"/>
+          ${main}
+        </g>
+      </g>
+      <circle class="sm-cyc-eye" r="0.13"/>
+    </g>
   </g>`;
 }
 
@@ -7614,37 +7652,87 @@ function stormCyc(x, y, r) {
    at its current bearing and speed), and a name/strength label. Systems far
    out at sea fall outside the frame and are simply clipped. */
 function stormOverlay(storms) {
-  const marks = (storms || []).map((s) => {
+  const f1 = (v) => v.toFixed(1);
+  let defs = "";
+  const marks = (storms || []).map((s, i) => {
     if (s.lat == null || s.lon == null) return "";
     const [x, y] = stormXY(s.lon, s.lat);
     const cls = stormSev(s);
     const cat = STORM_CAT(s.intensityKt), mph = KT_TO_MPH(s.intensityKt);
+    const r = cat >= 4 ? 13 : cat >= 3 ? 11 : cls !== "sev1" ? 9 : 7.5;
     let cone = "", track = "", dots = "";
     if (s.moveDir != null && s.moveKt) {
       const mi = Math.min(s.moveKt * 1.151 * 24, 780);
       const [alon, alat] = stormAhead(s.lat, s.lon, s.moveDir, mi);
       const [ax, ay] = stormXY(alon, alat);
-      const dx = ax - x, dy = ay - y, len = Math.hypot(dx, dy) || 1, px = -dy / len, py = dx / len, W = len * 0.34 + 7;
-      cone = `<path class="sm-cone ${cls}" d="M${x.toFixed(1)} ${y.toFixed(1)} L${(ax + px * W).toFixed(1)} ${(ay + py * W).toFixed(1)} L${(ax - px * W).toFixed(1)} ${(ay - py * W).toFixed(1)} Z"/>`;
-      track = `<path class="sm-trk ${cls}" d="M${x.toFixed(1)} ${y.toFixed(1)} L${ax.toFixed(1)} ${ay.toFixed(1)}"/>`;
+      const dx = ax - x, dy = ay - y, len = Math.hypot(dx, dy) || 1;
+      const ux = dx / len, uy = dy / len, px = -uy, py = ux;
+      /* The cone of uncertainty, drawn the way the NHC draws theirs: the
+         envelope of circles that grow along the track, so the sides are
+         straight and the far end is round. Its fill is masked by a gradient
+         running along the heading, dense at the storm and thin a day out —
+         confidence fading with distance — and softened at the edges so it
+         sits on the map like weather rather than a cut-out. */
+      const w0 = r * 0.6, W = len * 0.3 + 9;
+      const d = `M${f1(x + px * w0)} ${f1(y + py * w0)} L${f1(ax + px * W)} ${f1(ay + py * W)}`
+        + ` A${f1(W)} ${f1(W)} 0 0 0 ${f1(ax - px * W)} ${f1(ay - py * W)}`
+        + ` L${f1(x - px * w0)} ${f1(y - py * w0)} A${f1(w0)} ${f1(w0)} 0 0 0 ${f1(x + px * w0)} ${f1(y + py * w0)} Z`;
+      const bx = Math.min(x, ax) - W - 12, by = Math.min(y, ay) - W - 12;
+      const bw = Math.abs(ax - x) + 2 * W + 24, bh = Math.abs(ay - y) + 2 * W + 24;
+      defs += `<linearGradient id="sm-cg${i}" gradientUnits="userSpaceOnUse" x1="${f1(x)}" y1="${f1(y)}" x2="${f1(ax)}" y2="${f1(ay)}">
+          <stop offset="0" stop-color="#fff"/><stop offset=".5" stop-color="#fff" stop-opacity=".58"/><stop offset="1" stop-color="#fff" stop-opacity=".2"/>
+        </linearGradient>
+        <mask id="sm-cm${i}" maskUnits="userSpaceOnUse" x="${f1(bx)}" y="${f1(by)}" width="${f1(bw)}" height="${f1(bh)}">
+          <rect x="${f1(bx)}" y="${f1(by)}" width="${f1(bw)}" height="${f1(bh)}" fill="url(#sm-cg${i})"/>
+        </mask>`;
+      cone = `<g mask="url(#sm-cm${i})">
+        <path class="sm-cone" d="${d}" filter="url(#sm-soft)"/>
+        <path class="sm-cone-edge" d="${d}"/>
+      </g>`;
+      // the centre line and the forecast positions along it (~10h, 17h, 24h)
+      const tx = x + ux * r * 0.9, ty = y + uy * r * 0.9;
+      track = `<path class="sm-trk-u" d="M${f1(tx)} ${f1(ty)} L${f1(ax)} ${f1(ay)}"/>
+        <path class="sm-trk" d="M${f1(tx)} ${f1(ty)} L${f1(ax)} ${f1(ay)}"/>`;
       for (const f of [0.4, 0.7, 1.0]) {
         const [lo, la] = stormAhead(s.lat, s.lon, s.moveDir, mi * f);
         const [fx, fy] = stormXY(lo, la);
-        dots += `<circle class="sm-fdot ${cls}" cx="${fx.toFixed(1)}" cy="${fy.toFixed(1)}" r="2.6"/>`;
+        dots += `<circle class="sm-fdot" cx="${f1(fx)}" cy="${f1(fy)}" r="${f === 1 ? 3 : 2.4}"/>`;
       }
     }
-    const r = cat >= 4 ? 12 : cat >= 3 ? 10 : cls !== "sev1" ? 8.5 : 7;
-    const label = `<g class="sm-lab-g ${cls}" transform="translate(${x.toFixed(1)} ${(y - r - 16).toFixed(1)})">
-      <rect class="sm-pill" x="-35" y="-11" width="70" height="22" rx="7"/>
-      <text class="sm-name" y="-1">${esc(s.name || "")}</text>
-      <text class="sm-meta" y="8.5">${cat ? "Cat " + cat : "TS"}${mph != null ? " · " + mph + " mph" : ""}</text>
+    /* The label sits just above the glyph and the pill grows with the name.
+       A storm near the edge of the frame keeps its pill inside it — the
+       Atlantic ones sit right at the eastern edge. */
+    const name = s.name || "", meta = `${cat ? "Cat " + cat : "TS"}${mph != null ? " · " + mph + " mph" : ""}`;
+    const pw = Math.max(72, Math.round(Math.max(name.length * 8.2, meta.length * 5.6) + 20));
+    const view = (window.NA_GEO && window.NA_GEO.view) || [0, 0, 1e4, 1e4];
+    const lx = Math.min(Math.max(x, view[0] + pw / 2 + 6), view[0] + view[2] - pw / 2 - 6);
+    const label = `<g class="sm-lab-g" transform="translate(${f1(lx)} ${f1(y - r * 1.7 - 14)})">
+      <rect class="sm-pill" x="${-pw / 2}" y="-12.5" width="${pw}" height="25" rx="8" filter="url(#sm-pillsh)"/>
+      <text class="sm-name" y="-1.5">${esc(name)}</text>
+      <text class="sm-meta" y="8.5">${esc(meta)}</text>
     </g>`;
     return `<g class="sm-sys-g ${cls}">${cone}${track}${dots}${stormCyc(x, y, r)}${label}</g>`;
   }).join("");
   if (!marks) return "";
-  return `<defs><filter id="sm-glow" x="-80%" y="-80%" width="260%" height="260%">
-      <feGaussianBlur stdDeviation="2.3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
-    </filter></defs>
+  /* Shared plumbing for the glyph. The fades are masks rather than coloured
+     gradients so the one shape set can take its colour from currentColor;
+     the shadow filter is in bounding-box units so it scales with the glyph. */
+  return `<defs>
+      <radialGradient id="sm-rg-glow"><stop offset="0" stop-color="#fff"/><stop offset=".4" stop-color="#fff" stop-opacity=".55"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+      <mask id="sm-m-glow" maskContentUnits="objectBoundingBox"><circle cx=".5" cy=".5" r=".5" fill="url(#sm-rg-glow)"/></mask>
+      <radialGradient id="sm-rg-disc"><stop offset="0" stop-color="#fff"/><stop offset=".7" stop-color="#fff"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+      <mask id="sm-m-disc" maskContentUnits="objectBoundingBox"><circle cx=".5" cy=".5" r=".5" fill="url(#sm-rg-disc)"/></mask>
+      <radialGradient id="sm-rg-cloud"><stop offset="0" stop-color="#fff"/><stop offset=".6" stop-color="#fff"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+      <mask id="sm-m-cloud" maskContentUnits="objectBoundingBox"><circle cx=".5" cy=".5" r=".5" fill="url(#sm-rg-cloud)"/></mask>
+      <filter id="sm-cloudsh" x="-.4" y="-.4" width="1.8" height="1.8" primitiveUnits="objectBoundingBox">
+        <feDropShadow dx="0" dy=".03" stdDeviation=".028" flood-color="#06101e" flood-opacity=".55"/>
+      </filter>
+      <filter id="sm-soft" x="-15%" y="-15%" width="130%" height="130%"><feGaussianBlur stdDeviation="1.8"/></filter>
+      <filter id="sm-pillsh" x="-10%" y="-30%" width="120%" height="170%">
+        <feDropShadow dx="0" dy="1.2" stdDeviation="1.6" flood-color="#000" flood-opacity=".45"/>
+      </filter>
+      ${defs}
+    </defs>
     <g class="sm-storm-layer">${marks}</g>`;
 }
 

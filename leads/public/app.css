@@ -547,17 +547,32 @@ body.zv-collapsed .zohovoice-container { display: none !important; }
 .sm-sys-g.sev3 { color: #ff5a46; }
 .sm-sys-g.sev2 { color: #ffb43d; }
 .sm-sys-g.sev1 { color: #49b6ff; }
-.sm-cyc-arm, .sm-cyc-ring, .sm-cyc-halo { fill: currentColor; }
-.sm-cyc-halo { opacity: .14; animation: sm-pulse 2s ease-in-out infinite; }
-.sm-cyc-eye { fill: #fff; }
-.sm-cone { fill: currentColor; opacity: .17; }
-.sm-trk { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-dasharray: 1.5 5; stroke-linecap: round; opacity: .85; }
-.sm-fdot { fill: currentColor; stroke: #fff; stroke-width: 1; }
-.sm-pill { fill: rgba(6,12,26,.74); stroke: currentColor; stroke-opacity: .5; }
-.sm-name { fill: #fff; font-size: 12.5px; font-weight: 800; text-anchor: middle; }
-.sm-meta { fill: #ccd8ef; font-size: 10px; font-weight: 600; text-anchor: middle; }
-@keyframes sm-pulse { 0%, 100% { opacity: .2; } 50% { opacity: .06; } }
-@media (prefers-reduced-motion: reduce) { .sm-cyc-halo { animation: none; opacity: .14; } }
+:root[data-theme="light"] .sm-sys-g.sev3 { color: #e8402c; }
+:root[data-theme="light"] .sm-sys-g.sev2 { color: #e8931a; }
+:root[data-theme="light"] .sm-sys-g.sev1 { color: #1e86d9; }
+/* the glyph: a tinted cloud mass under white spiral bands, a dark eye, and a
+   soft glow that breathes; the cloud turns slowly the way the storm does */
+.sm-cyc-glow { fill: currentColor; opacity: .5; animation: sm-pulse 3s ease-in-out infinite; }
+.sm-cyc-disc { fill: currentColor; opacity: .96; }
+.sm-cyc-cloud { fill: #fff; }
+.sm-cyc-wisp { fill: #fff; opacity: .55; }
+.sm-cyc-eye { fill: #101c30; opacity: .88; }
+.sm-cyc-spin { transform-box: fill-box; transform-origin: center; animation: sm-spin 18s linear infinite; }
+/* the cone: a soft fill fading along the heading, inside a fine edge */
+.sm-cone { fill: currentColor; opacity: .36; }
+.sm-cone-edge { fill: none; stroke: currentColor; stroke-width: .9; opacity: .55; }
+.sm-trk-u { fill: none; stroke: rgba(255,255,255,.3); stroke-width: 2.6; stroke-linecap: round; }
+.sm-trk { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-dasharray: 3 4; stroke-linecap: round; }
+.sm-fdot { fill: #fff; stroke: currentColor; stroke-width: 1.6; }
+.sm-pill { fill: rgba(7,13,27,.86); stroke: currentColor; stroke-opacity: .6; stroke-width: 1; }
+.sm-name { fill: #fff; font-size: 12.5px; font-weight: 800; text-anchor: middle; letter-spacing: .01em; }
+.sm-meta { fill: #c9d5ea; font-size: 10px; font-weight: 600; text-anchor: middle; }
+@keyframes sm-pulse { 0%, 100% { opacity: .5; } 50% { opacity: .26; } }
+@keyframes sm-spin { to { transform: rotate(-360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .sm-cyc-glow, .sm-cyc-spin { animation: none; }
+  .sm-cyc-glow { opacity: .45; }
+}
 
 /* the sea behind the land: a soft radial depth + a faint lat/long graticule,
    both theme-aware so the light map stays light */
