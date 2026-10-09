@@ -643,4 +643,4 @@ router.post("/api/dialer/campaigns/:id/unassign", requireAdmin, express.json({ l
   } catch (e) { next(e); }
 });
 
-module.exports = { router, MAX_SESSION, OPEN_STATUSES };
+module.exports = { router, MAX_SESSION, OPEN_STATUSES, callbackTargets };

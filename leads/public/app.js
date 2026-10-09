@@ -6849,8 +6849,8 @@ function renderCampaign(d) {
     r.Employees ? r.Employees.toLocaleString() + " employees" : "",
     ct?.local ? `${ct.local} ${ct.zone}` : ""].filter(Boolean);
   const last = d.current.lastCall;
-  const callerId = c?.callback
-    ? `<span class="cs-cid-k">Caller ID</span><span><b>${esc(c.callback.name)}</b> · callbacks ring ${esc(c.callback.name.split(" ")[0])}</span>`
+  const callerId = c?.callback?.name
+    ? `<span class="cs-cid-k">Caller ID</span><span><b>${esc(c.callback.name)}</b> · callbacks ring ${esc(String(c.callback.name).split(" ")[0])}</span>`
     : KD.callerId ? `<span class="cs-cid-k">Caller ID</span><span><b>${esc(kdFmtNum(KD.callerId))}</b> · your own number</span>` : "";
 
   el.innerHTML = `<div class="cs-wrap">

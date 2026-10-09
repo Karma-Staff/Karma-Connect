@@ -64,28 +64,26 @@ function heuristicMap(headers) {
   return m;
 }
 
-/* The AI reads the header and a few sample rows and names the columns. Only
-   asked to fill what the by-name pass could not, so it is one cheap call. */
-async function aiMap(headers, sampleRows, missing) {
-  const sys = "You label spreadsheet columns for a phone-call list. Given the headers and a few sample "
-    + "rows, say which header holds each field. Reply with ONLY a JSON object mapping each requested field "
-    + "to the exact header string, or null if no column fits. Fields: " + missing.join(", ") + ".";
+/* The AI reads the header and a few sample rows and names the columns — the
+   phone, the PERSON to ask for (not the company), and which columns carry the
+   context a rep wants before dialing. One cheap call; the by-name pass below
+   backs it up if the model is unavailable. */
+async function aiMap(headers, sampleRows) {
+  const sys = "You are labeling the columns of a spreadsheet that a sales rep will call through. "
+    + "From the headers and sample rows, reply with ONLY a JSON object with these keys: "
+    + "phone, name, company, email, city, state — each set to the EXACT header string that best holds it, or null; "
+    + "and notes — an ARRAY of the header strings whose text gives the rep useful context before dialing "
+    + "(who to ask for, the pitch or angle, pain points, key facts), most useful first, 1 to 4 of them, or []. "
+    + "For name, prefer the PERSON to speak to (a decision-maker or named contact), not the company name.";
   const user = "Headers: " + JSON.stringify(headers) + "\nSample rows:\n"
     + sampleRows.map((r) => JSON.stringify(r)).join("\n");
-  try {
-    const body = JSON.stringify({ model: MODEL, max_tokens: 400,
-      system: sys, messages: [{ role: "user", content: user }] });
-    const out = await handleClaude({ method: "POST", bodyString: body, authHeader: "", identity: null },
-      { requireAuth: false, recordUsage: false });
-    if (out.status !== 200) return {};
-    const text = (JSON.parse(out.body).content || []).filter((c) => c.type === "text").map((c) => c.text).join("");
-    const json = text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1);
-    const map = JSON.parse(json);
-    // keep only headers that actually exist
-    const ok = {};
-    for (const f of missing) if (map[f] && headers.includes(map[f])) ok[f] = map[f];
-    return ok;
-  } catch (e) { console.warn("[karma] campaign upload column AI:", e.message); return {}; }
+  const body = JSON.stringify({ model: MODEL, max_tokens: 500,
+    system: sys, messages: [{ role: "user", content: user }] });
+  const out = await handleClaude({ method: "POST", bodyString: body, authHeader: "", identity: null },
+    { requireAuth: false, recordUsage: false });
+  if (out.status !== 200) throw new Error("map upstream " + out.status);
+  const text = (JSON.parse(out.body).content || []).filter((c) => c.type === "text").map((c) => c.text).join("");
+  return JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
 }
 
 async function parseSheet(buffer) {
@@ -96,29 +94,40 @@ async function parseSheet(buffer) {
   const rows = XLSX.utils.sheet_to_json(ws, { defval: "", raw: false });
   if (!rows.length) return { rows: [], map: {} };
   const headers = Object.keys(rows[0]);
-  const map = heuristicMap(headers);
-  // phone and note are the two that matter — ask the AI only if either is unknown
-  const missing = ["phone", "note", "name", "company"].filter((f) => !map[f]);
-  if (missing.length) Object.assign(map, await aiMap(headers, rows.slice(0, 4), missing));
+  const h = heuristicMap(headers);
+  // AI reads the sheet; the by-name heuristic fills anything it leaves blank
+  let map = {};
+  try { map = await aiMap(headers, rows.slice(0, 4)); }
+  catch (e) { console.warn("[karma] campaign upload column AI:", e.message); }
+  for (const f of ["phone", "name", "company", "email", "city", "state"]) {
+    if (!map[f] || !headers.includes(map[f])) map[f] = h[f] || null;
+  }
+  map.first = h.first; map.last = h.last;
+  let notes = Array.isArray(map.notes) ? map.notes.filter((x) => headers.includes(x)) : [];
+  if (!notes.length && h.note) notes = [h.note];
+  map.notes = notes;
   return { rows, map };
 }
 
 function rowToLead(row, map) {
-  const g = (f) => (map[f] ? clean(row[map[f]]) : "");
-  const phone = g("phone");
+  const g = (hdr) => (hdr ? clean(row[hdr]) : "");
+  const gf = (f) => g(map[f]);
+  const phone = gf("phone");
   const key = pk(phone);
   if (!key) return null;                       // no usable phone → not a call
-  let name = g("name");
-  if (!name) name = [g("first"), g("last")].filter(Boolean).join(" ").trim();
+  let name = gf("name");
+  if (!name) name = [g(map.first), g(map.last)].filter(Boolean).join(" ").trim();
+  // the note is every context column the AI chose, each under its own label
+  const note = (map.notes || []).map((hdr) => { const v = g(hdr); return v ? `${hdr}: ${v}` : ""; })
+    .filter(Boolean).join("\n").slice(0, 4000) || null;
   return {
     name: name.slice(0, NAME_MAX) || null,
-    company: g("company").slice(0, NAME_MAX) || null,
+    company: gf("company").slice(0, NAME_MAX) || null,
     phone, phone_key: key,
-    email: g("email").slice(0, 160) || null,
-    city: g("city").slice(0, 80) || null,
-    state: g("state").slice(0, 40) || null,
-    note: g("note").slice(0, 4000) || null,
-    raw: row,
+    email: gf("email").slice(0, 160) || null,
+    city: gf("city").slice(0, 80) || null,
+    state: gf("state").slice(0, 40) || null,
+    note, raw: row,
   };
 }
 
@@ -178,7 +187,18 @@ router.post("/api/dialer/campaigns/upload", requireAdmin,
       const owner = clean(req.get("x-owner"));
       if (!owner) return res.status(400).json({ error: "Pick a rep to assign the campaign to." });
       const gap = Math.max(0, Math.min(120, parseInt(req.get("x-gap"), 10) || 0));
-      const callback = clean(req.get("x-callback-ext")).slice(0, 20) || null;
+      /* Resolve the callback ext to the full {name, ext, number} target the
+         rest of the app expects — a bare string would break the dialer screen.
+         Lazy require: campaign.js already requires this module, so pulling it in
+         at load time would be a cycle. */
+      const callbackExt = clean(req.get("x-callback-ext")).slice(0, 20);
+      let callback = null;
+      if (callbackExt) {
+        try {
+          const { callbackTargets } = require("./campaign");
+          callback = (await callbackTargets(req.user.id).catch(() => [])).find((x) => x.ext === String(callbackExt)) || null;
+        } catch (e) { callback = null; }
+      }
 
       const { rows, map } = await parseSheet(req.body);
       if (!rows.length) return res.status(400).json({ error: "That sheet had no rows." });
