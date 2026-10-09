@@ -191,7 +191,10 @@
         <div class="nav-group-b">
           <!-- working an assigned list straight through; also where a
                power-dialer campaign is worked -->
-          <button class="nav-item" data-tab="camp" title="Call session">
+          <!-- member-only: a rep works an assigned list / their power-dialer
+               campaign here; an admin manages campaigns from Power dialer and
+               does not need their own Call session. -->
+          <button class="nav-item member-only" data-tab="camp" title="Call session">
             <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 4.5h2.2l1.3 3.3-1.7 1.3a10.5 10.5 0 0 0 4.9 4.9l1.3-1.7 3.3 1.3v2.2a1.7 1.7 0 0 1-1.85 1.7C10.8 17.2 6.8 13.2 5.8 6.35A1.7 1.7 0 0 1 7.5 4.5Z"/><path d="M14.5 3.5h6M17.5 .5v6" transform="translate(0 2)"/></svg>
             <span class="nav-label">Call session</span></button>
           <!-- each person's own: the campaigns given to them, and their own calls -->

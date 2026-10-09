@@ -11839,6 +11839,10 @@ async function boot() {
   if (isAdmin()) {
     document.querySelectorAll(".admin-only").forEach((el) =>
       el.classList.remove("hidden"));
+    // the mirror of admin-only: surfaces a rep needs but an admin does not —
+    // today, the rep's own Call session (an admin runs campaigns from Power).
+    document.querySelectorAll(".member-only").forEach((el) =>
+      el.classList.add("hidden"));
     // Select stays where it was left, like density and sort. renderBulkTools()
     // paints the toggle when the first list renders.
     S.selectMode = !!localStorage.getItem("kl_select_mode");
