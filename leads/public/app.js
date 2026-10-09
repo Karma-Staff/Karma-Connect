@@ -3839,17 +3839,31 @@ function kdTitle(i) {
   if (i.action === "enrich") return "Enriched";
   if (i.action === "remove") return "Added to Do Not Contact";
   if (i.action === "restore") return "Restored";
+  // a note that records an event names it — e.g. "Registered in Zoho CRM" —
+  // rather than the generic "Note added"
+  if (i.action === "note" && i.to) return i.to;
   return "Note added";
+}
+
+/* The rep behind an entry, readable: the name before the @, and "via Zoho" for
+   the ones Zoho itself raised (an inbound match or the backfill). */
+function kdWho(a) {
+  if (!a) return "";
+  if (a === "zoho") return "via Zoho";
+  return String(a).split("@")[0];
 }
 
 function kdSubtitle(i) {
   if (i.kind === "call") {
     const o = { connected: "Connected", "no-answer": "No answer", busy: "Busy",
       failed: "Failed", cancelled: "Cancelled", placed: "Placed" }[i.outcome] || i.outcome || "";
-    return [o, i.disposition, i.actor].filter(Boolean).join(" · ");
+    // outcome · disposition · WHO contacted them
+    return [o, i.disposition, kdWho(i.actor) && "by " + kdWho(i.actor)].filter(Boolean).join(" · ");
   }
-  if (i.action === "status") return [i.from, i.to].filter(Boolean).join(" → ") || i.actor;
-  return i.note || i.to || i.actor || "";
+  if (i.action === "status") return [i.from, i.to].filter(Boolean).join(" → ") || kdWho(i.actor);
+  // an event note (Zoho link, etc.): the detail, and who/what raised it
+  if (i.action === "note" && i.to) return [i.note, kdWho(i.actor) && "by " + kdWho(i.actor)].filter(Boolean).join(" · ");
+  return i.note || i.to || kdWho(i.actor) || "";
 }
 
 function kdRenderFollowup(box) {
