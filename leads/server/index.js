@@ -122,6 +122,8 @@ function mount(app, opts = {}) {
   app.use(require("./zoho-crm").router);
   /* each person's own Zoho CRM sign-in, so what they create there is theirs */
   app.use(require("./crm-identity").router);
+  /* inbound: a Lead created in Zoho flags the matching Karma Connect lead */
+  app.use(require("./zoho-inbound").router);
   /* each rep's recorded voicemail, for voicemail drop */
   app.use(require("./vm-drop").router);
   /* caller reputation: carrier status where a provider is connected, and the

@@ -185,7 +185,11 @@ router.get("/api/leads", async (req, res, next) => {
       cursorSql = " AND " + keyset(col, dir, c, params);
     }
     const rows = (await query(
-      `SELECT * FROM leads WHERE ${where}${cursorSql}
+      /* in_zoho: is this lead in the Zoho call list (a Zoho CRM record linked)?
+         — drives the "Zoho" badge. Uses the activity_log partial index (022). */
+      `SELECT *, EXISTS (SELECT 1 FROM activity_log a
+          WHERE a.lead_id = leads.id AND jsonb_exists(a.meta, 'crm_link')) AS in_zoho
+         FROM leads WHERE ${where}${cursorSql}
        ORDER BY ${col} ${dir} NULLS LAST, id ${dir} LIMIT $${params.push(limit + 1)}`,
       params)).rows;
     const more = rows.length > limit;
@@ -261,12 +265,14 @@ router.get("/api/leads/:key", async (req, res, next) => {
 /* a lead in the trash bin is not findable — a stale link 404s rather than
    opening a record the app is meant to have stopped showing */
 async function findLead(key) {
+  const inZoho = `, EXISTS (SELECT 1 FROM activity_log a
+      WHERE a.lead_id = leads.id AND jsonb_exists(a.meta, 'crm_link')) AS in_zoho`;
   if (/^\d+$/.test(key))
     return (await query(
-      "SELECT * FROM leads WHERE id = $1 AND deleted_at IS NULL", [+key])).rows[0];
+      `SELECT *${inZoho} FROM leads WHERE id = $1 AND deleted_at IS NULL`, [+key])).rows[0];
   const code = String(key).toUpperCase();
   const direct = (await query(
-    "SELECT * FROM leads WHERE lead_code = $1 AND deleted_at IS NULL", [code])).rows[0];
+    `SELECT *${inZoho} FROM leads WHERE lead_code = $1 AND deleted_at IS NULL`, [code])).rows[0];
   if (direct) return direct;
   // a tombstoned code from an old bookmark still resolves
   return (await query(

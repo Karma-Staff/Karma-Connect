@@ -1216,6 +1216,8 @@ button.fav-star:hover { background: var(--surface-2); color: var(--ink-2); trans
 .chip-st-responded { background: #ddf2f0; color: #0f6b62; }
 .chip-st-qualified { background: #e4f3e5; color: #2b6b2f; }
 .chip-st-notinterested { background: #ececea; color: #55544e; }
+.chip-zoho { background: #fde7e6; color: #b42318; font-weight: 700; }
+:root:not([data-theme="light"]) .chip-zoho { background: #4a1f1e; color: #f3a6a1; }
 :root:not([data-theme="light"]) .chip-src-job      { background: #1e3a5f; color: #9ec5f5; }
 :root:not([data-theme="light"]) .chip-src-excel    { background: #214023; color: #a5d8a8; }
 :root:not([data-theme="light"]) .chip-src-apollo   { background: #372952; color: #cbb3f0; }

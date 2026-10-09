@@ -98,6 +98,7 @@ function fromApi(r) {
     Employees: r.employees, Revenue: r.revenue, Certs: r.certs,
     City: r.city, State: r.state,
     Status: r.status, Owner: r.owner,
+    InZoho: !!r.in_zoho,
     Favorite: r.favorite, Removed: r.removed,
     Source: r.source, "Source File": r.source_file,
     "Date Added": r.date_added, Posted: r.date_added,
@@ -210,6 +211,11 @@ function statusChip(st) {
 }
 function sourceChip(src) {
   return chip("chip-src-" + (SRC_CHIP[src] || "other"), src);
+}
+/* Already in the Zoho call list — a Zoho CRM record is linked to this lead,
+   whether we created it or it was made in Zoho and matched back to us. */
+function zohoChip(on) {
+  return on ? `<span class="chip chip-zoho" title="This lead is in the Zoho call list">Zoho</span>` : "";
 }
 
 /* ---------------- auth ---------------- */
@@ -726,7 +732,7 @@ function renderList() {
         <div class="lead-name" title="${esc(full)}">${esc(name)}${co}</div>
         ${rowSubtitle(r) ? `<div class="lead-sub">${esc(rowSubtitle(r))}</div>` : ""}
         ${factsHtml(r)}
-        <div class="lead-meta">${sourceChip(r.Source || (r._t === "jobs" ? "Job board" : ""))}${statusChip(r.Status)}</div>
+        <div class="lead-meta">${sourceChip(r.Source || (r._t === "jobs" ? "Job board" : ""))}${statusChip(r.Status)}${zohoChip(r.InZoho)}</div>
       </div>
       <div class="lead-side">
         <button class="fav-star${r.Favorite ? " on" : ""}" data-fav="${i}"
@@ -968,7 +974,7 @@ function renderDetail(r) {
              class: the density modes hide .lead-meta everywhere -->
         <div class="detail-meta">
           <select class="status-select" id="d-status">${opts}</select>
-          ${sourceChip(r.Source || (tkey === "jobs" ? "Job board" : ""))}
+          ${sourceChip(r.Source || (tkey === "jobs" ? "Job board" : ""))}${zohoChip(r.InZoho)}
         </div>
       </div>
       <div class="detail-actions">
