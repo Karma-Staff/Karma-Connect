@@ -3688,7 +3688,11 @@ async function kdVmDrop() {
        not affect it; the recording runs until this line hangs up on its own.
        (Backgrounding the call stops the auto-record retry loop, so start it
        here directly if it has not already.) */
-    if (!KD.rec && typeof s.startRecording === "function") { try { s.startRecording().catch(() => {}); } catch (e) { /* fine */ } }
+    if (!s.__kdRecording && !s.__kdRecStarting && typeof s.startRecording === "function") {
+      s.__kdRecStarting = true;
+      try { s.startRecording().then(() => { s.__kdRecording = true; }).catch(() => {}).finally(() => { s.__kdRecStarting = false; }); }
+      catch (e) { s.__kdRecStarting = false; }
+    }
     /* Self-contained so it survives in the background whatever the rep does
        next: it plays to the end, then hangs up its own line. Nothing here
        touches KD.session, which is about to be freed (or the next call). */
@@ -4964,14 +4968,18 @@ function kdControl(which) {
        rather than leaving a button that silently does nothing. */
     /* RingCentral answers a refused request with a result code rather than
        an error, so a resolved promise is not success — code 0 is. */
+    if (want) s.__kdRecStarting = true;              // block auto-record racing this
     (want ? s.startRecording() : s.stopRecording())
       .then((r) => {
+        s.__kdRecStarting = false;
         if (r && r.code !== undefined && +r.code !== 0)
           throw new Error(r.description || r.message || "code " + r.code);
+        s.__kdRecording = want;                      // keep the session flag in step
         KD.rec = want; kdRender();
         kdToast(want ? "Recording this call" : "Recording stopped");
       })
       .catch((e) => {
+        s.__kdRecStarting = false;
         console.warn("[karma] recording:", e);
         kdToast("Couldn't " + (want ? "start" : "stop") + " recording — " + (describeErr(e)
           || "on-demand recording may be off for this RingCentral account"));
@@ -5481,22 +5489,32 @@ function kdIncoming(session) {
    is told once where the switch is. The Record control still works, so a rep
    can stop it for a moment if they must. */
 function kdAutoRecord(s, attempt = 0) {
-  if (!s || KD.rec || typeof s.startRecording !== "function") return;
+  if (!s || typeof s.startRecording !== "function") return;
   /* Only keep trying while THIS call is still the live one. */
   if (KD.session !== s || KD.phase !== "live") return;
+  /* The one-at-a-time guard, kept ON THE SESSION. RingCentral's "answered"
+     event can fire more than once, and auto-record is called from more than one
+     place, so two startRecording() calls could overlap — and a second start
+     while the first is engaging is read by RingCentral as a STOP, which is what
+     made recordings begin and then cut out. These flags make sure exactly one
+     start is ever in flight, and none once it has taken. */
+  if (s.__kdRecording || s.__kdRecStarting) return;
+  s.__kdRecStarting = true;
   s.startRecording()
     .then((r) => {
+      s.__kdRecStarting = false;
       if (r && r.code !== undefined && +r.code !== 0) throw new Error(r.description || r.message || "code " + r.code);
+      s.__kdRecording = true;
       KD.rec = true; kdRender();
     })
     .catch((e) => {
+      s.__kdRecStarting = false;
       /* RingCentral often refuses the very first request — the call is not
          ready to record the instant it answers — so retry a few times with a
-         short backoff instead of giving up. This is what was leaving some
-         connected calls un-recorded. If every attempt is refused the call
-         still goes through; Automatic Call Recording (if on) covers it. */
+         short backoff instead of giving up. If every attempt is refused the
+         call still goes through; Automatic Call Recording (if on) covers it. */
       console.warn("[karma] auto-record attempt " + attempt + ":", e?.message || e);
-      if (attempt < 5 && KD.session === s && KD.phase === "live")
+      if (attempt < 5 && KD.session === s && KD.phase === "live" && !s.__kdRecording)
         setTimeout(() => kdAutoRecord(s, attempt + 1), 600 + attempt * 600);
     });
 }
