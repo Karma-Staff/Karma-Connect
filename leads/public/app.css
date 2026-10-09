@@ -3640,6 +3640,12 @@ body.kc-embed #kd-close { display: none; }
 .cs-out.connected { color: var(--good); }
 .cs-out.busy, .cs-out.failed { color: #ffb4ab; }
 
+/* the note that rode in on an uploaded spreadsheet, with the AI's one-liner */
+.cs-sheet { padding: 18px 24px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
+.cs-sheet-sum { margin: 0; font-size: 15px; font-weight: 650; line-height: 1.45; color: var(--ink);
+  padding: 12px 16px; border-radius: 12px; background: color-mix(in srgb, var(--accent) 9%, transparent);
+  border-left: 3px solid var(--accent); }
+.cs-sheet-note { margin: 0; font-size: 13px; line-height: 1.55; color: var(--ink-2); white-space: pre-wrap; text-wrap: pretty; }
 .cs-info { display: flex; flex-wrap: wrap; gap: 24px 32px; padding: 24px; border-top: 1px solid var(--border); }
 .cs-opener { flex: 2 1 380px; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .cs-about { flex: 1 1 240px; min-width: 0; display: flex; flex-direction: column; gap: 6px; }

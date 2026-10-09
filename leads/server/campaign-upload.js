@@ -1,0 +1,332 @@
+"use strict";
+/* Spreadsheet → call campaign.
+ *
+ * A manager uploads an Excel/CSV of people to call and it becomes a campaign a
+ * rep can work in the power dialer. Deliberately separate from the lead base:
+ * these rows live in `campaign_leads` (migration 021), not in `leads`, so a
+ * quick call-through never has to become CRM records (the owner asked for the
+ * separation). A campaign is still a `call_sessions` row; an uploaded one is
+ * marked filters.source = 'upload' and draws its list from here.
+ *
+ * Two things ride from the sheet to the rep's screen:
+ *   - the sheet's free-text note, carried verbatim;
+ *   - a one-line AI summary of that note, filled in the background after the
+ *     upload so the rep can start calling at once (claude-haiku, the same cheap
+ *     extraction model research.js uses).
+ *
+ * The AI also reads the HEADER row and works out which column is the phone and
+ * which is the note, so the sheet does not have to be laid out a particular way.
+ *
+ * campaign.js delegates an uploaded campaign's serve/outcome to serveUpload /
+ * outcomeUpload here, so the rep works it through the exact same dialer screen.
+ */
+
+const express = require("express");
+const { query } = require("./db");
+const { requireAdmin } = require("./auth");
+const { pk } = require("./dedupe");
+const { handleClaude } = require("../../api/_proxy.cjs");
+
+const router = express.Router();
+
+const MODEL = process.env.RESEARCH_MODEL || "claude-haiku-4-5";
+const MAX_ROWS = 20000;                 // a sane ceiling for one upload
+const NAME_MAX = 80;
+const isUpload = (s) => s && s.filters && s.filters.source === "upload";
+
+/* ---------------- parsing the sheet ---------------- */
+
+const norm = (h) => String(h ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+const clean = (v) => String(v ?? "").trim();
+
+/* Header → field, by name. The AI fills whatever this misses (phone/note are
+   the two that matter), but most sheets are named plainly and never need it. */
+const MATCH = {
+  phone: ["phone", "mobile", "cell", "cellphone", "telephone", "tel", "phonenumber", "contactnumber", "number", "primaryphone", "workphone"],
+  name: ["name", "fullname", "contactname", "contact", "leadname"],
+  first: ["firstname", "first", "givenname", "fname"],
+  last: ["lastname", "last", "surname", "lname"],
+  company: ["company", "companyname", "business", "businessname", "organization", "organisation", "account", "accountname"],
+  email: ["email", "emailaddress", "mail", "workemail"],
+  city: ["city", "town"],
+  state: ["state", "province", "region"],
+  note: ["note", "notes", "comment", "comments", "remark", "remarks", "memo", "details", "description", "info", "message"],
+};
+function heuristicMap(headers) {
+  const normed = headers.map((h) => ({ h, n: norm(h) }));
+  const find = (keys) => {
+    for (const k of keys) { const hit = normed.find((x) => x.n === k); if (hit) return hit.h; }
+    for (const k of keys) { const hit = normed.find((x) => x.n.includes(k)); if (hit) return hit.h; }
+    return null;
+  };
+  const m = {};
+  for (const f of Object.keys(MATCH)) m[f] = find(MATCH[f]);
+  return m;
+}
+
+/* The AI reads the header and a few sample rows and names the columns. Only
+   asked to fill what the by-name pass could not, so it is one cheap call. */
+async function aiMap(headers, sampleRows, missing) {
+  const sys = "You label spreadsheet columns for a phone-call list. Given the headers and a few sample "
+    + "rows, say which header holds each field. Reply with ONLY a JSON object mapping each requested field "
+    + "to the exact header string, or null if no column fits. Fields: " + missing.join(", ") + ".";
+  const user = "Headers: " + JSON.stringify(headers) + "\nSample rows:\n"
+    + sampleRows.map((r) => JSON.stringify(r)).join("\n");
+  try {
+    const body = JSON.stringify({ model: MODEL, max_tokens: 400,
+      system: sys, messages: [{ role: "user", content: user }] });
+    const out = await handleClaude({ method: "POST", bodyString: body, authHeader: "", identity: null },
+      { requireAuth: false, recordUsage: false });
+    if (out.status !== 200) return {};
+    const text = (JSON.parse(out.body).content || []).filter((c) => c.type === "text").map((c) => c.text).join("");
+    const json = text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1);
+    const map = JSON.parse(json);
+    // keep only headers that actually exist
+    const ok = {};
+    for (const f of missing) if (map[f] && headers.includes(map[f])) ok[f] = map[f];
+    return ok;
+  } catch (e) { console.warn("[karma] campaign upload column AI:", e.message); return {}; }
+}
+
+async function parseSheet(buffer) {
+  const XLSX = require("xlsx");                 // lazy: only an actual upload needs it
+  const wb = XLSX.read(buffer, { type: "buffer" });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  if (!ws) return { rows: [], map: {} };
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: "", raw: false });
+  if (!rows.length) return { rows: [], map: {} };
+  const headers = Object.keys(rows[0]);
+  const map = heuristicMap(headers);
+  // phone and note are the two that matter — ask the AI only if either is unknown
+  const missing = ["phone", "note", "name", "company"].filter((f) => !map[f]);
+  if (missing.length) Object.assign(map, await aiMap(headers, rows.slice(0, 4), missing));
+  return { rows, map };
+}
+
+function rowToLead(row, map) {
+  const g = (f) => (map[f] ? clean(row[map[f]]) : "");
+  const phone = g("phone");
+  const key = pk(phone);
+  if (!key) return null;                       // no usable phone → not a call
+  let name = g("name");
+  if (!name) name = [g("first"), g("last")].filter(Boolean).join(" ").trim();
+  return {
+    name: name.slice(0, NAME_MAX) || null,
+    company: g("company").slice(0, NAME_MAX) || null,
+    phone, phone_key: key,
+    email: g("email").slice(0, 160) || null,
+    city: g("city").slice(0, 80) || null,
+    state: g("state").slice(0, 40) || null,
+    note: g("note").slice(0, 4000) || null,
+    raw: row,
+  };
+}
+
+/* ---------------- the AI note summaries (background) ---------------- */
+
+const SUM_SYS = "You turn a sales-call note into ONE short line (max ~12 words) a rep reads at a glance "
+  + "before dialing — what the person wants or the single key fact. No preamble, no quotes. If a note is "
+  + "empty or says nothing useful, return an empty string for it.";
+
+async function summariseBatch(notes) {
+  const body = JSON.stringify({ model: MODEL, max_tokens: Math.min(1500, 60 * notes.length + 100),
+    system: SUM_SYS,
+    messages: [{ role: "user", content:
+      "Summarise each note. Reply with ONLY a JSON array of strings, one per note, same order.\n"
+      + JSON.stringify(notes) }] });
+  const out = await handleClaude({ method: "POST", bodyString: body, authHeader: "", identity: null },
+    { requireAuth: false, recordUsage: false });
+  if (out.status !== 200) throw new Error("summary upstream " + out.status);
+  const text = (JSON.parse(out.body).content || []).filter((c) => c.type === "text").map((c) => c.text).join("");
+  const arr = JSON.parse(text.slice(text.indexOf("["), text.lastIndexOf("]") + 1));
+  return Array.isArray(arr) ? arr : [];
+}
+
+/* Fire-and-forget after an upload: fill note_summary for a session's rows in
+   small batches. Best-effort — a row whose summary fails just keeps the full
+   note, which the rep sees anyway. */
+async function summariseSession(sessionId) {
+  try {
+    for (;;) {
+      const rows = (await query(
+        `SELECT id, note FROM campaign_leads
+          WHERE session_id = $1 AND note IS NOT NULL AND note_summary IS NULL
+          ORDER BY pos LIMIT 15`, [sessionId])).rows;
+      if (!rows.length) break;
+      let sums = [];
+      try { sums = await summariseBatch(rows.map((r) => r.note)); }
+      catch (e) { console.warn("[karma] campaign summaries:", e.message); break; }
+      for (let i = 0; i < rows.length; i++) {
+        const s = clean(sums[i]).slice(0, 200);
+        // mark every row in the batch so the loop can't spin on a failed one
+        await query("UPDATE campaign_leads SET note_summary = $2 WHERE id = $1",
+          [rows[i].id, s || ""]);
+      }
+    }
+  } catch (e) { console.warn("[karma] summariseSession:", e.message); }
+}
+
+/* ---------------- upload ---------------- */
+
+router.post("/api/dialer/campaigns/upload", requireAdmin,
+  express.raw({ limit: "40mb", type: "*/*" }), async (req, res, next) => {
+    try {
+      if (!Buffer.isBuffer(req.body) || !req.body.length)
+        return res.status(400).json({ error: "No file was uploaded." });
+      const dec = (v) => { try { return decodeURIComponent(v || ""); } catch (e) { return clean(v); } };
+      const name = clean(dec(req.get("x-campaign-name"))).slice(0, NAME_MAX) || "Uploaded campaign";
+      const owner = clean(req.get("x-owner"));
+      if (!owner) return res.status(400).json({ error: "Pick a rep to assign the campaign to." });
+      const gap = Math.max(0, Math.min(120, parseInt(req.get("x-gap"), 10) || 0));
+      const callback = clean(req.get("x-callback-ext")).slice(0, 20) || null;
+
+      const { rows, map } = await parseSheet(req.body);
+      if (!rows.length) return res.status(400).json({ error: "That sheet had no rows." });
+      if (!map.phone) return res.status(400).json({ error: "Couldn't find a phone-number column in that sheet." });
+
+      const leads = [];
+      for (const r of rows.slice(0, MAX_ROWS)) { const l = rowToLead(r, map); if (l) leads.push(l); }
+      if (!leads.length) return res.status(400).json({ error: "No rows had a usable phone number." });
+
+      const filters = { kind: "campaign", source: "upload", name, created_by: req.user.email,
+        status: "ongoing", gap, callback, uploaded: new Date().toISOString() };
+      const session = await query(
+        `INSERT INTO call_sessions (actor, owner, lead_ids, filters)
+         VALUES ($1, $1, '{}', $2) RETURNING id`, [owner, filters]).then((r) => r.rows[0]).catch((e) => {
+          if (e.code === "23505") return null;      // rep already has an open session
+          throw e;
+        });
+      if (!session) return res.status(409).json({
+        error: "That rep already has a live session. End it first, then upload." });
+
+      // insert the rows in one multi-values statement per chunk
+      const CH = 500;
+      for (let i = 0; i < leads.length; i += CH) {
+        const chunk = leads.slice(i, i + CH);
+        const vals = [], args = [session.id];
+        chunk.forEach((l, j) => {
+          const b = 1 + j * 9;
+          vals.push(`($1, ${i + j}, $${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, $${b + 6}, $${b + 7}, $${b + 8}, $${b + 9})`);
+          args.push(l.name, l.company, l.phone, l.phone_key, l.email, l.city, l.state, l.note, JSON.stringify(l.raw));
+        });
+        await query(
+          `INSERT INTO campaign_leads (session_id, pos, name, company, phone, phone_key, email, city, state, note, raw)
+           VALUES ${vals.join(", ")}`, args);
+      }
+
+      summariseSession(session.id);              // background; do not await
+      res.json({ ok: true, id: session.id, owner, total: leads.length,
+        skipped: rows.length - leads.length, columns: map });
+    } catch (e) { next(e); }
+  });
+
+/* ---------------- export ---------------- */
+
+const csvCell = (v) => {
+  const s = v == null ? "" : String(v);
+  return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+};
+router.get("/api/dialer/campaigns/:id/export", requireAdmin, async (req, res, next) => {
+  try {
+    const id = +req.params.id;
+    if (!Number.isInteger(id)) return res.status(400).json({ error: "bad id" });
+    const s = (await query("SELECT filters FROM call_sessions WHERE id = $1", [id])).rows[0];
+    if (!s || s.filters?.source !== "upload") return res.status(404).json({ error: "not an uploaded campaign" });
+    const rows = (await query(
+      `SELECT name, company, phone, email, city, state, note, note_summary, status, outcome, outcome_note, called_at
+         FROM campaign_leads WHERE session_id = $1 ORDER BY pos, id`, [id])).rows;
+    const head = ["Name", "Company", "Phone", "Email", "City", "State", "Note", "AI summary",
+      "Status", "Outcome", "Call note", "Called at"];
+    const lines = [head.join(",")];
+    for (const r of rows) lines.push([r.name, r.company, r.phone, r.email, r.city, r.state, r.note,
+      r.note_summary, r.status, r.outcome, r.outcome_note, r.called_at && new Date(r.called_at).toISOString()]
+      .map(csvCell).join(","));
+    const body = "﻿" + lines.join("\r\n") + "\r\n";     // BOM so Excel reads UTF-8
+    const fname = "campaign-" + id + "-" + new Date().toISOString().slice(0, 10) + ".csv";
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${fname}"`);
+    res.send(body);
+  } catch (e) { next(e); }
+});
+
+/* ---------------- serve / outcome (called by campaign.js) ----------------
+
+   An uploaded campaign is worked through the same rep screen as any other, so
+   these return the SAME shape campaign.js's serve/shape produce. The current
+   lead is always the first still-pending row, in sheet order; its id is passed
+   to the front end as a NEGATIVE number so the softphone can tell an uploaded
+   row from a real lead and skip the lead-based call log. */
+
+function shapeUpload(s, total, done, card) {
+  const f = s.filters || {};
+  return {
+    id: s.id, owner: s.owner, pos: done, total,
+    called: s.called, connected: s.connected, skipped: s.skipped,
+    filters: f, startedAt: s.started_at,
+    done: done >= total,
+    campaign: { name: f.name, status: f.status, createdBy: f.created_by,
+      gap: f.gap || null, callback: f.callback || null, pausedBy: f.paused_by || null,
+      source: "upload" },
+    current: card,
+  };
+}
+
+async function counts(sessionId) {
+  const r = (await query(
+    `SELECT count(*)::int total, count(*) FILTER (WHERE status = 'done')::int done
+       FROM campaign_leads WHERE session_id = $1`, [sessionId])).rows[0];
+  return { total: r.total, done: r.done };
+}
+
+async function currentRow(sessionId) {
+  return (await query(
+    `SELECT * FROM campaign_leads WHERE session_id = $1 AND status = 'pending'
+      ORDER BY pos, id LIMIT 1`, [sessionId])).rows[0] || null;
+}
+
+function cardOf(row) {
+  if (!row) return null;
+  return {
+    // a leads-shaped object (snake_case) so the front end's fromApi() maps it;
+    // id is negative — the mark of an uploaded, lead-less row
+    lead: { id: -row.id, name: row.name, company: row.company, phone: row.phone,
+      city: row.city, state: row.state, status: null },
+    sheetNote: row.note || null,
+    sheetSummary: row.note_summary || null,
+    brief: null, notes: [], lastCall: null,
+    callTime: { open: true },                  // uploaded lists aren't hour-gated in v1
+  };
+}
+
+async function serveUpload(s) {
+  const { total, done } = await counts(s.id);
+  const row = await currentRow(s.id);
+  return shapeUpload(s, total, done, cardOf(row));
+}
+
+async function outcomeUpload(s, b) {
+  const row = await currentRow(s.id);
+  if (row) {
+    const skip = b.skip === true;
+    const outcome = skip ? "skip" : String(b.outcome || "no-answer");
+    const note = clean(b.note).slice(0, 2000) || null;
+    await query(
+      `UPDATE campaign_leads SET status = 'done', outcome = $2, outcome_note = $3, called_at = now()
+        WHERE id = $1`, [row.id, outcome, note]);
+    const connected = !skip && b.outcome === "connected";
+    await query(
+      `UPDATE call_sessions SET called = called + $2, connected = connected + $3, skipped = skipped + $4
+        WHERE id = $1`, [s.id, skip ? 0 : 1, connected ? 1 : 0, skip ? 1 : 0]);
+  }
+  // reload the session row (counters moved) and serve the next
+  const s2 = (await query(
+    `SELECT id, actor, owner, pos, filters, started_at, ended_at, called, connected, skipped
+       FROM call_sessions WHERE id = $1`, [s.id])).rows[0] || s;
+  const next = await currentRow(s.id);
+  if (!next) await query(
+    `UPDATE call_sessions SET ended_at = now(), filters = filters || '{"status":"completed"}'::jsonb
+      WHERE id = $1 AND ended_at IS NULL`, [s.id]);
+  return serveUpload(s2);
+}
+
+module.exports = { router, isUpload, serveUpload, outcomeUpload, summariseSession };

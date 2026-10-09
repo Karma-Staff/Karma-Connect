@@ -24,6 +24,10 @@ const { requireUser, requireAdmin, rankOf, RANK } = require("./auth");
 const { STATUSES } = require("./dedupe");
 const activity = require("./activity");
 const calltime = require("./calltime");
+/* Uploaded campaigns (a spreadsheet, not the lead base) are a call_sessions row
+   too, marked filters.source = 'upload'. They serve and record from their own
+   table; current/outcome below hand off to this when they see one. */
+const upload = require("./campaign-upload");
 
 const router = express.Router();
 
@@ -202,7 +206,7 @@ router.get("/api/campaign/current", requireUser, async (req, res, next) => {
   try {
     const s = await openSession(me(req));
     if (!s) return res.json({ session: null });
-    res.json(await serve(s, me(req)));
+    res.json(upload.isUpload(s) ? await upload.serveUpload(s) : await serve(s, me(req)));
   } catch (e) { next(e); }
 });
 
@@ -214,10 +218,12 @@ router.post("/api/campaign/outcome", requireUser, express.json({ limit: "8kb" })
     try {
       const s = await openSession(me(req));
       if (!s) return res.status(400).json({ error: "no session running" });
+      const b = req.body || {};
+      // an uploaded campaign records against its own table, not `leads`
+      if (upload.isUpload(s)) return res.json(await upload.outcomeUpload(s, b));
       const id = s.cur_id;
       if (!id) return res.json(shape(s, null));
 
-      const b = req.body || {};
       const lead = (await query(
         "SELECT id, lead_code, name, company, status FROM leads WHERE id = $1", [id])).rows[0];
       const skip = b.skip === true;
@@ -418,25 +424,34 @@ router.get("/api/dialer/campaigns", requireAdmin, async (req, res, next) => {
     const { rows } = await query(`
       SELECT s.id, s.owner, s.pos, cardinality(s.lead_ids) AS total, s.called, s.connected, s.skipped,
              s.filters, s.started_at, s.ended_at,
+             cl.cl_total, cl.cl_done,
              coalesce(nullif(btrim(o.display_name), ''), s.owner) AS owner_name,
              coalesce(nullif(btrim(c.display_name), ''), s.filters->>'created_by') AS creator_name
         FROM call_sessions s
         LEFT JOIN app_users o ON lower(o.email) = lower(s.owner)
         LEFT JOIN app_users c ON lower(c.email) = lower(s.filters->>'created_by')
+        LEFT JOIN (SELECT session_id, count(*)::int cl_total,
+                          count(*) FILTER (WHERE status = 'done')::int cl_done
+                     FROM campaign_leads GROUP BY session_id) cl ON cl.session_id = s.id
        WHERE s.filters->>'kind' = 'campaign'
        ORDER BY s.ended_at IS NULL DESC, s.started_at DESC
        LIMIT 500`);
     const q = String(req.query.q || "").trim().toLowerCase();
     const want = String(req.query.status || "");
-    const list = rows.map((s) => ({
+    const list = rows.map((s) => {
+      // an uploaded campaign's leads live in campaign_leads, not lead_ids
+      const isUp = s.filters.source === "upload";
+      const total = isUp ? (s.cl_total || 0) : +s.total;
+      const completed = isUp ? (s.cl_done || 0) : s.pos;
+      return {
       id: s.id, name: s.filters.name, status: campaignStatus(s),
-      total: +s.total, completed: s.pos, pending: Math.max(0, s.total - s.pos),
+      total, completed, pending: Math.max(0, total - completed),
       called: s.called, connected: s.connected, skipped: s.skipped,
       owner: s.owner, ownerName: s.owner_name, createdBy: s.filters.created_by, creatorName: s.creator_name,
       gap: s.filters.gap || null, callback: s.filters.callback || null,
       pausedBy: s.filters.paused_by || null, source: s.filters.source || "assigned",
       createdAt: s.started_at, startedAt: s.filters.started || null, endedAt: s.ended_at,
-    })).filter((c) => (!want || c.status === want)
+    }; }).filter((c) => (!want || c.status === want)
       && (!q || [c.name, c.ownerName, c.owner, c.creatorName].some((x) => String(x || "").toLowerCase().includes(q))));
     res.json({ list, total: list.length });
   } catch (e) { next(e); }

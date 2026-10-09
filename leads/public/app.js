@@ -2954,7 +2954,12 @@ function reportCall(raw, state) {
      hang-up is what should move a hands-free session on — not a button
      press after the fact. */
   if (c.leadId && typeof campaignCallEnded === "function") campaignCallEnded(c.leadId, outcome);
-  return c.logged = fetch(c.leadId ? "/api/leads/" + c.leadId + "/call" : "/api/calls/log", {
+  /* A lead id greater than zero is a real lead, logged against it. A NEGATIVE
+     id is an uploaded campaign row (campaign-upload.js) — a call list kept apart
+     from the lead base — so its call is logged against the number like any
+     lead-less call; the session still advances via campaignCallEnded above. */
+  const realLead = c.leadId > 0;
+  return c.logged = fetch(realLead ? "/api/leads/" + c.leadId + "/call" : "/api/calls/log", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -6898,6 +6903,18 @@ function renderCampaign(d) {
         </div>
       </div>
 
+      ${(() => {
+        /* The note that came in on the uploaded spreadsheet, and the AI's
+           one-line read of it — the first thing a rep should see for an
+           uploaded campaign. (Empty for an ordinary lead-base campaign.) */
+        const sum = d.current.sheetSummary, raw = d.current.sheetNote;
+        if (!sum && !raw) return "";
+        return `<div class="cs-sheet">
+          <div class="cs-k"><span>From the sheet</span></div>
+          ${sum ? `<p class="cs-sheet-sum">${esc(sum)}</p>` : ""}
+          ${raw ? `<p class="cs-sheet-note">${esc(raw)}</p>` : ""}
+        </div>`;
+      })()}
       ${opener || about || d.current.notes.length ? `<div class="cs-info">
         ${opener ? `<div class="cs-opener">
           <div class="cs-k"><span>Opener</span>
@@ -7035,7 +7052,7 @@ async function submitOutcome(extra) {
     /* a name typed into "Add to Zoho CRM" goes in before the card moves on —
        a CRM hiccup is reported but never blocks the outcome */
     const crmLast = ($("camp-crm-last")?.value || "").trim();
-    if (crmLast && !extra.skip && CAMP.s?.current?.lead?.id) {
+    if (crmLast && !extra.skip && CAMP.s?.current?.lead?.id > 0) {
       try {
         toast(await crmCreateLead(CAMP.s.current.lead.id, ($("camp-crm-first")?.value || "").trim(), crmLast,
           ($("camp-crm-email")?.value || "").trim()), 6000);
@@ -10697,6 +10714,7 @@ function pdWire() {
   on("pd-q", "input", (e) => { clearTimeout(t); t = setTimeout(() => { PD.q = e.target.value.trim(); pdFetch(); }, 300); });
   on("pd-status", "change", (e) => { PD.status = e.target.value; e.target.closest(".cl-chip").classList.toggle("on", !!PD.status); pdFetch(); });
   on("pd-new", "click", openNewCampaign);
+  on("pd-upload", "click", openUploadCampaign);
   $("pd-body").addEventListener("click", async (e) => {
     const b = e.target.closest("[data-pd-act]");
     if (!b) return;
@@ -10736,6 +10754,15 @@ function renderPower() {
     const dis = PD.busy.has(c.id) ? " disabled" : "";
     const btn = (act, label, cls = "btn-ghost") => `<button class="${cls} pd-btn" data-pd-act="${act}" data-pd-id="${c.id}"${dis}>${label}</button>`;
     const un = btn("unassign", "Unassign leads");
+    /* an uploaded campaign can be exported — notes, AI summaries and outcomes
+       back out to CSV — and its leads are its own, so "unassign" never applies */
+    const exp = c.source === "upload"
+      ? `<a class="btn-ghost pd-btn" href="/api/dialer/campaigns/${c.id}/export" title="Download this list with notes and outcomes">Export CSV</a>` : "";
+    if (c.source === "upload") {
+      if (c.status === "ongoing") return btn("pause", "❚❚ Pause") + btn("end", "End") + exp;
+      if (c.status === "paused") return btn("resume", "▶ Resume", "btn-primary") + btn("end", "End") + exp;
+      return `<span class="dash-mute">${c.endedAt ? esc(new Date(c.endedAt).toLocaleDateString([], { month: "short", day: "numeric" })) : ""}</span>` + exp;
+    }
     if (c.status === "draft") return btn("start", "▶ Start", "btn-primary") + btn("end", "Delete") + un;
     if (c.status === "ongoing") return btn("pause", "❚❚ Pause") + btn("end", "End");
     if (c.status === "paused") return btn("resume", "▶ Resume", "btn-primary") + btn("end", "End") + un;
@@ -10841,6 +10868,85 @@ function openUnassign(c) {
     } catch (ex) {
       err.textContent = ex.message; err.classList.remove("hidden");
       btn.disabled = false; btn.textContent = "Unassign";
+    }
+  });
+}
+
+/* Upload a spreadsheet straight into a campaign. The rows become a call list
+   of their own (kept apart from the lead base), the AI reads the phone and the
+   notes column, and a one-line summary of each note is generated in the
+   background so the rep sees it on the dialer. */
+async function openUploadCampaign() {
+  $("modal-title").textContent = "Upload a spreadsheet as a campaign";
+  $("modal-body").innerHTML = `<p class="modal-sub">Loading the team…</p>`;
+  $("modal-backdrop").classList.remove("hidden");
+  let reps, targets = { targets: [] };
+  try {
+    [reps, targets] = await Promise.all([api("/api/dialer/campaigns/reps"),
+      api("/api/dialer/callback-targets").catch(() => ({ targets: [] }))]);
+  } catch (e) { $("modal-body").innerHTML = `<p class="login-error">${esc(e.message)}</p>`; return; }
+  const today = new Date().toLocaleDateString([], { day: "2-digit", month: "2-digit", year: "numeric" }).replace(/\D/g, "");
+  $("modal-body").innerHTML = `
+    <p class="modal-sub">Drop in an Excel or CSV file of people to call. We find the phone-number column for you,
+      read any notes column, and write a one-line AI summary of each note that the rep sees on the dialer.
+      These rows are a call list of their own — they are <b>not</b> added to your leads. Export the results any time.</p>
+    <form id="pu-form" class="pd-form">
+      <label class="modal-field">Campaign name
+        <input id="pu-name" maxlength="80" required placeholder="e.g. Hail list ${today}"></label>
+      <label class="modal-field">Assign to
+        <select id="pu-owner" required>
+          <option value="">Choose a person…</option>
+          ${reps.reps.map((r) => `<option value="${esc(r.email)}"${r.busy_with ? " disabled" : ""}>
+            ${esc(r.name)}${r.busy_with ? ` (busy: ${esc(r.busy_kind === "campaign" ? r.busy_with : "own session")})` : ""}</option>`).join("")}
+        </select>
+        <span class="pd-help">They can only work one campaign at a time — pick someone free.</span></label>
+      <label class="modal-field">Inbound callbacks go to
+        <select id="pu-callback">
+          <option value="">The rep's own number (default)</option>
+          ${targets.targets.map((t) => `<option value="${esc(t.ext)}">${esc(t.name)} · x${esc(t.ext)}</option>`).join("")}
+        </select></label>
+      <label class="modal-field">Spreadsheet (.xlsx, .xls or .csv)
+        <input id="pu-file" type="file" accept=".xlsx,.xls,.csv" required></label>
+      <label class="modal-field">Seconds between calls
+        <input id="pu-gap" type="number" min="2" max="60" value="6"></label>
+      <div id="pu-err" class="login-error hidden"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="modal-cancel">Cancel</button>
+        <button type="submit" class="btn-primary" id="pu-create">Upload &amp; create</button>
+      </div>
+    </form>`;
+  $("modal-cancel").addEventListener("click", closeModal);
+  $("pu-name").focus();
+  $("pu-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const err = $("pu-err"), btn = $("pu-create");
+    const file = $("pu-file").files[0];
+    err.classList.add("hidden");
+    if (!file) { err.textContent = "Pick a file first."; err.classList.remove("hidden"); return; }
+    btn.disabled = true; btn.textContent = "Uploading…";
+    try {
+      const buf = await file.arrayBuffer();
+      const res = await fetch("/api/dialer/campaigns/upload", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/octet-stream",
+          "x-filename": encodeURIComponent(file.name),
+          "x-campaign-name": encodeURIComponent($("pu-name").value),
+          "x-owner": $("pu-owner").value,
+          "x-gap": String(+$("pu-gap").value || 6),
+          "x-callback-ext": $("pu-callback").value || "",
+        },
+        body: buf,
+      });
+      const out = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(out.error || ("Upload failed (" + res.status + ")"));
+      closeModal();
+      toast(`Uploaded ${dashN(out.total)} contact${out.total === 1 ? "" : "s"}${
+        out.skipped ? ` (${dashN(out.skipped)} skipped — no usable phone)` : ""} — AI note summaries are generating.`, 7000);
+      pdFetch();
+    } catch (e2) {
+      err.textContent = e2.message; err.classList.remove("hidden");
+      btn.disabled = false; btn.textContent = "Upload & create";
     }
   });
 }
