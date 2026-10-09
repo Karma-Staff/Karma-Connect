@@ -18,10 +18,14 @@
 
 const express = require("express");
 const { query } = require("./db");
+const { requireAdmin } = require("./auth");
 const { pk } = require("./dedupe");
 const activity = require("./activity");
+const zoho = require("./zoho-crm");
 
 const router = express.Router();
+
+const clean = (v) => String(v == null ? "" : v).trim();
 
 /* Read a value from the JSON body, a form body, or the query string — Zoho's
    webhook can send any of these depending on how it is set up — trying each of
@@ -85,5 +89,77 @@ router.post("/api/crm/zoho/lead-created",
       res.json({ ok: true, matched: true, id: lead.id });
     } catch (e) { next(e); }
   });
+
+/* ---------------- backfill: flag everyone already in Zoho ----------------
+
+   The webhook only catches NEW Zoho records. This scans what is ALREADY in
+   Zoho — every Lead AND every Contact, not just the Leads module — and flags
+   every Karma Connect lead that matches one, so the Contacted tab reflects the
+   whole Zoho call list in one pass. Admin-only, run from the "Scan Zoho" button
+   on that tab. Uses the org-level service account, so no rep need be signed in. */
+
+async function sweep(moduleName, fields) {
+  const rows = [];
+  let token = null, pages = 0;
+  for (;;) {
+    const qs = new URLSearchParams({ fields, per_page: "200" });
+    if (token) qs.set("page_token", token);
+    let d;
+    try { d = await zoho.crm(`/${moduleName}?${qs.toString()}`); }
+    catch (e) { if (e.status === 204 || e.status === 404) break; throw e; }
+    if (!d || !d.data || !d.data.length) break;
+    rows.push(...d.data);
+    pages++;
+    token = d.info && d.info.next_page_token;
+    if (!token || !(d.info && d.info.more_records) || pages >= 80) break;   // ~16k/module cap
+  }
+  return rows;
+}
+
+router.post("/api/crm/zoho/backfill", requireAdmin, async (req, res, next) => {
+  try {
+    if (!zoho.ENABLED) return res.status(503).json({ error: "The Zoho CRM service account isn't configured." });
+    const FIELDS = "Phone,Mobile,Email,Last_Name,Full_Name";
+    const byPhone = new Map(), byEmail = new Map();
+    let scanned = 0;
+    for (const moduleName of ["Leads", "Contacts"]) {
+      let records = [];
+      try { records = await sweep(moduleName, FIELDS); }
+      catch (e) { console.warn("[karma] zoho backfill " + moduleName + ":", e.message); continue; }
+      for (const rec of records) {
+        scanned++;
+        const link = { module: moduleName, id: rec.id || null };
+        const key = pk(rec.Phone || rec.Mobile);
+        if (key && !byPhone.has(key)) byPhone.set(key, link);
+        const email = clean(rec.Email).toLowerCase();
+        if (email && !byEmail.has(email)) byEmail.set(email, link);
+      }
+    }
+    const phones = [...byPhone.keys()], emails = [...byEmail.keys()];
+    if (!phones.length && !emails.length) return res.json({ ok: true, scanned, matched: 0, flagged: 0 });
+
+    // every lead here that matches a Zoho record by phone or email, not yet flagged
+    const leads = (await query(
+      `SELECT l.id, l.lead_code, l.name, l.phone_key, lower(l.email) AS email FROM leads l
+        WHERE l.deleted_at IS NULL AND NOT l.removed
+          AND (l.phone_key = ANY($1) OR lower(l.email) = ANY($2))
+          AND NOT EXISTS (SELECT 1 FROM activity_log a WHERE a.lead_id = l.id AND jsonb_exists(a.meta, 'crm_link'))`,
+      [phones, emails])).rows;
+
+    let flagged = 0;
+    for (const l of leads) {
+      const link = (l.phone_key && byPhone.get(l.phone_key)) || (l.email && byEmail.get(l.email)) || { module: "Leads", id: null };
+      await activity.log({
+        actor: "zoho", user_id: null, action: "note",
+        lead_id: l.id, lead_code: l.lead_code, lead_name: l.name,
+        to_value: "Registered in Zoho CRM",
+        meta: { note: "Matched a " + link.module + " record in Zoho CRM",
+          crm_link: { module: link.module, id: link.id }, crm_source: "zoho-backfill" },
+      });
+      flagged++;
+    }
+    res.json({ ok: true, scanned, matched: leads.length, flagged });
+  } catch (e) { next(e); }
+});
 
 module.exports = { router };

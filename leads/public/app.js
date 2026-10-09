@@ -9106,6 +9106,7 @@ function setTab(tab) {
      numbers taking the top of the screen, so they step aside. */
   $("stats")?.classList.toggle("hidden", !!paneOf(tab));
   $("clear-recents")?.classList.toggle("hidden", !TABS[tab].activity);
+  $("zoho-scan")?.classList.toggle("hidden", !TABS[tab].contacted);
   // the board filter is a job-board thing; S.board is kept, so flipping to
   // People and back does not lose the pick
   $("board-ctl")?.classList.toggle("hidden", tab !== "jobs");
@@ -9522,6 +9523,18 @@ function wire() {
     try { await api("/api/recents", { method: "DELETE" }); }
     catch (e) { console.warn("[karma] could not clear recents", e); }
     toast("Recent activity cleared");
+  });
+  on("zoho-scan", "click", async () => {
+    const btn = $("zoho-scan");
+    btn.disabled = true; const label = btn.textContent; btn.textContent = "Scanning Zoho…";
+    try {
+      const r = await api("/api/crm/zoho/backfill", { method: "POST" });
+      toast(`Scanned ${dashN(r.scanned)} Zoho record${r.scanned === 1 ? "" : "s"} — ${
+        dashN(r.flagged)} newly flagged (${dashN(r.matched)} matched here)`, 7000);
+      loadList(true);
+    } catch (e) {
+      toast("Couldn't scan Zoho: " + (e.message || "unknown"), 8000);
+    } finally { btn.disabled = false; btn.textContent = label; }
   });
   // the bulk half of the filter row — admin-only in the markup, and on the routes
   on("bulk-toggle", "click", () => setSelectMode(!S.selectMode));
