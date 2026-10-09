@@ -5112,6 +5112,7 @@ function kdRenderDispos() {
 async function kdSaveDispo() {
   const L = KD.lead;
   if (!L) return kdSaveNumberDispo();
+  if (L.id < 0) return kdSaveUploadDispo();   // uploaded campaign lead — no leads row to write to
   await VOICE.call?.logged;                // the call's row is what the disposition stamps
   const note = (kdEl("kd-note")?.value || "").trim();
   const picked = KD_DISPOS.find((d) => d.label === KD.dispo);
@@ -5209,6 +5210,32 @@ async function kdSaveNumberDispo() {
     KD.dispo = "";
     kdToast(r?.crm?.sent ? "Saved · sent to Zoho CRM" : "Saved");
     if (r?.crm?.sendError) toast("Call saved, but Zoho CRM refused it for now — it will retry: " + r.crm.sendError, 9000);
+  } catch (e) {
+    kdToast("Could not save — " + (describeErr(e) || "unknown"));
+  }
+}
+
+/* The disposition for an uploaded campaign lead. There is no row in `leads` to
+   attach notes, status or follow-ups to (the list is kept apart on purpose), so
+   this writes nowhere under /api/leads — which was the "bad lead id" error. The
+   fine disposition and note are stamped onto the call row by number (for the
+   call log and Zoho), and both are carried into the campaign's own record of
+   the call, which campaign-upload.js saves to campaign_leads as it advances. */
+async function kdSaveUploadDispo() {
+  const picked = KD_DISPOS.find((d) => d.label === KD.dispo);
+  const note = (kdEl("kd-note")?.value || "").trim();
+  try {
+    await VOICE.call?.logged;                 // the call row this stamps onto
+    if (picked) await api("/api/calls/disposition", {
+      method: "POST", body: JSON.stringify({ number: KD.number, disposition: picked.label, note }) }).catch(() => {});
+    // carry the disposition + note into the campaign's record of this call
+    const campNote = [picked?.label, note].filter(Boolean).join(" — ");
+    if (campNote && $("camp-note")) $("camp-note").value = campNote;
+    kdShow("kd-wrap", false);
+    if (kdEl("kd-note")) kdEl("kd-note").value = "";
+    KD.dispo = "";
+    kdToast("Saved");
+    kdAfterWrap(picked || null);              // advance the campaign (records to campaign_leads)
   } catch (e) {
     kdToast("Could not save — " + (describeErr(e) || "unknown"));
   }
