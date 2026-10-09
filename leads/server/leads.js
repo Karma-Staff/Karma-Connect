@@ -127,6 +127,13 @@ function buildFilters(p, user) {
   if (p.favorite === "true") add("favorite");
   if (STATUSES.includes(p.status)) add("status = ?", p.status);
   if (p.owner) add("owner = ?", p.owner);
+  /* The Contacted tab: leads that have a Zoho CRM record linked — a Zoho Lead
+     is only created once a lead has been worked, so this is the "already in the
+     Zoho call list" set, there to stop anyone calling or being assigned a
+     person who is already being worked. jsonb_exists (not the ? operator) so the
+     add() placeholder substitution above leaves it alone. */
+  if (p.inzoho === "true")
+    add("EXISTS (SELECT 1 FROM activity_log a WHERE a.lead_id = leads.id AND jsonb_exists(a.meta, 'crm_link'))");
   /* A KPI tile was clicked. Comma-separated so tiles can be combined —
      "unassigned,ready" is the assignments board asking for work that is both
      unclaimed and actually callable. Unknown keys are ignored, and a single

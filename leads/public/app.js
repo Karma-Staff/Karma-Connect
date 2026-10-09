@@ -38,6 +38,9 @@ const TABS = {
   // account actually touched, newest first. Starts empty for a new account.
   recent:    { title: "Recent activity", activity: true },
   favorites: { title: "Favorites", favorite: true },
+  // admin-only: leads already in the Zoho call list (a Zoho CRM record linked),
+  // so nobody calls or is assigned a person already being worked
+  contacted: { title: "Contacted — in Zoho", contacted: true, admin: true },
   // admin-only under Manage: members remove with a 5s undo instead of a tab
   removed:   { title: "DNC — do not call", removedTab: true, admin: true },
   // admin-only, and not a list of leads at all: the team's action log
@@ -456,6 +459,7 @@ function listParams() {
     if (cfg.kind) p.set("kind", cfg.kind);
     if (cfg.favorite) p.set("favorite", "true");
     if (cfg.removedTab) p.set("removed", "true");
+    if (cfg.contacted) p.set("inzoho", "true");   // already in the Zoho call list
     if (S.state) p.set("state", S.state);
   }
   if (S.q) p.set("q", S.q);
@@ -2738,10 +2742,13 @@ async function openAssignModal() {
         method: "POST",
         body: JSON.stringify({ ids, owner: chosen.clear ? "" : chosen.value }),
       });
-      toast(out.affected
+      const zoho = out.skippedInZoho
+        ? ` · ${leadsWord(out.skippedInZoho)} skipped (already in the Zoho call list)` : "";
+      toast((out.affected
         ? `${leadsWord(out.affected)} ${chosen.clear
           ? "unassigned" : `assigned to ${chosen.label}`}`
-        : "Nothing to change — they already had that owner");
+        : (out.skippedInZoho ? "None assigned" : "Nothing to change — they already had that owner")) + zoho,
+        out.skippedInZoho ? 6000 : undefined);
       await afterBulk(ids);
     } catch (ex) {
       paintChoice();
@@ -6283,8 +6290,9 @@ async function distribute(poolTotal) {
       method: "POST",
       body: JSON.stringify({ ids, owner }),
     });
-    say(`${out.affected} lead${out.affected === 1 ? "" : "s"} assigned to ${label}.`);
-    toast(`${out.affected} assigned to ${label}`);
+    const zoho = out.skippedInZoho ? ` (${out.skippedInZoho} skipped — already in the Zoho call list)` : "";
+    say(`${out.affected} lead${out.affected === 1 ? "" : "s"} assigned to ${label}.${zoho}`);
+    toast(`${out.affected} assigned to ${label}${zoho}`);
     await loadAssignments();
     runCounts();                      // the Unassigned tile just changed
   } catch (e) {

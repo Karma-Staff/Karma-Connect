@@ -87,11 +87,23 @@ router.post("/api/bulk/assign", async (req, res, next) => {
     const raw = String(req.body?.owner ?? "").trim();
     const owner = raw ? raw.slice(0, 120) : null;
     const out = await tx(async (client) => {
+      /* Never hand out a lead that is already in the Zoho call list — it is
+         being worked, and re-assigning it means someone double-calls. This only
+         guards an actual assignment, not an unassign; a single lead can still be
+         reassigned from its own card (the escape hatch for a rep who left). */
+      const zohoGuard = owner
+        ? " AND NOT EXISTS (SELECT 1 FROM activity_log a WHERE a.lead_id = leads.id AND jsonb_exists(a.meta, 'crm_link'))"
+        : "";
       const changed = (await client.query(
         `UPDATE leads SET owner = $1, updated_at = now()
          WHERE id = ANY($2) AND deleted_at IS NULL
-           AND owner IS DISTINCT FROM $1
+           AND owner IS DISTINCT FROM $1${zohoGuard}
          RETURNING id`, [owner, ids])).rows.map((r) => r.id);
+      const skippedInZoho = owner ? (await client.query(
+        `SELECT count(*)::int n FROM leads
+          WHERE id = ANY($1) AND deleted_at IS NULL
+            AND EXISTS (SELECT 1 FROM activity_log a WHERE a.lead_id = leads.id AND jsonb_exists(a.meta, 'crm_link'))`,
+        [ids])).rows[0].n : 0;
       // re-assigning leads to the owner they already had is not an event
       if (changed.length)
         await activity.log({
@@ -101,7 +113,7 @@ router.post("/api/bulk/assign", async (req, res, next) => {
           meta: { bulk: true, count: changed.length, selected: ids.length,
             owner, ids: changed },
         }, client);
-      return { affected: changed.length, owner };
+      return { affected: changed.length, owner, skippedInZoho };
     });
     counts.invalidate();          // the Unassigned tile is one of the queues
     res.json(out);
