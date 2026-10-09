@@ -75,7 +75,7 @@ router.post("/api/crm/zoho/lead-created",
       await activity.log({
         actor: "zoho", user_id: null, action: "note",
         lead_id: lead.id, lead_code: lead.lead_code, lead_name: lead.name,
-        to_value: "Appeared in Zoho CRM",
+        to_value: "Registered in Zoho CRM",
         meta: {
           note: "A matching Lead was created in Zoho CRM" + (zohoId ? " (id " + zohoId + ")" : ""),
           crm_link: { module: moduleName, id: zohoId || null },

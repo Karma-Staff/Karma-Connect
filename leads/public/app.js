@@ -40,7 +40,7 @@ const TABS = {
   favorites: { title: "Favorites", favorite: true },
   // admin-only: leads already in the Zoho call list (a Zoho CRM record linked),
   // so nobody calls or is assigned a person already being worked
-  contacted: { title: "Contacted — in Zoho", contacted: true, admin: true },
+  contacted: { title: "Contacted — registered in Zoho", contacted: true, admin: true },
   // admin-only under Manage: members remove with a 5s undo instead of a tab
   removed:   { title: "DNC — do not call", removedTab: true, admin: true },
   // admin-only, and not a list of leads at all: the team's action log
@@ -215,7 +215,7 @@ function sourceChip(src) {
 /* Already in the Zoho call list — a Zoho CRM record is linked to this lead,
    whether we created it or it was made in Zoho and matched back to us. */
 function zohoChip(on) {
-  return on ? `<span class="chip chip-zoho" title="This lead is in the Zoho call list">Zoho</span>` : "";
+  return on ? `<span class="chip chip-zoho" title="This lead is registered in Zoho CRM">Zoho</span>` : "";
 }
 
 /* ---------------- auth ---------------- */
@@ -2749,7 +2749,7 @@ async function openAssignModal() {
         body: JSON.stringify({ ids, owner: chosen.clear ? "" : chosen.value }),
       });
       const zoho = out.skippedInZoho
-        ? ` · ${leadsWord(out.skippedInZoho)} skipped (already in the Zoho call list)` : "";
+        ? ` · ${leadsWord(out.skippedInZoho)} skipped (registered in Zoho)` : "";
       toast((out.affected
         ? `${leadsWord(out.affected)} ${chosen.clear
           ? "unassigned" : `assigned to ${chosen.label}`}`
@@ -6296,7 +6296,7 @@ async function distribute(poolTotal) {
       method: "POST",
       body: JSON.stringify({ ids, owner }),
     });
-    const zoho = out.skippedInZoho ? ` (${out.skippedInZoho} skipped — already in the Zoho call list)` : "";
+    const zoho = out.skippedInZoho ? ` (${out.skippedInZoho} skipped — registered in Zoho)` : "";
     say(`${out.affected} lead${out.affected === 1 ? "" : "s"} assigned to ${label}.${zoho}`);
     toast(`${out.affected} assigned to ${label}${zoho}`);
     await loadAssignments();
