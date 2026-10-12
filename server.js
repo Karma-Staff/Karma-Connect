@@ -150,20 +150,32 @@ const LEADS_CSP = [
 ].join("; ");
 
 const onLeads = (req) => req.path === "/leads" || req.path.startsWith("/leads/");
+/* The embedded dialer: /leads served with ?embed=dialer, loaded in the browser
+   extension's floating <iframe> ON ANOTHER SITE. That one view must be framable
+   by any origin and must let the mic through a cross-origin frame; everything
+   else on the whole site stays locked to no framing at all. The microphone is
+   still gated to this app by the iframe's own allow-list on the extension side. */
+const isEmbed = (req) => onLeads(req) && req.query && req.query.embed === "dialer";
+const EMBED_CSP = LEADS_CSP.replace("frame-ancestors 'none'", "frame-ancestors *");
 
 app.use((req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("X-Frame-Options", "DENY");
+  const embed = isEmbed(req);
+  // the embedded dialer is framed by arbitrary sites on purpose; nothing else is
+  if (!embed) res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
   /* The microphone is denied everywhere except /leads, where denying it would
      make the softphone impossible — a WebRTC call cannot happen without it.
-     Camera and geolocation stay denied everywhere, including there. */
-  res.setHeader("Permissions-Policy", onLeads(req)
-    ? "camera=(), microphone=(self), geolocation=()"
-    : "camera=(), microphone=(), geolocation=()");
+     The embedded dialer needs it allowed cross-origin (microphone=*) so the
+     host-page iframe can delegate it. Camera and geolocation stay denied. */
+  res.setHeader("Permissions-Policy", embed
+    ? "camera=(), microphone=*, geolocation=()"
+    : onLeads(req)
+      ? "camera=(), microphone=(self), geolocation=()"
+      : "camera=(), microphone=(), geolocation=()");
   if (!DEV) {
     res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
-    res.setHeader("Content-Security-Policy", onLeads(req) ? LEADS_CSP : CSP);
+    res.setHeader("Content-Security-Policy", embed ? EMBED_CSP : onLeads(req) ? LEADS_CSP : CSP);
   }
   next();
 });

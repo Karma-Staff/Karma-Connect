@@ -6,4 +6,4 @@
  * No trailing slash. The dialler is loaded from <KC_APP_URL>/?embed=dialer.
  * You can also set it per-machine from the extension's Options page (that
  * wins over this value), which is handy when reps are on different URLs. */
-globalThis.KC_APP_URL_DEFAULT = "https://your-app.onrender.com";
+globalThis.KC_APP_URL_DEFAULT = "https://karma-connect-9s2z.onrender.com/leads";

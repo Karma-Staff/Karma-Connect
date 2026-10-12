@@ -140,13 +140,20 @@ function getCookie(req, name) {
    omitted in dev so the cookie still works on plain http://localhost */
 const SECURE = (process.env.RENDER || process.env.NODE_ENV === "production")
   ? "; Secure" : "";
+/* SameSite=None lets the session ride into the embedded dialer's cross-site
+   iframe (the browser extension framing /leads?embed=dialer on another site).
+   The browser only accepts SameSite=None with Secure, so it is used only where
+   the cookie is already Secure (prod); dev stays Lax on plain http. This does
+   not open CSRF: every state-changing API call sends Content-Type: application/
+   json, which forces a CORS preflight a cross-site attacker cannot pass. */
+const SAMESITE = SECURE ? "None" : "Lax";
 
 function setSession(res, sealed) {
   res.append("Set-Cookie",
-    `${COOKIE}=${encodeURIComponent(sealed)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=34560000${SECURE}`);
+    `${COOKIE}=${encodeURIComponent(sealed)}; HttpOnly; SameSite=${SAMESITE}; Path=/; Max-Age=34560000${SECURE}`);
 }
 const clearSession = (res) => res.append("Set-Cookie",
-  `${COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${SECURE}`);
+  `${COOKIE}=; HttpOnly; SameSite=${SAMESITE}; Path=/; Max-Age=0${SECURE}`);
 
 /* the sealed cookie -> a WorkOS user, refreshing (and re-setting the cookie)
    when the access token inside has expired. null = not signed in this way. */
