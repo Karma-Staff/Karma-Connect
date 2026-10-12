@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Karma Connect softphone as an always-on-top desktop app — floats over every application.",
+  "author": "Karma Staff",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
