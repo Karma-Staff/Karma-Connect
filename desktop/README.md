@@ -47,7 +47,17 @@ their login.
 - **Microphone:** granted only to the dialer's own origin, denied to anything
   else.
 - **One instance:** launching again just focuses the open window.
-- **Window position/size** is remembered between runs.
+- **Size:** fixed at 320 × 560, the same as the dialer panel inside Karma
+  Connect. Only the window's position is remembered between runs.
+- **No taskbar button:** minimising turns it into a floating bubble
+  (bottom-right, always on top); click the bubble to bring the dialer back.
+- **Opens with Karma Connect:** the app registers the `karmaconnect://` link
+  with Windows. Once a rep signs in to Karma Connect (or Leads) in the browser,
+  the web app follows `karmaconnect://open` once per browser session, which
+  starts the dialer or brings it back from its bubble. The first time, Chrome
+  asks "Open Karma Connect Dialer?" — tick *Always allow* and it stops asking.
+  If the app is not installed, nothing happens. The link is registered when the
+  app first runs.
 - **External links** (`tel:`, `http`) open in the default browser, not inside the
   dialer window.
 - **Point it elsewhere:** set `KC_DIALER_URL` to override the dialer URL (default

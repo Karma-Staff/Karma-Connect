@@ -11,7 +11,11 @@
  *     embed view, and a sign-in round trip that drops the flag is rewritten back.
  *   - The Karma Staff mark as the app icon.
  *   - Minimise collapses to a floating BUBBLE (bottom-right, always on top), not
- *     the taskbar; click the bubble to bring the dialer back.
+ *     the taskbar; click the bubble to bring the dialer back. The window never
+ *     has a taskbar button at all — it is either open or a bubble.
+ *   - The same size as the dialer panel inside Karma Connect (320 x 560).
+ *   - Opening Karma Connect in the browser opens this app too: the web app
+ *     follows a karmaconnect:// link, which Windows hands to this app.
  */
 
 const { app, BrowserWindow, session, shell, ipcMain, screen } = require("electron");
@@ -24,6 +28,9 @@ let DIALER_ORIGIN = "";
 try { DIALER_ORIGIN = new URL(DIALER_URL).origin; } catch (e) { /* leave blank */ }
 
 const ICON = path.join(__dirname, "icons", "icon.png");
+const PROTOCOL = "karmaconnect";
+// the dialer panel inside Karma Connect (.kd in leads/public/app.css)
+const DIALER_W = 320, DIALER_H = 560;
 
 // call audio must play without a click, or the far end is silent
 app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
@@ -33,10 +40,22 @@ let win = null;
 let bubble = null;
 
 const stateFile = () => path.join(app.getPath("userData"), "window-state.json");
-function loadBounds() { try { return JSON.parse(fs.readFileSync(stateFile(), "utf8")); } catch (e) { return {}; } }
-function saveBounds() {
-  try { if (win && !win.isDestroyed()) fs.writeFileSync(stateFile(), JSON.stringify(win.getBounds())); }
-  catch (e) { /* fine */ }
+// only the position is remembered — the size is always the dialer's own
+function loadPos() {
+  try {
+    const p = JSON.parse(fs.readFileSync(stateFile(), "utf8"));
+    // drop a position left on a monitor that is no longer plugged in
+    const onScreen = screen.getAllDisplays().some(({ workArea: a }) =>
+      p.x >= a.x && p.y >= a.y && p.x < a.x + a.width && p.y < a.y + a.height);
+    return onScreen ? { x: p.x, y: p.y } : {};
+  } catch (e) { return {}; }
+}
+function savePos() {
+  try {
+    if (!win || win.isDestroyed() || !win.isVisible()) return;
+    const { x, y } = win.getBounds();
+    fs.writeFileSync(stateFile(), JSON.stringify({ x, y }));
+  } catch (e) { /* fine */ }
 }
 
 /* Keep the window on the dialer-only view. Signing in can land back on /leads
@@ -55,10 +74,12 @@ function forceEmbed(url) {
 }
 
 function createWindow() {
-  const b = loadBounds();
+  const p = loadPos();
   win = new BrowserWindow({
-    width: b.width || 380, height: b.height || 680,
-    x: b.x, y: b.y, minWidth: 320, minHeight: 480,
+    width: DIALER_W, height: DIALER_H, useContentSize: true,
+    x: p.x, y: p.y, resizable: false, maximizable: false, fullscreenable: false,
+    skipTaskbar: true,
+    autoHideMenuBar: true,
     title: "Karma Connect Dialer",
     icon: ICON,
     backgroundColor: "#0e1626",
@@ -80,8 +101,7 @@ function createWindow() {
 
   // minimise → a floating bubble instead of the taskbar
   win.on("minimize", (e) => { e.preventDefault(); win.hide(); showBubble(); });
-  win.on("resize", saveBounds);
-  win.on("move", saveBounds);
+  win.on("move", savePos);
   win.on("closed", () => { win = null; if (bubble && !bubble.isDestroyed()) bubble.close(); });
 }
 
@@ -101,15 +121,23 @@ function showBubble() {
   bubble.loadFile(path.join(__dirname, "bubble.html"));
 }
 
-ipcMain.on("kc-restore", () => {
+function openDialer() {
+  if (!win) { createWindow(); return; }
   if (bubble && !bubble.isDestroyed()) bubble.hide();
-  if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); }
-});
+  if (win.isMinimized()) win.restore();
+  win.show(); win.focus();
+}
 
-app.on("second-instance", () => {
-  if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); }
-  else createWindow();
-});
+ipcMain.on("kc-restore", openDialer);
+
+// launched again — by hand, or by Karma Connect's karmaconnect:// link
+app.on("second-instance", openDialer);
+
+/* Register karmaconnect:// so the web app can open this one. Installed app:
+   Windows runs the .exe. Dev (`npm start`): Windows runs electron.exe with this
+   folder as the app. */
+if (app.isPackaged) app.setAsDefaultProtocolClient(PROTOCOL);
+else app.setAsDefaultProtocolClient(PROTOCOL, process.execPath, [path.resolve(process.argv[1] || ".")]);
 
 app.whenReady().then(() => {
   /* Open automatically when the person logs into Windows, so the dialer is

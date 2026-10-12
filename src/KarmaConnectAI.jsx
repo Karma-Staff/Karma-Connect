@@ -34,6 +34,7 @@ import { logMessageSend } from "./lib/analytics.js";
 import { getProspectBriefPdf } from "./lib/leads.js";
 import { scoreFit } from "./lib/scoring.js";
 import { currentUser } from "./lib/auth.js";
+import { openDesktopDialer } from "./lib/desktopDialer.js";
 import { requestApproval, myApprovals, listApprovals, decideApproval, listAdmins } from "./lib/approvals.js";
 
 // A prospect's identity signature, used to notice when the user has switched to a
@@ -146,6 +147,9 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   const [coaching, setCoaching] = useState({}); // per-card "Improve" in-flight flags
   // Load the learned playbook, then quietly self-improve: re-analyze results in the background
   // and refresh the playbook if anything changed. Cheap when nothing's new (no model call).
+  // signed in → open the desktop dialer next to the app (once per session)
+  useEffect(() => { openDesktopDialer(); }, []);
+
   useEffect(() => {
     getPlaybook().then((p) => setPlaybook(p || {})).catch(() => {});
     maybeAutoLearn().then((upd) => {

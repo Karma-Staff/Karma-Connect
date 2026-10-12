@@ -11898,11 +11898,26 @@ async function boot() {
   if (!localStorage.getItem("kl_tour_done")) setTimeout(startTour, 800);
   S.booted = true;             // from here on, a 401 means the session died
   if (document.body.classList.contains("kc-embed")) rcPanelToggle(true);
+  else openDesktopDialer();
   kdStartReminders();
   pdRepStart();
   crmStart();
   crmMeLoad();
   vmLoad();
+}
+
+/* Open the Karma Connect Dialer desktop app (desktop/) next to the web app: it
+   registers karmaconnect:// with Windows, so following the link starts it or
+   brings it back from its bubble. Not installed → the browser has no handler
+   and does nothing. Once per session, Windows only, never inside the desktop
+   app's own window. Same as src/lib/desktopDialer.js on the Connect side. */
+function openDesktopDialer() {
+  try {
+    if (!/Windows/i.test(navigator.userAgent) || /Electron/i.test(navigator.userAgent)) return;
+    if (sessionStorage.getItem("kc_desktop_dialer_opened")) return;
+    sessionStorage.setItem("kc_desktop_dialer_opened", "1");
+    location.href = "karmaconnect://open";
+  } catch (e) { /* storage blocked — skip it */ }
 }
 
 async function init() {
