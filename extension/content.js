@@ -104,7 +104,13 @@
   function ensureFrame() {
     if (iframe) return iframe;
     iframe = document.createElement("iframe");
-    iframe.src = DIAL_SRC;
+    /* Load the dialer through an EXTENSION-hosted frame, not the remote URL
+       directly. A cross-origin iframe injected into a host page is subject to
+       THAT page's content-security-policy — and strict sites (Gmail, many CRMs)
+       forbid framing anything, which showed as a broken panel. An extension page
+       (a web_accessible_resource) is exempt from the host page's CSP, and it in
+       turn frames the real dialer (which allows it via frame-ancestors *). */
+    iframe.src = chrome.runtime.getURL("frame.html") + "#" + encodeURIComponent(DIAL_SRC);
     iframe.allow = "microphone; autoplay";
     iframe.addEventListener("load", () => { iframe.dataset.ready = "1"; });
     panel.appendChild(iframe);

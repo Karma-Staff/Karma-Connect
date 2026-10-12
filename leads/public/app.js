@@ -3696,16 +3696,10 @@ async function kdVmDrop() {
        while it finishes on its own. */
     await sender.replaceTrack(dest.stream.getAudioTracks()[0]);
     try { pc.getReceivers?.().forEach((r) => { if (r.track && r.track.kind === "audio") r.track.enabled = false; }); } catch (e) { /* fine */ }
-    /* Record this call so the dropped voicemail is captured — the rep can
-       prove the message was left. Server-side, so the local mute above does
-       not affect it; the recording runs until this line hangs up on its own.
-       (Backgrounding the call stops the auto-record retry loop, so start it
-       here directly if it has not already.) */
-    if (!s.__kdRecording && !s.__kdRecStarting && typeof s.startRecording === "function") {
-      s.__kdRecStarting = true;
-      try { s.startRecording().then(() => { s.__kdRecording = true; }).catch(() => {}).finally(() => { s.__kdRecStarting = false; }); }
-      catch (e) { s.__kdRecStarting = false; }
-    }
+    /* Recording is left to RingCentral's Automatic Call Recording — the dropped
+       voicemail is captured on the call's recording like everything else. The
+       app no longer starts an On-Demand recording here (it conflicted with
+       Automatic and paused it). */
     /* Self-contained so it survives in the background whatever the rep does
        next: it plays to the end, then hangs up its own line. Nothing here
        touches KD.session, which is about to be freed (or the next call). */
@@ -3766,7 +3760,10 @@ function kdRenderControls(live) {
     ctl("mute", KD.muted ? "Unmute" : "Mute", KD.muted ? KD_IC.micOff : KD_IC.mic, KD.muted),
     ctl("keypad", "Keypad", KD_IC.pad, false),
     ctl("hold", KD.held ? "Resume" : "Hold", KD.held ? KD_IC.play : KD_IC.pause, KD.held, "gold"),
-    ctl("rec", KD.rec ? "Stop rec" : "Record", KD_IC.rec, KD.rec, "red"),
+    /* No Record control: recording is RingCentral's Automatic Call Recording
+       (server-side, the whole call). An in-app On-Demand toggle on an already
+       auto-recorded call PAUSES that recording — which is what was cutting
+       recordings off — so the app does not touch recording at all. */
     ctl("transfer", "Transfer", KD_IC.transfer, false),
     ctl("vmdrop", VM.drop ? "Stop · " + vmClock(Math.max(0, (VM.drop.ends - Date.now()) / 1000)) : "VM drop",
       KD_IC.vm, !!VM.drop, "gold"),
@@ -5509,42 +5506,17 @@ function kdIncoming(session) {
   });
 }
 
-/* Compulsory recording: every connected call records itself, so a recording
-   never depends on a rep remembering to press Record. Needs on-demand
-   recording enabled on the RingCentral account; if it is refused the call
-   still goes through un-recorded (we never drop a call over this) and the rep
-   is told once where the switch is. The Record control still works, so a rep
-   can stop it for a moment if they must. */
-function kdAutoRecord(s, attempt = 0) {
-  if (!s || typeof s.startRecording !== "function") return;
-  /* Only keep trying while THIS call is still the live one. */
-  if (KD.session !== s || KD.phase !== "live") return;
-  /* The one-at-a-time guard, kept ON THE SESSION. RingCentral's "answered"
-     event can fire more than once, and auto-record is called from more than one
-     place, so two startRecording() calls could overlap — and a second start
-     while the first is engaging is read by RingCentral as a STOP, which is what
-     made recordings begin and then cut out. These flags make sure exactly one
-     start is ever in flight, and none once it has taken. */
-  if (s.__kdRecording || s.__kdRecStarting) return;
-  s.__kdRecStarting = true;
-  s.startRecording()
-    .then((r) => {
-      s.__kdRecStarting = false;
-      if (r && r.code !== undefined && +r.code !== 0) throw new Error(r.description || r.message || "code " + r.code);
-      s.__kdRecording = true;
-      KD.rec = true; kdRender();
-    })
-    .catch((e) => {
-      s.__kdRecStarting = false;
-      /* RingCentral often refuses the very first request — the call is not
-         ready to record the instant it answers — so retry a few times with a
-         short backoff instead of giving up. If every attempt is refused the
-         call still goes through; Automatic Call Recording (if on) covers it. */
-      console.warn("[karma] auto-record attempt " + attempt + ":", e?.message || e);
-      if (attempt < 5 && KD.session === s && KD.phase === "live" && !s.__kdRecording)
-        setTimeout(() => kdAutoRecord(s, attempt + 1), 600 + attempt * 600);
-    });
-}
+/* Recording is RingCentral's Automatic Call Recording now — server-side, the
+   whole call, on by account setting for the rep extensions — so the app does
+   NOT record calls itself.
+//
+   It used to fire On-Demand recording (startRecording / the *9 toggle) on every
+   answer. With Automatic Call Recording ALSO on, that On-Demand toggle lands on
+   a call RingCentral is already recording and PAUSES it — which is exactly why
+   some recordings began and then cut out mid-call. The app stepping away from
+   recording entirely removes that conflict; Automatic captures every call in
+   full. Kept as a no-op so the existing call sites need no change. */
+function kdAutoRecord() { /* no-op — see above; Automatic Call Recording handles it */ }
 
 async function kdAnswer() {
   const inc = KD.incoming;
