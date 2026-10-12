@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; background: transparent;
+      overflow: hidden; -webkit-user-select: none; }
+    .b { position: absolute; inset: 5px; border-radius: 50%; background: #fff;
+      display: grid; place-items: center; cursor: pointer;
+      box-shadow: 0 10px 22px -6px rgba(10,30,80,.55), 0 2px 6px rgba(0,0,0,.25);
+      transition: transform .12s ease; }
+    .b:hover { transform: scale(1.06); }
+    .b img { width: 64%; height: 64%; object-fit: contain; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <div class="b" id="b" title="Open the Karma Connect dialer">
+    <img src="icons/icon.png" alt="Karma Connect">
+  </div>
+  <script>
+    document.getElementById("b").addEventListener("click", function () {
+      if (window.kc) window.kc.restore();
+    });
+  </script>
+</body>
+</html>

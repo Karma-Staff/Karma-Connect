@@ -17,9 +17,10 @@
   "build": {
     "appId": "com.karmastaff.karmaconnect.dialer",
     "productName": "Karma Connect Dialer",
-    "files": ["main.js", "preload.js", "icons/**"],
-    "win": { "target": "nsis", "icon": "icons/icon.ico" },
-    "mac": { "target": "dmg", "icon": "icons/icon.icns" },
+    "icon": "icons/icon.png",
+    "files": ["main.js", "bubble.html", "bubble-preload.js", "icons/**"],
+    "win": { "target": "nsis" },
+    "mac": { "target": "dmg" },
     "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true }
   }
 }
