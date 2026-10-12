@@ -112,6 +112,15 @@ app.on("second-instance", () => {
 });
 
 app.whenReady().then(() => {
+  /* Open automatically when the person logs into Windows, so the dialer is
+     always running and floating — there the moment they open Karma Connect, no
+     need to launch it by hand. Only for the INSTALLED app (openAtLogin on a
+     dev `npm start` would register the Electron binary, not the real app). */
+  if (app.isPackaged) {
+    try { app.setLoginItemSettings({ openAtLogin: true, openAsHidden: false }); }
+    catch (e) { /* not fatal */ }
+  }
+
   // the softphone needs the microphone — grant it only to the dialer's origin
   const allowed = new Set(["media", "microphone", "audioCapture"]);
   const fromDialer = (url) => { try { return new URL(url).origin === DIALER_ORIGIN; } catch (e) { return false; } };
