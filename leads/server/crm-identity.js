@@ -162,16 +162,26 @@ const identity = async (userId) => userId ? (await query(
    two refreshes racing is harmless — but one dashboard of calls would still
    refresh once per call. Cached per person until a minute before expiry. */
 const TOKENS = new Map();
+const MINTING = new Map();     // one refresh per person at a time (see zoho-crm.js)
 
-async function accessFor(id) {
+async function accessFor(id, fresh) {
   const hit = TOKENS.get(id.user_id);
-  if (hit && hit.until > Date.now()) return hit.tok;
-  const tok = await tokenPost(id.accounts_url, {
-    grant_type: "refresh_token", refresh_token: id.refresh_token });
-  TOKENS.set(id.user_id, { tok: tok.access_token,
-    until: Date.now() + ((tok.expires_in || 3600) - 60) * 1000 });
-  return tok.access_token;
+  if (!fresh && hit && hit.until > Date.now()) return hit.tok;
+  if (!MINTING.has(id.user_id)) MINTING.set(id.user_id, (async () => {
+    const tok = await tokenPost(id.accounts_url, {
+      grant_type: "refresh_token", refresh_token: id.refresh_token });
+    TOKENS.set(id.user_id, { tok: tok.access_token,
+      until: Date.now() + ((tok.expires_in || 3600) - 60) * 1000 });
+    return tok.access_token;
+  })().finally(() => MINTING.delete(id.user_id)));
+  return MINTING.get(id.user_id);
 }
+
+/* Refresh errors that mean the sign-in itself is gone — revoked in Zoho, or
+   replaced by a newer connect — so only reconnecting brings it back. Anything
+   else from the token endpoint (Zoho's "too many requests", a network blip)
+   passes on its own and must not tell the rep they are disconnected. */
+const DEAD = new Set(["invalid_code", "invalid_grant", "invalid_client", "unauthorized_client"]);
 
 /* Refusals that mean "this person's own sign-in cannot do it" — retrying the
    same write through the service account is the right answer to these, and to
@@ -180,14 +190,24 @@ const REFUSED = new Set(["INVALID_TOKEN", "AUTHENTICATION_FAILURE", "OAUTH_SCOPE
   "NO_PERMISSION", "INVALID_OAUTHSCOPE", "LICENSE_LIMIT_EXCEEDED", "FEATURE_NOT_SUPPORTED"]);
 
 async function asPerson(id, path, opts) {
-  const token = await accessFor(id);
-  const r = await fetch(`${id.api_domain}/crm/${VERSION}${path}`, {
-    ...opts,
-    headers: { Authorization: "Zoho-oauthtoken " + token,
-      ...(opts.body instanceof FormData ? {} : { "Content-Type": "application/json" }), ...(opts.headers || {}) },
-  });
-  const d = r.status === 204 ? null : await r.json().catch(() => ({}));
-  const code = d?.code || d?.data?.[0]?.code;
+  const send = async (token) => {
+    const r = await fetch(`${id.api_domain}/crm/${VERSION}${path}`, {
+      ...opts,
+      headers: { Authorization: "Zoho-oauthtoken " + token,
+        ...(opts.body instanceof FormData ? {} : { "Content-Type": "application/json" }), ...(opts.headers || {}) },
+    });
+    const d = r.status === 204 ? null : await r.json().catch(() => ({}));
+    return { r, d, code: d?.code || d?.data?.[0]?.code };
+  };
+  /* An access token Zoho has retired early is not a lost sign-in: mint a
+     fresh one and try once more before calling it refused. This was the
+     "Zoho CRM keeps disconnecting" — one stale token marked the rep refused. */
+  const tokenOf = (fresh) => accessFor(id, fresh).catch((e) => { e.tokenRefresh = true; throw e; });
+  let { r, d, code } = await send(await tokenOf());
+  if (r.status === 401 || code === "INVALID_TOKEN" || code === "AUTHENTICATION_FAILURE") {
+    TOKENS.delete(id.user_id);
+    ({ r, d, code } = await send(await tokenOf(true)));
+  }
   if (r.status === 401 || r.status === 403 || REFUSED.has(code)) {
     /* A permission added after this person connected (attachments, for the
        call recording) reads as a scope error: say what to do about it. */
@@ -196,6 +216,10 @@ async function asPerson(id, path, opts) {
       ? "Reconnect Zoho CRM to allow this (a permission was added since you connected) — your own Zoho sign-in"
       : (d?.data?.[0]?.message || d?.message || code || `Zoho ${r.status}`) + " (your own Zoho sign-in)");
     e.refused = true; e.status = r.status; e.zoho = d;
+    /* Only a refusal of the sign-in itself is the rep's to fix by reconnecting.
+       NO_PERMISSION and the like are about this one record or their Zoho
+       profile — reconnecting changes nothing, so the screen must not say so. */
+    e.signIn = scope || r.status === 401 || code === "INVALID_TOKEN" || code === "AUTHENTICATION_FAILURE";
     throw e;
   }
   if (!r.ok && !(d && d.data)) {
@@ -219,11 +243,19 @@ async function writeAs(userId, path, opts = {}) {
         [id.user_id]).catch(() => {});
       return { d, as: "rep", who: id.zoho_name || id.zoho_email || null };
     } catch (e) {
-      if (!e.refused) throw e;
-      TOKENS.delete(id.user_id);
-      await query("UPDATE crm_identities SET last_error = $2, last_error_at = now() WHERE user_id = $1",
-        [id.user_id, String(e.message).slice(0, 300)]).catch(() => {});
-      console.warn("[karma] zoho crm: user", id.user_id, "refused, using the service account —", e.message);
+      /* A failed token refresh used to throw straight out of here, so the
+         write was lost rather than going in under the shared account. */
+      if (!e.refused && !e.tokenRefresh) throw e;
+      const dead = e.refused ? e.signIn : DEAD.has(String(e.zoho?.error));
+      if (dead) {
+        TOKENS.delete(id.user_id);
+        const msg = e.refused ? e.message
+          : "Your Zoho sign-in has expired or was revoked — reconnect Zoho CRM";
+        await query("UPDATE crm_identities SET last_error = $2, last_error_at = now() WHERE user_id = $1",
+          [id.user_id, String(msg).slice(0, 300)]).catch(() => {});
+      }
+      console.warn("[karma] zoho crm: user", id.user_id, dead ? "refused" : "could not write as themselves (passing)",
+        "— using the service account:", e.message);
     }
   }
   return { d: await zoho.crm(path, opts), as: "shared", who: null };
@@ -280,4 +312,4 @@ router.get("/api/crm/people", requireAdmin, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-module.exports = { router, ENABLED, writeAs, SCOPES, _test: { REFUSED, ZOHO_ACCOUNTS, ZOHO_API } };
+module.exports = { router, ENABLED, writeAs, SCOPES, _test: { REFUSED, DEAD, ZOHO_ACCOUNTS, ZOHO_API } };

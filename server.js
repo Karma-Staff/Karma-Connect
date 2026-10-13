@@ -156,13 +156,20 @@ const onLeads = (req) => req.path === "/leads" || req.path.startsWith("/leads/")
    else on the whole site stays locked to no framing at all. The microphone is
    still gated to this app by the iframe's own allow-list on the extension side. */
 const isEmbed = (req) => onLeads(req) && req.query && req.query.embed === "dialer";
-const EMBED_CSP = LEADS_CSP.replace("frame-ancestors 'none'", "frame-ancestors *");
+/* The browser extension is switched off (Oct 2026): nothing may frame the
+   embedded dialer, so the extension's panel stays empty on every site. The
+   desktop dialer is unaffected — it opens ?embed=dialer as its own window,
+   not in a frame, and frame-ancestors / X-Frame-Options only govern frames.
+   To bring the extension back, frame-ancestors * again and drop the
+   X-Frame-Options exemption below for embed. */
+const EXTENSION_OFF = true;
+const EMBED_CSP = LEADS_CSP.replace("frame-ancestors 'none'", EXTENSION_OFF ? "frame-ancestors 'none'" : "frame-ancestors *");
 
 app.use((req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   const embed = isEmbed(req);
   // the embedded dialer is framed by arbitrary sites on purpose; nothing else is
-  if (!embed) res.setHeader("X-Frame-Options", "DENY");
+  if (!embed || EXTENSION_OFF) res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
   /* The microphone is denied everywhere except /leads, where denying it would
      make the softphone impossible — a WebRTC call cannot happen without it.

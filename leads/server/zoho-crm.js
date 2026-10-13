@@ -49,10 +49,20 @@ if ((CLIENT_ID || REFRESH_TOKEN) && !ENABLED) {
 /* Zoho access tokens last an hour and the refresh token does NOT rotate, which
    is the opposite of RingCentral — so this caches rather than writing back. */
 let cached = { token: "", until: 0 };
+let minting = null;
 
-async function accessToken() {
+/* One refresh at a time. A burst of writes after a restart (the sync catching
+   up, a dashboard of calls) would otherwise each mint their own token at once,
+   and Zoho answers a burst of refreshes with "Access Denied — too many
+   requests" for several minutes: the CRM looked disconnected until it passed. */
+async function accessToken(fresh) {
   if (!ENABLED) { const e = new Error("Zoho CRM is not configured"); e.status = 503; throw e; }
-  if (cached.token && Date.now() < cached.until - 60000) return cached.token;
+  if (!fresh && cached.token && Date.now() < cached.until - 60000) return cached.token;
+  if (!minting) minting = mint().finally(() => { minting = null; });
+  return minting;
+}
+
+async function mint() {
 
   const r = await fetch(`${ACCOUNTS}/oauth/v2/token`, {
     method: "POST",
@@ -77,16 +87,29 @@ async function accessToken() {
   return cached.token;
 }
 
+/* Zoho can drop an access token before its hour is up — it keeps only so many
+   live per refresh token and retires the oldest, and the same sign-in is used
+   from more than one place. A token refused as invalid is replaced and the
+   request tried once more, instead of every write failing until it expires. */
+const STALE = (r, d) => r.status === 401 || d?.code === "INVALID_TOKEN" || d?.code === "AUTHENTICATION_FAILURE";
+
 async function crm(path, opts = {}) {
-  const token = await accessToken();
-  const r = await fetch(`${API}/crm/${VERSION}${path}`, {
-    ...opts,
-    headers: { Authorization: "Zoho-oauthtoken " + token,
-      /* a file upload (FormData) brings its own multipart boundary */
-      ...(opts.body instanceof FormData ? {} : { "Content-Type": "application/json" }), ...(opts.headers || {}) },
-  });
+  const send = async (token) => {
+    const r = await fetch(`${API}/crm/${VERSION}${path}`, {
+      ...opts,
+      headers: { Authorization: "Zoho-oauthtoken " + token,
+        /* a file upload (FormData) brings its own multipart boundary */
+        ...(opts.body instanceof FormData ? {} : { "Content-Type": "application/json" }), ...(opts.headers || {}) },
+    });
+    return { r, d: r.status === 204 ? null : await r.json().catch(() => ({})) };
+  };
+  let token = await accessToken();
+  let { r, d } = await send(token);
+  if (STALE(r, d)) {
+    if (cached.token === token) cached = { token: "", until: 0 };
+    ({ r, d } = await send(await accessToken(true)));
+  }
   if (r.status === 204) return null;            // Zoho's "no records"
-  const d = await r.json().catch(() => ({}));
   if (!r.ok) {
     const e = new Error(d.message || d.code || `Zoho CRM ${r.status}`);
     e.status = r.status; e.zoho = d;
