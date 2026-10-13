@@ -3429,6 +3429,7 @@ function kdRender() {
 
   /* the launcher doubles as the only sign of a call when the panel is shut */
   kdEl("rc-launch")?.classList.toggle("oncall", active || KD.phase === "incoming");
+  kdDesktopState();
 }
 
 function kdRenderLead(live, calling, ended, active) {
@@ -4195,6 +4196,20 @@ function kdBadge() {
   if (launch) {
     if (n) launch.dataset.count = txt; else delete launch.dataset.count;
   }
+  kdDesktopState();
+}
+
+/* The desktop app's bubble (desktop/bubble.html) shows presence, the
+   reminders count and a ringing / live call while the dialer is minimised;
+   it learns them from here (desktop/dialer-preload.js dedupes). A no-op
+   outside the desktop app. */
+function kdDesktopState() {
+  const send = window.kcDesktop?.state;
+  if (!send) return;
+  const badge = (KD.fus || []).filter(kdDue).length + (KD.missed || []).filter((m) => m.open).length;
+  const call = KD.phase === "live" ? "live"
+    : (KD.phase === "calling" || KD.phase === "incoming") ? "ring" : "";
+  send({ registered: !!KD.registered, badge, call });
 }
 
 /* The first load only summarises — ten overdue items arriving as ten toasts

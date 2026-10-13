@@ -2,25 +2,105 @@
 <html>
 <head>
   <meta charset="utf-8">
+  <!-- The minimised dialer: a 60px navy disc in an 84px transparent window
+       (the margin holds the shadow, the reminders badge and the ringing
+       pulse). Same tokens as the dialer (leads/public/app.css). Drag it
+       anywhere; a plain click brings the dialer back — main.js tells the two
+       apart from how far the cursor travelled. -->
   <style>
+    :root {
+      --surface: #0e1a30; --surface-2: #142442; --surface-3: #1b2f55;
+      --ring: rgba(74,134,200,.45); --ring-hi: rgba(74,134,200,.9);
+      --good: #52d39e; --grey: #808cb6; --gold: #FFCF00; --on-gold: #0b1426;
+      --call: #34c46f;
+    }
     html, body { margin: 0; width: 100%; height: 100%; background: transparent;
       overflow: hidden; -webkit-user-select: none; }
-    .b { position: absolute; inset: 5px; border-radius: 50%; background: #fff;
-      display: grid; place-items: center; cursor: pointer;
-      box-shadow: 0 10px 22px -6px rgba(10,30,80,.55), 0 2px 6px rgba(0,0,0,.25);
-      transition: transform .12s ease; }
-    .b:hover { transform: scale(1.06); }
-    .b img { width: 64%; height: 64%; object-fit: contain; pointer-events: none; }
+    .b { position: absolute; inset: 12px; border-radius: 50%; cursor: grab; outline: 0;
+      background: radial-gradient(120% 120% at 30% 25%, var(--surface-3) 0%, var(--surface-2) 48%, var(--surface) 100%);
+      box-shadow: 0 0 0 1.5px var(--ring), 0 6px 14px -4px rgba(0,0,0,.65), 0 1px 3px rgba(0,0,0,.45);
+      display: grid; place-items: center;
+      transition: transform .14s ease, box-shadow .14s ease; }
+    .b img { width: 50%; pointer-events: none; -webkit-user-drag: none; }
+    body:hover .b, .b:focus-visible { transform: scale(1.06);
+      box-shadow: 0 0 0 2px var(--ring-hi), 0 10px 20px -6px rgba(0,0,0,.7), 0 1px 3px rgba(0,0,0,.45); }
+    body.dragging .b { cursor: grabbing; transform: scale(1.02); }
+    /* presence: green = the line is registered, grey = not (yet) */
+    .dot { position: absolute; right: 1px; bottom: 1px; width: 15px; height: 15px; box-sizing: border-box;
+      border-radius: 50%; background: var(--grey); border: 2.5px solid var(--surface); }
+    body.on .dot { background: var(--good); }
+    /* reminders due / missed calls — gold, like the dialer's own badge */
+    .n { position: absolute; top: -5px; right: -5px; min-width: 21px; height: 21px; padding: 0 5px;
+      box-sizing: border-box; border-radius: 11px; display: none;
+      background: var(--gold); color: var(--on-gold); border: 2px solid var(--surface);
+      font: 800 11px/17px Manrope, "Segoe UI", system-ui, sans-serif; text-align: center;
+      white-space: nowrap; }
+    body.badge .n { display: block; }
+    /* a call: ringing pulses a green ring; live holds a green ring and a
+       breathing dot */
+    body.ring .b, body.live .b {
+      box-shadow: 0 0 0 2px var(--call), 0 8px 18px -4px rgba(52,196,111,.45), 0 1px 3px rgba(0,0,0,.45); }
+    body.ring .b::after { content: ""; position: absolute; inset: -2px; border-radius: 50%;
+      border: 2px solid var(--call); animation: ping 1.3s ease-out infinite; pointer-events: none; }
+    body.ring .dot, body.live .dot { background: var(--call); }
+    body.live .dot { animation: breathe 1.6s ease-in-out infinite; }
+    @keyframes ping { 0% { opacity: .9; transform: scale(1); } 100% { opacity: 0; transform: scale(1.3); } }
+    @keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
+    @media (prefers-reduced-motion: reduce) { .b::after, .dot { animation: none !important; } }
   </style>
 </head>
 <body>
-  <div class="b" id="b" title="Open the Karma Connect dialer">
-    <img src="icons/icon.png" alt="Karma Connect">
+  <div class="b" id="b" role="button" tabindex="0" title="Open the Karma Connect dialer">
+    <img src="icons/mark-white.png" alt="Karma Connect">
+    <span class="dot" id="dot" aria-hidden="true"></span>
+    <b class="n" id="n" aria-hidden="true"></b>
   </div>
   <script>
-    document.getElementById("b").addEventListener("click", function () {
-      if (window.kc) window.kc.restore();
-    });
+    (function () {
+      var b = document.getElementById("b");
+      var down = false, moved = false, sx = 0, sy = 0;
+      /* The page only reports the pointer; main.js moves the window from the
+         real cursor position and decides click (restore) vs drop. The 4px
+         threshold here just drives the "lifted" look. */
+      b.addEventListener("pointerdown", function (e) {
+        if (e.button !== 0) return;
+        down = true; moved = false; sx = e.screenX; sy = e.screenY;
+        b.setPointerCapture(e.pointerId);
+        window.kc.dragStart();
+      });
+      b.addEventListener("pointermove", function (e) {
+        if (!down) return;
+        if (!moved && Math.hypot(e.screenX - sx, e.screenY - sy) >= 4) {
+          moved = true; document.body.classList.add("dragging");
+        }
+        if (moved) window.kc.dragMove();
+      });
+      function up() {
+        if (!down) return;
+        down = false; document.body.classList.remove("dragging");
+        window.kc.dragEnd();
+      }
+      b.addEventListener("pointerup", up);
+      b.addEventListener("pointercancel", up);
+      b.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); window.kc.restore(); }
+      });
+      /* what the dialer page last reported (via main.js) */
+      window.applyState = function (s) {
+        s = s || {};
+        document.body.classList.toggle("on", !!s.registered);
+        var n = Number(s.badge) || 0;
+        document.getElementById("n").textContent = n > 99 ? "99+" : String(n);
+        document.body.classList.toggle("badge", n > 0);
+        document.body.classList.toggle("ring", s.call === "ring");
+        document.body.classList.toggle("live", s.call === "live");
+        b.title = s.call === "live" ? "On a call — open the dialer"
+          : s.call === "ring" ? "Ringing — open the dialer"
+          : n ? n + " reminder" + (n === 1 ? "" : "s") + " due — open the dialer"
+          : "Open the Karma Connect dialer";
+      };
+      window.kc.onState(window.applyState);
+    })();
   </script>
 </body>
 </html>

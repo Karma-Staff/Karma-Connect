@@ -56,8 +56,12 @@ their login.
 - **No title bar:** the window is frameless. The dialer's own header is the
   drag handle and carries the minimise and close buttons (`.kd-win` in
   `leads/public`, wired through `dialer-preload.js`).
-- **No taskbar button:** minimising turns it into a floating bubble
-  (bottom-right, always on top); click the bubble to bring the dialer back.
+- **No taskbar button:** minimising turns it into a floating bubble (always
+  on top); click the bubble to bring the dialer back. Drag the bubble anywhere
+  on any monitor and it stays there (it glides onto a screen edge when dropped
+  near one; its spot is kept separately from the window's). It shows a green
+  or grey presence dot, the due-reminders count, and a green ring while a call
+  is ringing or live.
 - **Opens with Karma Connect:** the app registers the `karmaconnect://` link
   with Windows. Once a rep signs in to Karma Connect (or Leads) in the browser,
   the web app follows `karmaconnect://open` once per browser session, which
