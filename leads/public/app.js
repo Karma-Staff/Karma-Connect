@@ -3315,13 +3315,13 @@ function kdClock(s) {
 /* Toast inside the panel rather than the page's own. The page toast appears
    bottom-right, which is exactly where the dialler is — it would land behind
    it, which is where the first version put every error message. */
-function kdToast(msg) {
+function kdToast(msg, ms) {
   const el = kdEl("kd-toast");
   if (!el) return;
   el.textContent = msg;
   el.classList.remove("hidden");
   clearTimeout(KD.toastT);
-  KD.toastT = setTimeout(() => el.classList.add("hidden"), 3600);
+  KD.toastT = setTimeout(() => el.classList.add("hidden"), ms || 3600);
 }
 
 /* Every SDK control is wrapped: the SDK rejects rather than throwing, and an
@@ -4055,13 +4055,20 @@ function kcWireEmbed(token) {
   window.addEventListener("message", (e) => {
     const m = e.data;
     if (!m || m.kc !== "dial" || !m.number) return;
-    if (token && m.k !== token) return;
+    /* Security audit, 14 Oct 2026. Only the frame's own parent may send a
+       number, and only with the token — never a blank one. Before this, a page
+       opened WITHOUT ?k= skipped the check, so any website could window.open
+       this view and post it a number (premium-rate, anything) to ring on the
+       rep's line. And it never dials by itself any more: the number is filled
+       in and the rep presses Call. (With the extension switched off nothing
+       can frame this view, so this listener has no sender at all.) */
+    if (window.parent === window || e.source !== window.parent) return;
+    if (!token || m.k !== token) return;
     KD.number = String(m.number).replace(/[^0-9*#+]/g, "");
     KD.lead = null;
     KD.view = "keypad";
     rcPanelToggle(true);
     kdRender();
-    if (m.now) kdDial(true);
   });
 }
 const kcEmbedded = () => document.body.classList.contains("kc-embed");
@@ -4923,11 +4930,20 @@ async function kdDial(fromPad) {
     finally { KD.lookingUp = false; }
     if (kdActive()) return;
   }
+  /* Calling hours first, on the keypad. Switching to the lead view before the
+     answer showed the LAST call's "Call ended" screen — its disposition
+     buttons — while the check ran, and left the rep stuck there when the hour
+     was closed, as if the call had failed straight into the wrap-up. */
+  KD.lookingUp = true;
+  let ok = false;
+  try { ok = await callHoursOk(num, KD.lead?.id || null); } finally { KD.lookingUp = false; }
+  if (!ok) { KD.view = "keypad"; return kdRender(); }   // callHoursOk has said why
+  if (kdActive()) return;
   const sent = kdEl("kd-dtmf-sent"); if (sent) sent.textContent = "";
   KD.view = "lead";
-  /* dialInPage is the same path the lead table's Call button uses, so the
-     call is logged and attributed identically whichever way it was started. */
-  if (!dialInPage(num, KD.lead?.name || num, KD.lead?.id || null))
+  /* dialNow is the same path the lead table's Call button takes once its hour
+     is checked, so the call is logged and attributed identically. */
+  if (!dialNow(num, KD.lead?.name || num, KD.lead?.id || null))
     kdToast("Calling is not set up on this account");
 }
 
@@ -5990,7 +6006,7 @@ function dialInPage(number, name, leadId) {
 
 const hourWord = (h) => (h % 12 || 12) + (h < 12 || h === 24 ? "am" : "pm");
 async function callHoursOk(number, leadId) {
-  const say = (msg) => { toast(msg, 9000); kdToast(msg); };
+  const say = (msg) => { toast(msg, 9000); kdToast(msg, 9000); };
   let ct;
   try {
     ct = await api("/api/calltime?phone=" + encodeURIComponent(normalizeNumber(number))
