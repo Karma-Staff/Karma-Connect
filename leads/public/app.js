@@ -4868,6 +4868,37 @@ function rcWireBar() {
     }
     rcPanelToggle(false);
   });
+
+  /* The desktop dialer is a phone, so the keyboard dials it: digits typed
+     anywhere in the window go on the number (or as touch-tones on a live
+     call), Backspace deletes, Enter calls — not only after clicking into the
+     number box, which reps reasonably took for "typing doesn't work". Never
+     while a text box, the disposition sheet or a menu has the keys. Embed only:
+     on the website the same keys belong to the dashboard. */
+  document.addEventListener("keydown", (e) => {
+    if (!kcEmbedded() || e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
+    const t = e.target;
+    if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+    if (kdEl("rc-call")?.classList.contains("hidden")) return;
+    if (["kd-wrap", "kd-menu"].some((id) => !kdEl(id)?.classList.contains("hidden"))) return;
+    const live = KD.phase === "live" && KD.session;
+    if (/^[0-9*#+]$/.test(e.key)) {
+      if (!live) {
+        if (kdActive() || KD.phase === "incoming") return;
+        if (KD.view !== "keypad") { KD.view = "keypad"; kdRender(); }
+      }
+      e.preventDefault();
+      kdKey(e.key);
+      return;
+    }
+    if (live || KD.view !== "keypad") return;
+    if (e.key === "Backspace") { e.preventDefault(); KD.number = KD.number.slice(0, -1); kdRender(); }
+    else if (e.key === "Enter") { e.preventDefault(); kdDial(true); }
+  });
+  // back from the bubble: the caret is in the number box, ready to type
+  window.addEventListener("focus", () => {
+    if (kcEmbedded() && KD.view === "keypad" && !kdActive()) kdEl("kd-num")?.focus();
+  });
 }
 
 function kdNav(which) {
