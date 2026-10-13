@@ -4759,6 +4759,9 @@ function rcWireBar() {
 
   on("rc-launch", "click", () => rcPanelToggle());
   on("kd-close", "click", () => rcPanelToggle(false));
+  // the desktop app's window controls (desktop/dialer-preload.js); no-ops elsewhere
+  on("kd-win-min", "click", () => window.kcDesktop?.minimize?.());
+  on("kd-win-close", "click", () => window.kcDesktop?.close?.());
   on("kd-retry", "click", () => rcRetry());
   kdWireDrag(root);
 
@@ -11977,6 +11980,9 @@ async function init() {
   if (usp.get("embed") === "dialer") {
     document.body.classList.add("kc-embed");
     kcWireEmbed(usp.get("k") || "");
+    /* The desktop app (desktop/main.js, Electron) is a frameless window: the
+       panel's header is its title bar and shows minimise / close (.kd-win). */
+    if (/Electron/i.test(navigator.userAgent)) document.body.classList.add("kc-desktop");
   }
   // a failed hosted-login bounce lands back here with the reason in the URL
   const authError = usp.get("authError");

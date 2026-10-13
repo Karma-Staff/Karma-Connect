@@ -842,6 +842,18 @@
       <button id="kd-close" class="kd-x" aria-label="Close the dialler">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
       </button>
+      <!-- Desktop app only (body.kc-desktop): the window has no Windows title
+           bar, so this header IS the title bar — drag region plus its own
+           minimise (to the bubble) and close. app.css hides it everywhere else;
+           app.js hands the clicks to desktop/dialer-preload.js. -->
+      <div class="kd-win" role="group" aria-label="Window">
+        <button id="kd-win-min" class="kd-x" aria-label="Minimise to bubble" title="Minimise">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/></svg>
+        </button>
+        <button id="kd-win-close" class="kd-x kd-win-x" aria-label="Close the dialer" title="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
     </header>
 
     <!-- Shown when a call is live but the rep has wandered to another tab. -->
