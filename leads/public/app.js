@@ -5961,7 +5961,53 @@ function recordHandOff(digits, leadId) {
    a dialog the rep has to dismiss, with no call at the end of it.
 
    Never throws at a click handler. */
+/* Calling hours for EVERY call, not only the power dialer's: 8am-9pm in the
+   called person's own time (server/calltime.js, asked through
+   /api/calltime). Before this, a number pressed by hand was never checked,
+   and a rep rang someone at 5am.
+
+   So dialInPage only asks, and dialNow places the call once the answer is
+   yes. It answers "handled" straight away, as it always has; the one mode
+   that used to answer "not handled" (tel — the OS dials) is given its tel:
+   link once the hour checks out. If the check cannot be made, nothing is
+   dialled: the call can wait a minute, a call at the wrong hour cannot be
+   taken back. */
 function dialInPage(number, name, leadId) {
+  callHoursOk(number, leadId).then((ok) => {
+    if (ok) {
+      if (!dialNow(number, name, leadId)) window.location.href = "tel:" + normalizeNumber(number);
+      return;
+    }
+    // a power-dialer lead whose hour has just closed: the server moves it on
+    const cur = CAMP.s?.current?.lead;
+    if (cur && leadId && String(cur.id) === String(leadId)) {
+      cancelAutoDial();
+      loadCampaign();
+    }
+  });
+  return true;
+}
+
+const hourWord = (h) => (h % 12 || 12) + (h < 12 || h === 24 ? "am" : "pm");
+async function callHoursOk(number, leadId) {
+  const say = (msg) => { toast(msg, 9000); kdToast(msg); };
+  let ct;
+  try {
+    ct = await api("/api/calltime?phone=" + encodeURIComponent(normalizeNumber(number))
+      + (leadId ? "&leadId=" + encodeURIComponent(leadId) : ""));
+  } catch (e) {
+    say("Could not check the time where this number is — not dialled, try again in a moment");
+    return false;
+  }
+  if (ct.open) return true;
+  const [o, c] = ct.hours || [8, 21];
+  const at = ct.opensAt ? new Date(ct.opensAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
+  say(`Not dialled — it is ${ct.local} ${ct.zone} time there. Calls are allowed ${hourWord(o)}–${hourWord(c)}`
+    + ` their time${at ? `; you can call from ${at} your time` : ""}.`);
+  return false;
+}
+
+function dialNow(number, name, leadId) {
   if (VOICE.mode === "tel") return false;            // deliberately the OS's job
 
   /* RingCentral, where this rep has connected their own seat. Checked before
@@ -7108,6 +7154,7 @@ async function submitOutcome(extra) {
       method: "POST",
       body: JSON.stringify({
         ...extra,
+        leadId: CAMP.s?.current?.lead?.id ?? null,
         note: $("camp-note") ? $("camp-note").value : "",
         followUpAt: fu && fu.checked && $("camp-fu-when").value
           ? new Date($("camp-fu-when").value).toISOString() : null,

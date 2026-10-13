@@ -26,6 +26,7 @@ const { query } = require("./db");
 const { requireAdmin } = require("./auth");
 const { pk } = require("./dedupe");
 const { handleClaude } = require("../../api/_proxy.cjs");
+const calltime = require("./calltime");
 
 const router = express.Router();
 
@@ -304,7 +305,7 @@ async function currentRow(sessionId) {
       ORDER BY pos, id LIMIT 1`, [sessionId])).rows[0] || null;
 }
 
-function cardOf(row) {
+function cardOf(row, callTime) {
   if (!row) return null;
   return {
     // a leads-shaped object (snake_case) so the front end's fromApi() maps it;
@@ -314,18 +315,55 @@ function cardOf(row) {
     sheetNote: row.note || null,
     sheetSummary: row.note_summary || null,
     brief: null, notes: [], lastCall: null,
-    callTime: { open: true },                  // uploaded lists aren't hour-gated in v1
+    callTime: callTime || { open: true },
   };
 }
 
+/* Calling hours, exactly as campaign.js's servable() does it for the lead
+   base: 8am-9pm in the person's own time (calltime.js — the sheet's state
+   column, else the phone's area code). Rows it is too early or too late for
+   go to the back of the sheet, in their order, and the first one it is a
+   decent hour for comes up; if none of the next LOOK can be called yet, the
+   answer says when the soonest opens (callTime.waiting) and auto-dial holds.
+   Uploaded sheets were not checked at first, and a rep working one rang
+   somebody at 5am. */
+const LOOK = 200;
+async function servableRow(sessionId) {
+  const rows = (await query(
+    `SELECT id, state, phone FROM campaign_leads WHERE session_id = $1 AND status = 'pending'
+      ORDER BY pos, id LIMIT ${LOOK}`, [sessionId])).rows;
+  if (!rows.length) return null;
+  const now = new Date();
+  const checks = rows.map((r) => calltime.check(r, now));
+  const j = checks.findIndex((c) => c.open);
+  if (j === 0) return checks[0];
+  if (j < 0) {
+    const soonest = checks.map((c) => c.opensAt).filter(Boolean).sort()[0] || null;
+    return { ...checks[0], waiting: true, opensAt: soonest };
+  }
+  await query(
+    `UPDATE campaign_leads c SET pos = m.top + u.ord
+       FROM (SELECT coalesce(max(pos), 0) AS top FROM campaign_leads WHERE session_id = $1) m,
+            unnest($2::bigint[]) WITH ORDINALITY u(id, ord)
+      WHERE c.id = u.id AND c.session_id = $1`, [sessionId, rows.slice(0, j).map((r) => r.id)]);
+  return { ...checks[j], deferred: j };
+}
+
 async function serveUpload(s) {
+  const callTime = await servableRow(s.id);
   const { total, done } = await counts(s.id);
   const row = await currentRow(s.id);
-  return shapeUpload(s, total, done, cardOf(row));
+  return shapeUpload(s, total, done, cardOf(row, callTime));
 }
 
 async function outcomeUpload(s, b) {
-  const row = await currentRow(s.id);
+  /* The row the rep was shown (the page sends its id, negative). A poll
+     between dialling and the disposition can re-order the sheet when the
+     hour turns, so "the first pending row" may no longer be the one called. */
+  const shown = +b.leadId < 0 ? (await query(
+    `SELECT * FROM campaign_leads WHERE id = $1 AND session_id = $2 AND status = 'pending'`,
+    [-b.leadId, s.id])).rows[0] : null;
+  const row = shown || await currentRow(s.id);
   if (row) {
     const skip = b.skip === true;
     const outcome = skip ? "skip" : String(b.outcome || "no-answer");
@@ -349,4 +387,4 @@ async function outcomeUpload(s, b) {
   return serveUpload(s2);
 }
 
-module.exports = { router, isUpload, serveUpload, outcomeUpload, summariseSession };
+module.exports = { router, isUpload, serveUpload, outcomeUpload, summariseSession, servableRow };

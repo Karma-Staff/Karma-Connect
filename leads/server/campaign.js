@@ -202,6 +202,22 @@ router.post("/api/campaign/start", requireUser, express.json({ limit: "4kb" }),
 
 /* ---------------- working it ---------------- */
 
+/* Calling hours for a number dialled by hand — a click on a lead's phone,
+   the dial pad, the desktop dialer. The power dialer's check above only
+   covers the leads it serves; this is the same rule for every other call.
+   leadId (negative for an uploaded sheet's row) supplies the state; the
+   number's area code covers the rest. */
+router.get("/api/calltime", requireUser, async (req, res, next) => {
+  try {
+    const id = parseInt(req.query.leadId, 10) || 0;
+    const state = id > 0
+      ? (await query("SELECT state FROM leads WHERE id = $1", [id])).rows[0]?.state
+      : id < 0 ? (await query("SELECT state FROM campaign_leads WHERE id = $1", [-id])).rows[0]?.state
+        : null;
+    res.json({ ...calltime.check({ state, phone: String(req.query.phone || "") }), hours: calltime.HOURS });
+  } catch (e) { next(e); }
+});
+
 router.get("/api/campaign/current", requireUser, async (req, res, next) => {
   try {
     const s = await openSession(me(req));
