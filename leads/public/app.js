@@ -4533,7 +4533,11 @@ async function kdPickDevice(kind) {
   const want = p.system ? "" : (kind === "audioinput" ? p.input : p.output);
   const hit = want && list.find((d) => d.deviceId === want);
   if (hit) return hit.deviceId;
-  return (list.find((d) => d.deviceId === "default") || list[0])?.deviceId;
+  /* Where the browser hides device ids (no persistent mic permission — the
+     desktop app did, before its permission fix) every id is "". Asking the
+     SDK for exactly "" fails the call with OverconstrainedError; no id means
+     "the default device", which is what we want. */
+  return (list.find((d) => d.deviceId === "default") || list[0])?.deviceId || undefined;
 }
 
 /* The SDK's own manager always takes the first device in the list; this one

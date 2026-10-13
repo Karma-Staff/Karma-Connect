@@ -309,14 +309,21 @@ app.whenReady().then(() => {
     catch (e) { /* not fatal */ }
   }
 
-  // the softphone needs the microphone — grant it only to the dialer's origin
-  const allowed = new Set(["media", "microphone", "audioCapture"]);
+  /* The softphone needs the microphone (and to pick the speaker) — granted
+     only to the dialer's origin. The check handler is handed a full URL
+     ("https://…/leads/?embed=dialer"), not a bare origin: comparing it to
+     DIALER_ORIGIN as a string always failed, so Chromium hid the device ids,
+     the dialer asked for "exactly" a microphone with an empty id, and every
+     call died at once with OverconstrainedError. Compare origins instead. */
+  const allowed = new Set(["media", "microphone", "audioCapture", "speaker-selection"]);
   const fromDialer = (url) => { try { return new URL(url).origin === DIALER_ORIGIN; } catch (e) { return false; } };
-  session.defaultSession.setPermissionRequestHandler((wc, permission, cb) => {
-    cb(allowed.has(permission) && fromDialer(wc.getURL()));
+  session.defaultSession.setPermissionRequestHandler((wc, permission, cb, details) => {
+    cb(allowed.has(permission) && fromDialer(wc.getURL())
+      && !(details?.mediaTypes || []).includes("video"));
   });
-  session.defaultSession.setPermissionCheckHandler((wc, permission, origin) =>
-    allowed.has(permission) && origin === DIALER_ORIGIN);
+  session.defaultSession.setPermissionCheckHandler((wc, permission, origin, details) =>
+    allowed.has(permission) && details?.mediaType !== "video"
+      && (fromDialer(origin) || fromDialer(details?.requestingUrl)));
 
   createWindow();
   app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
