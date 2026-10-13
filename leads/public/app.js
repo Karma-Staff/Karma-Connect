@@ -12043,8 +12043,12 @@ async function init() {
     document.body.classList.add("kc-embed");
     kcWireEmbed(usp.get("k") || "");
     /* The desktop app (desktop/main.js, Electron) is a frameless window: the
-       panel's header is its title bar and shows minimise / close (.kd-win). */
-    if (/Electron/i.test(navigator.userAgent)) document.body.classList.add("kc-desktop");
+       panel's header is its title bar and shows minimise / close (.kd-win).
+       Only a build that has those controls (its preload exposes minimize):
+       an older installer still has the Windows title bar, and must not get a
+       second, dead pair of buttons from the new site. */
+    if (/Electron/i.test(navigator.userAgent) && typeof window.kcDesktop?.minimize === "function")
+      document.body.classList.add("kc-desktop");
   }
   // a failed hosted-login bounce lands back here with the reason in the URL
   const authError = usp.get("authError");
