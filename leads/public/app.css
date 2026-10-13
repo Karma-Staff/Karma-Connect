@@ -2631,9 +2631,9 @@ label.check input[type="checkbox"] { width: auto; margin: 0; accent-color: var(-
   background: color-mix(in srgb, var(--kd-live) 10%, transparent); border: 1px solid color-mix(in srgb, var(--kd-live) 30%, transparent); }
 .kd-inc-why b { color: var(--kd-ink); }
 .kd-inc-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.kd .kd-answer { background: var(--kd-live); color: #062014; box-shadow: 0 8px 20px -8px color-mix(in srgb, var(--kd-live) 70%, transparent);
+.kd .kd-answer { background: var(--kd-call); color: var(--kd-on-call); box-shadow: 0 8px 20px -8px color-mix(in srgb, var(--kd-call) 70%, transparent);
   animation: kd-answer-pulse 1.4s ease-in-out infinite; }
-@keyframes kd-answer-pulse { 50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--kd-live) 25%, transparent); } }
+@keyframes kd-answer-pulse { 50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--kd-call) 25%, transparent); } }
 @media (prefers-reduced-motion: reduce) { .kd-answer { animation: none; } }
 .pd-startnow { display: flex; flex-direction: row; justify-content: flex-start; align-items: center; gap: 8px;
   margin: 16px 0 4px; font-size: 13px; color: var(--ink); }
@@ -2894,6 +2894,14 @@ label.check input[type="checkbox"] { width: auto; margin: 0; accent-color: var(-
   --kd-gold: #FFCF00; --kd-on-gold: #0b1426;
   --kd-red: #E5604F; --kd-on-red: #fff;
   --kd-live: var(--good);
+  /* Call is green — the colour every phone has taught people means "place
+     the call" — and End is red. Gold stays the brand's "do something"
+     (Save, Hold, the reminders badge). Fixed values rather than --good,
+     which goes near-black in the light theme where dark ink would vanish. */
+  --kd-call: #34c46f; --kd-on-call: #06200f;
+  /* keypad geometry: one key's diameter and the gap between rows. The embed
+     (desktop) rules below scale these with the window. */
+  --kd-keysz: 60px; --kd-keygap: 12px;
 
   position: fixed; right: 20px; bottom: 84px; z-index: 90;
   width: 320px; height: 560px; max-height: calc(100vh - 104px);
@@ -2906,6 +2914,7 @@ label.check input[type="checkbox"] { width: auto; margin: 0; accent-color: var(-
   animation: kd-rise .22s cubic-bezier(.2,.8,.2,1) both;
 }
 :root[data-theme="light"] .kd {
+  --kd-call: #1f9d55; --kd-on-call: #fff;
   box-shadow: 0 24px 60px -16px rgba(20,24,40,.22), 0 6px 16px -6px rgba(20,24,40,.12);
 }
 .kd.hidden { display: none; }
@@ -2960,16 +2969,57 @@ body.kc-embed #rc-call.kd {
 }
 body.kc-embed #rc-call .kd-head { cursor: default; }
 body.kc-embed #kd-close { display: none; }
-.kd-presence { display: flex; align-items: center; gap: 7px;
+/* the root too, or a resize can show a sliver of the browser's own white
+   (or the Electron window's) at the edge before the body catches up */
+html:has(body.kc-embed) { background: var(--surface); }
+/* The frame is a window now, not a 320px card, so the keypad grows and
+   shrinks with it: a key is ~19% of the width or ~10.5% of the height,
+   whichever is tighter, between 46px (300x480) and 84px (a tall window). */
+body.kc-embed .kd {
+  --kd-keysz: clamp(46px, min(19vw, 10.5vh), 84px);
+  --kd-keygap: clamp(6px, 1.7vh, 16px);
+}
+body.kc-embed .kd-numbar { height: clamp(44px, 7vh, 60px); }
+body.kc-embed .kd-numbar input { font-size: clamp(22px, 7.5vw, 30px); }
+body.kc-embed .kd-nav { height: clamp(56px, 7vh, 64px); }
+/* the shortest window: the call screen's controls tighten so the tabs and
+   the panel underneath keep some room */
+@media (max-height: 540px) {
+  body.kc-embed .kd-ctl button { width: 40px; height: 40px; }
+  body.kc-embed .kd-leadhead { gap: 8px; padding-bottom: 10px; }
+}
+/* a wide window: the six in-call controls fit on one row */
+@media (min-width: 420px) {
+  body.kc-embed .kd-ctls { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  body.kc-embed .kd-ctl button { width: 50px; height: 50px; }
+}
+
+/* ---- the desktop app (Electron; body.kc-desktop as well as kc-embed) ----
+   A frameless window: this header is the title bar. The whole strip drags
+   the window; anything clickable in it opts out. Minimise (to the bubble)
+   and close are the only window controls — there is no maximise, the window
+   has a size range rather than a full-screen mode. */
+.kd-win { display: none; }
+body.kc-desktop .kd-head { -webkit-app-region: drag; height: 44px; padding: 0 8px 0 14px; }
+body.kc-desktop .kd-head button, body.kc-desktop .kd-head input { -webkit-app-region: no-drag; }
+body.kc-desktop .kd-win { display: flex; align-items: center; gap: 2px; margin-left: 2px; }
+.kd-win .kd-x { width: 28px; height: 28px; border-radius: 8px; }
+.kd-win .kd-x svg { width: 14px; height: 14px; stroke-width: 2.2; }
+.kd-win .kd-win-x:hover { background: var(--kd-red); color: #fff; }
+/* Status and caller ID: the status is a soft chip (the one thing a rep
+   checks before dialling), the caller ID a quiet two-line label beside it. */
+.kd-presence { display: flex; align-items: center; gap: 7px; height: 26px; padding: 0 10px 0 9px;
+  border-radius: 13px; background: var(--kd-key);
   font-size: 12px; font-weight: 600; color: var(--kd-ink2); white-space: nowrap; }
 .kd-live { width: 7px; height: 7px; flex: none; border-radius: 50%;
   background: var(--kd-live);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--kd-live) 20%, transparent); }
 .kd-live.off { background: var(--kd-ink3); box-shadow: none; }
-.kd-cid { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end;
+.kd-cid { margin-left: auto; min-width: 0; display: flex; flex-direction: column; align-items: flex-end;
   line-height: 1.15; font-size: 10px; color: var(--kd-ink3); }
-.kd-cid b { color: var(--kd-ink2); font-size: 12px; font-weight: 600;
-  font-variant-numeric: tabular-nums; }
+.kd-cid span { font-size: 9px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; }
+.kd-cid b { max-width: 100%; color: var(--kd-ink2); font-size: 12px; font-weight: 600;
+  font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .kd-x { width: 32px; height: 32px; flex: none; border: 0; border-radius: 50%;
   background: transparent; color: var(--kd-ink3);
   display: flex; align-items: center; justify-content: center;
@@ -3007,10 +3057,8 @@ body.kc-embed #kd-close { display: none; }
 .kd-err-btn:disabled { opacity: .55; }
 /* The banner borrows ~80px from the keypad; tighten the pad so the number and
    the call button both still fit instead of one of them scrolling away. */
+.kd:has(#kd-err:not(.hidden)) { --kd-keysz: 50px; --kd-keygap: 8px; }
 .kd:has(#kd-err:not(.hidden)) #kd-view-keypad { gap: 8px; }
-.kd:has(#kd-err:not(.hidden)) .kd-keys { grid-template-columns: repeat(3, 50px); row-gap: 8px; width: 210px; }
-.kd:has(#kd-err:not(.hidden)) .kd-keys button { width: 50px; height: 50px; }
-.kd:has(#kd-err:not(.hidden)) .kd-go { width: 50px; height: 50px; }
 
 /* ---- views ---- */
 .kd-view { flex: 1; min-height: 0; }
@@ -3046,7 +3094,8 @@ body.kc-embed #kd-close { display: none; }
 /* ---- keypad ----
    Centred in whatever height it gets, so a tall panel shows air around the
    pad instead of a slab of empty navy under the call button. */
-#kd-view-keypad { justify-content: safe center; align-items: center; gap: 14px; padding: 0 20px 12px; }
+#kd-view-keypad { justify-content: safe center; align-items: center;
+  gap: calc(var(--kd-keygap) + 2px); padding: 0 20px 12px; }
 .kd-numbar { position: relative; display: flex; align-items: center; justify-content: center;
   width: 100%; height: 44px; padding: 0 36px; }
 .kd-numbar input { width: 100%; min-width: 0; height: 40px; border: 0; outline: 0;
@@ -3063,27 +3112,32 @@ body.kc-embed #kd-close { display: none; }
   display: flex; align-items: center; justify-content: center;
   transition: background-color .15s ease, color .15s ease; }
 .kd-del:hover { background: var(--kd-hover); color: var(--kd-ink); }
-.kd-keys { display: grid; grid-template-columns: repeat(3, 60px);
-  justify-content: space-between; row-gap: 12px; width: 232px; }
-.kd-keys button { width: 60px; height: 60px; border-radius: 50%; border: 0;
+.kd-keys { display: grid; grid-template-columns: repeat(3, var(--kd-keysz));
+  justify-content: center; gap: var(--kd-keygap) calc(var(--kd-keygap) + 14px); max-width: 100%; }
+.kd-keys button { width: var(--kd-keysz); height: var(--kd-keysz); border-radius: 50%; border: 0;
   background: var(--kd-key);
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0;
   transition: background-color .12s ease, transform .12s ease; }
 .kd-keys button:hover { background: var(--kd-key-hi); }
 .kd-keys button:active { transform: scale(.94); background: var(--accent-soft); }
-.kd-keys b { font-size: 22px; font-weight: 500; line-height: 1.05;
+.kd-keys b { font-size: calc(var(--kd-keysz) * .37); font-weight: 500; line-height: 1.05;
   font-variant-numeric: tabular-nums; }
-.kd-keys i { font-style: normal; font-size: 8.5px; font-weight: 600;
+.kd-keys i { font-style: normal; font-size: max(8px, calc(var(--kd-keysz) * .145)); font-weight: 600;
   letter-spacing: .16em; color: var(--kd-ink3); min-height: 10px; }
 .kd-callrow { display: flex; justify-content: center; padding-top: 2px; }
-.kd-go { width: 60px; height: 60px; border-radius: 50%; border: 0;
-  background: var(--kd-gold); color: var(--kd-on-gold);
+.kd-go { width: var(--kd-keysz); height: var(--kd-keysz); border-radius: 50%; border: 0;
+  background: var(--kd-call); color: var(--kd-on-call);
   display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 8px 22px -6px rgba(255,207,0,.45);
-  transition: box-shadow .15s ease, transform .12s ease, opacity .15s ease; }
-.kd-go svg { width: 22px; height: 22px; stroke-width: 2; }
-.kd-go:not(:disabled):hover { box-shadow: 0 10px 26px -6px rgba(255,207,0,.6); }
-.kd-go:disabled { opacity: .35; box-shadow: none; }
+  box-shadow: 0 8px 22px -6px color-mix(in srgb, var(--kd-call) 60%, transparent);
+  transition: box-shadow .15s ease, transform .12s ease, background-color .15s ease, color .15s ease; }
+.kd-go svg { width: calc(var(--kd-keysz) * .38); height: calc(var(--kd-keysz) * .38); stroke-width: 2; }
+.kd-go:not(:disabled):hover { background: color-mix(in srgb, var(--kd-call) 86%, #fff);
+  box-shadow: 0 10px 26px -6px color-mix(in srgb, var(--kd-call) 75%, transparent); }
+/* Nothing to dial yet: still plainly the call button — a green ring with
+   the handset in muted green — rather than a faded olive blob. */
+.kd-go:disabled { background: color-mix(in srgb, var(--kd-call) 12%, transparent);
+  color: color-mix(in srgb, var(--kd-call) 72%, var(--kd-ink3)); box-shadow: none;
+  outline: 1.5px solid color-mix(in srgb, var(--kd-call) 38%, transparent); outline-offset: -1.5px; }
 .kd-go:not(:disabled):active { transform: scale(.94); }
 .kd-sent { margin: 0; text-align: center; min-height: 15px;
   font-variant-numeric: tabular-nums; letter-spacing: 3px;
@@ -3152,6 +3206,10 @@ body.kc-embed #kd-close { display: none; }
 .kd-primary:not(:disabled):active { transform: scale(.98); }
 .kd-primary svg { width: 17px; height: 17px; stroke-width: 2; }
 .kd-primary:disabled { opacity: .4; box-shadow: none; }
+/* Call on the lead screen is green like the keypad's call button; Save
+   (the disposition sheet) keeps the gold. */
+.kd #kd-call { background: var(--kd-call); color: var(--kd-on-call);
+  box-shadow: 0 8px 20px -8px color-mix(in srgb, var(--kd-call) 65%, transparent); }
 .kd-secondary { display: flex; align-items: center; justify-content: center; gap: 8px;
   height: 42px; border-radius: 21px; border: 0;
   background: var(--kd-key); color: var(--kd-ink); font-size: 13px; font-weight: 700;
@@ -3441,7 +3499,7 @@ body.kc-embed #kd-close { display: none; }
 .kd-scrim { position: absolute; z-index: 30; inset: 0; display: flex; align-items: flex-end;
   background: rgba(2,6,20,.5); animation: kd-fade .2s ease-out both; }
 .kd-scrim.hidden { display: none !important; }
-.kd-sheet { width: 100%; max-height: 460px; box-sizing: border-box;
+.kd-sheet { width: 100%; max-height: min(460px, calc(100% - 44px)); box-sizing: border-box;
   display: flex; flex-direction: column; gap: 12px; padding: 8px 14px 14px;
   border-radius: 20px 20px 0 0; background: var(--kd-sheet);
   box-shadow: 0 -16px 40px rgba(0,0,0,.35);

@@ -3429,6 +3429,7 @@ function kdRender() {
 
   /* the launcher doubles as the only sign of a call when the panel is shut */
   kdEl("rc-launch")?.classList.toggle("oncall", active || KD.phase === "incoming");
+  kdDesktopState();
 }
 
 function kdRenderLead(live, calling, ended, active) {
@@ -4202,6 +4203,20 @@ function kdBadge() {
   if (launch) {
     if (n) launch.dataset.count = txt; else delete launch.dataset.count;
   }
+  kdDesktopState();
+}
+
+/* The desktop app's bubble (desktop/bubble.html) shows presence, the
+   reminders count and a ringing / live call while the dialer is minimised;
+   it learns them from here (desktop/dialer-preload.js dedupes). A no-op
+   outside the desktop app. */
+function kdDesktopState() {
+  const send = window.kcDesktop?.state;
+  if (!send) return;
+  const badge = (KD.fus || []).filter(kdDue).length + (KD.missed || []).filter((m) => m.open).length;
+  const call = KD.phase === "live" ? "live"
+    : (KD.phase === "calling" || KD.phase === "incoming") ? "ring" : "";
+  send({ registered: !!KD.registered, badge, call });
 }
 
 /* The first load only summarises — ten overdue items arriving as ten toasts
@@ -4766,6 +4781,9 @@ function rcWireBar() {
 
   on("rc-launch", "click", () => rcPanelToggle());
   on("kd-close", "click", () => rcPanelToggle(false));
+  // the desktop app's window controls (desktop/dialer-preload.js); no-ops elsewhere
+  on("kd-win-min", "click", () => window.kcDesktop?.minimize?.());
+  on("kd-win-close", "click", () => window.kcDesktop?.close?.());
   on("kd-retry", "click", () => rcRetry());
   kdWireDrag(root);
 
@@ -4856,6 +4874,37 @@ function rcWireBar() {
       if (!kdEl(id)?.classList.contains("hidden")) return kdShow(id, false);
     }
     rcPanelToggle(false);
+  });
+
+  /* The desktop dialer is a phone, so the keyboard dials it: digits typed
+     anywhere in the window go on the number (or as touch-tones on a live
+     call), Backspace deletes, Enter calls — not only after clicking into the
+     number box, which reps reasonably took for "typing doesn't work". Never
+     while a text box, the disposition sheet or a menu has the keys. Embed only:
+     on the website the same keys belong to the dashboard. */
+  document.addEventListener("keydown", (e) => {
+    if (!kcEmbedded() || e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
+    const t = e.target;
+    if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+    if (kdEl("rc-call")?.classList.contains("hidden")) return;
+    if (["kd-wrap", "kd-menu"].some((id) => !kdEl(id)?.classList.contains("hidden"))) return;
+    const live = KD.phase === "live" && KD.session;
+    if (/^[0-9*#+]$/.test(e.key)) {
+      if (!live) {
+        if (kdActive() || KD.phase === "incoming") return;
+        if (KD.view !== "keypad") { KD.view = "keypad"; kdRender(); }
+      }
+      e.preventDefault();
+      kdKey(e.key);
+      return;
+    }
+    if (live || KD.view !== "keypad") return;
+    if (e.key === "Backspace") { e.preventDefault(); KD.number = KD.number.slice(0, -1); kdRender(); }
+    else if (e.key === "Enter") { e.preventDefault(); kdDial(true); }
+  });
+  // back from the bubble: the caret is in the number box, ready to type
+  window.addEventListener("focus", () => {
+    if (kcEmbedded() && KD.view === "keypad" && !kdActive()) kdEl("kd-num")?.focus();
   });
 }
 
@@ -11993,6 +12042,9 @@ async function init() {
   if (usp.get("embed") === "dialer") {
     document.body.classList.add("kc-embed");
     kcWireEmbed(usp.get("k") || "");
+    /* The desktop app (desktop/main.js, Electron) is a frameless window: the
+       panel's header is its title bar and shows minimise / close (.kd-win). */
+    if (/Electron/i.test(navigator.userAgent)) document.body.classList.add("kc-desktop");
   }
   // a failed hosted-login bounce lands back here with the reason in the URL
   const authError = usp.get("authError");

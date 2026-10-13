@@ -20,8 +20,10 @@ npm start
 
 A small dark window titled **Karma Connect Dialer** opens and stays on top of
 everything. The first time, sign in to Karma Connect inside it — it stays signed
-in after that. **Drag it by its title bar**; it floats over every app. Allow the
-**microphone** when asked (needed to make calls).
+in after that. **Drag it by its header** (the strip with the status and caller
+ID — the window has no Windows title bar of its own) and **resize it from any
+edge**; it floats over every app. Allow the **microphone** when asked (needed to
+make calls).
 
 ## Build an installer (to give it to the sales team)
 
@@ -47,10 +49,19 @@ their login.
 - **Microphone:** granted only to the dialer's own origin, denied to anything
   else.
 - **One instance:** launching again just focuses the open window.
-- **Size:** fixed at 320 × 560, the same as the dialer panel inside Karma
-  Connect. Only the window's position is remembered between runs.
-- **No taskbar button:** minimising turns it into a floating bubble
-  (bottom-right, always on top); click the bubble to bring the dialer back.
+- **Size:** opens at 320 × 560, the same as the dialer panel inside Karma
+  Connect, and can be resized between 300 × 480 and 560 × 1000 (the keypad
+  scales with the window). Size and position are remembered between runs;
+  there is no maximise or full screen.
+- **No title bar:** the window is frameless. The dialer's own header is the
+  drag handle and carries the minimise and close buttons (`.kd-win` in
+  `leads/public`, wired through `dialer-preload.js`).
+- **No taskbar button:** minimising turns it into a floating bubble (always
+  on top); click the bubble to bring the dialer back. Drag the bubble anywhere
+  on any monitor and it stays there (it glides onto a screen edge when dropped
+  near one; its spot is kept separately from the window's). It shows a green
+  or grey presence dot, the due-reminders count, and a green ring while a call
+  is ringing or live.
 - **Opens with Karma Connect:** the app registers the `karmaconnect://` link
   with Windows. Once a rep signs in to Karma Connect (or Leads) in the browser,
   the web app follows `karmaconnect://open` once per browser session, which
