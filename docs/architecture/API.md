@@ -4,7 +4,7 @@
 
 # API
 
-**213 routes**, generated from the source on 2026-10-14.
+**214 routes**, generated from the source on 2026-10-14.
 
 Every path is absolute. That is deliberate: Karma Leads' API paths are the same
 whether it runs standalone or mounted into Connect, which is what let its front
@@ -47,7 +47,7 @@ declared once for the group.
 
 ---
 
-## Karma Leads — 151 routes
+## Karma Leads — 152 routes
 
 ### `/api/activity`
 
@@ -172,8 +172,9 @@ declared once for the group.
 | POST | `/api/crm/sync/recordings/retry` | admin | [leads/server/crm-sync.js:555](../../leads/server/crm-sync.js#L555) | POST /api/crm/sync/recordings/retry — look again for the recordings of calls already in Zoho… |
 | POST | `/api/crm/zoho/backfill` | admin | [leads/server/zoho-inbound.js:100](../../leads/server/zoho-inbound.js#L100) | The webhook only catches NEW Zoho records. |
 | POST | `/api/crm/zoho/lead-created` | — | [leads/server/zoho-inbound.js:42](../../leads/server/zoho-inbound.js#L42) |  |
-| GET | `/api/crm/zoho/scan` | admin | [leads/server/zoho-scan.js:265](../../leads/server/zoho-scan.js#L265) | GET /api/crm/zoho/scan — when it last ran and what it found. |
-| POST | `/api/crm/zoho/scan` | admin | [leads/server/zoho-scan.js:256](../../leads/server/zoho-scan.js#L256) | POST /api/crm/zoho/scan — run one now (the "Scan Zoho" button). |
+| GET | `/api/crm/zoho/scan` | admin | [leads/server/zoho-scan.js:338](../../leads/server/zoho-scan.js#L338) | GET /api/crm/zoho/scan — when it last ran and what it found. |
+| POST | `/api/crm/zoho/scan` | admin | [leads/server/zoho-scan.js:329](../../leads/server/zoho-scan.js#L329) | POST /api/crm/zoho/scan — run one now (the "Scan Zoho" button). |
+| PUT | `/api/crm/zoho/scan/config` | admin | [leads/server/zoho-scan.js:312](../../leads/server/zoho-scan.js#L312) | PUT /api/crm/zoho/scan/config — {auto?: |
 
 ### `/api/cron`
 

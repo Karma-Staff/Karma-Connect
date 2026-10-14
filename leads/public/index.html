@@ -310,7 +310,14 @@
           <button id="clear-recents" class="btn-ghost hidden"
                   title="Forget the leads in this list">Clear</button>
           <button id="zoho-scan" class="btn-ghost hidden"
-                  title="Scan all of Zoho CRM (Leads and Contacts) and flag every matching lead">↻ Scan Zoho</button>
+                  title="Scan Zoho CRM now (Leads, Contacts, Accounts and call history) and label every matching lead">↻ Scan Zoho</button>
+          <select id="zoho-auto" class="zoho-auto hidden" aria-label="Automatic Zoho scan"
+                  title="How often Zoho is scanned by itself">
+            <option value="off">Auto-scan: off</option>
+            <option value="10">Auto-scan: every 10 min</option>
+            <option value="30">Auto-scan: every 30 min</option>
+            <option value="60">Auto-scan: every hour</option>
+          </select>
           <div class="density-toggle" title="Row height">
             <button data-density="compact" title="Compact">▤</button>
             <button data-density="cozy" title="Cozy">▥</button>

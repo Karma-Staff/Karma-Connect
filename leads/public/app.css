@@ -1043,6 +1043,7 @@ body.zv-collapsed .zohovoice-container { display: none !important; }
 .seg-back:hover { background: var(--accent); color: #fff; }
 .seg-back-arrow { font-size: 16px; line-height: 1; }
 .list-filters { display: flex; align-items: center; gap: 8px; }
+#zoho-scan, .zoho-auto { white-space: nowrap; flex: none; }
 /* Recent tab only — forgets the activity trail, not the leads themselves */
 #clear-recents { padding: 4px 10px; font-size: 12px; color: var(--ink-3); }
 #clear-recents:hover { color: var(--ink); }

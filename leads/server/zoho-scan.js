@@ -1,7 +1,8 @@
 "use strict";
-/* Zoho CRM scan: every 10 minutes, what is in Zoho is matched back to the
-   lead base, so the "Zoho" labels are always current and nobody is given, or
-   rings, a person Zoho is already working.
+/* Zoho CRM scan: on a timer (every 10, 30 or 60 minutes, or off — an admin
+   sets it beside the Scan Zoho button; 10 by default), what is in Zoho is
+   matched back to the lead base, so the "Zoho" labels stay current and nobody
+   is given, or rings, a person Zoho is already working.
 
    Two kinds of "in Zoho", labelled differently:
      lead        the number (or email) is a Zoho Lead or Contact   → "Zoho Lead"
@@ -39,12 +40,29 @@ const MODULES = [
   { name: "Leads", fields: ["Phone,Mobile,Email,Modified_Time"] },
   { name: "Contacts", fields: ["Phone,Mobile,Email,Modified_Time"] },
   { name: "Accounts", fields: ["Phone,Modified_Time"] },
-  /* Dialled_Number / Caller_ID are filled by Zoho's telephony (Zoho Voice and
-     the like); calls Karma Connect wrote carry only the record they are on.
-     An org without the telephony fields refuses them, so try without. */
-  { name: "Calls", fields: ["Who_Id,What_Id,Dialled_Number,Caller_ID,Modified_Time", "Who_Id,What_Id,Modified_Time"] },
+  /* Where a call's number lives, in the order it is trusted:
+       To_Number__s / From_Number__s  — what Karma Connect writes (crm-sync.js
+                                        buildCall); the lead is To on an
+                                        outgoing call, From on an incoming or
+                                        missed one
+       Dialled_Number / Caller_ID     — filled by Zoho's own telephony
+       Subject                        — "Outgoing call to Acme (702) 555-0101 — Rep"
+       the linked record              — Who_Id / What_Id, resolved afterwards
+     The first version read only Dialled_Number/Caller_ID — read-only fields
+     Zoho drops on calls we write — so a call to someone who is NOT a Zoho Lead
+     (exactly the "In Zoho" case) never matched anything. An org that lacks
+     a field refuses the whole request, so each list falls back to a smaller one. */
+  { name: "Calls", fields: [
+    "Who_Id,What_Id,Call_Type,Subject,To_Number__s,From_Number__s,Dialled_Number,Caller_ID,Modified_Time",
+    "Who_Id,What_Id,Call_Type,Subject,To_Number__s,From_Number__s,Modified_Time",
+    "Who_Id,What_Id,Call_Type,Subject,Modified_Time",
+  ] },
 ];
 const STATE_KEY = "zoho.scan";
+/* Bumped when what is read from a module changes, so that module is read
+   again from the start: v2 = Calls now carry their own numbers. */
+const STATE_VERSION = 2;
+const RESCAN_ON_UPGRADE = ["Calls"];
 
 /* SQL for a lead's Zoho label, for list queries: 'lead' | 'registered' | null */
 const zohoKindSql = (alias = "leads") => `(SELECT CASE
@@ -80,10 +98,25 @@ async function changed(mod, since) {
   return rows;
 }
 
+/* A US number written anywhere in a call's subject: "(702) 555-0101",
+   "702-555-0101", "+1 702 555 0101". */
+const SUBJECT_NUMBER = /(?:\+?1[\s.-]?)?\(?\b(\d{3})\)?[\s.-]?(\d{3})[\s.-]?(\d{4})\b/;
+function callNumber(r) {
+  /* only the OTHER party's side: the far side of an incoming call (To) and the
+     near side of an outgoing one (From) are our own lines, and must never
+     label a lead */
+  const theirs = /inbound|missed/i.test(r.Call_Type || "")
+    ? [r.From_Number__s, r.Caller_ID]
+    : [r.To_Number__s, r.Dialled_Number];
+  for (const n of theirs) { const k = pk(n); if (k) return k; }
+  const m = SUBJECT_NUMBER.exec(String(r.Subject || ""));
+  return m ? pk(m[1] + m[2] + m[3]) : null;
+}
+
 function recordOf(module, r) {
   if (module === "Calls") {
     const linked = (r.What_Id && r.What_Id.id) || (r.Who_Id && r.Who_Id.id) || null;
-    return { module, zoho_id: String(r.id), phone_key: pk(r.Dialled_Number || r.Caller_ID) || null,
+    return { module, zoho_id: String(r.id), phone_key: callNumber(r) || null,
       phone2_key: null, email: null, linked_id: linked ? String(linked) : null, modified_at: r.Modified_Time || null };
   }
   return { module, zoho_id: String(r.id), phone_key: pk(r.Phone) || null, phone2_key: pk(r.Mobile) || null,
@@ -181,6 +214,8 @@ async function run({ full = false } = {}) {
     try {
       const state = full ? {} : { ...(await settings.get(STATE_KEY, {})) };
       const since = { ...(state.since || {}) };
+      // what is read changed since this state was saved: read those modules again
+      if ((state.v || 1) < STATE_VERSION) for (const m of RESCAN_ON_UPGRADE) delete since[m];
       const read = {}, errors = {};
       for (const mod of MODULES) {
         try {
@@ -207,7 +242,7 @@ async function run({ full = false } = {}) {
       const labelled = await flag();
       const out = { ok: true, at: started.toISOString(), ms: Date.now() - started, read, labelled,
         ...(Object.keys(errors).length ? { errors } : {}) };
-      await settings.set(STATE_KEY, { since, last: out }, "zoho-scan");
+      await settings.set(STATE_KEY, { v: STATE_VERSION, since, last: out }, "zoho-scan");
       if (labelled.lead || labelled.registered) {
         try { require("./counts").invalidate(); } catch (e) { /* counts not mounted */ }
       }
@@ -238,18 +273,56 @@ async function kindsOfPhones(keys) {
   return out;
 }
 
+/* The automatic scan, set by an admin beside the Scan Zoho button: on or off,
+   and how often — every 10, 30 or 60 minutes. Kept in app_settings so it
+   survives a deploy and needs none. */
+const CONFIG_KEY = "zoho.scan.config";
+const EVERY_CHOICES = [10, 30, 60];
+async function config() {
+  const c = await settings.get(CONFIG_KEY, {});
+  return { auto: c.auto !== false, every: EVERY_CHOICES.includes(+c.every) ? +c.every : EVERY_MS / 60000 };
+}
+
+/* Checked once a minute: runs when the scan is on and the last run is older
+   than the chosen gap. So a change of setting takes effect within a minute,
+   and a restart does not reset the clock (the last run's time is stored). */
 let timer = null;
+async function dueTick() {
+  try {
+    const c = await config();
+    if (!c.auto || running) return;
+    const last = (await settings.get(STATE_KEY, {})).last;
+    const lastAt = last && last.at ? Date.parse(last.at) : 0;
+    if (Date.now() - lastAt < c.every * 60 * 1000 - 15 * 1000) return;   // 15s slack for the minute tick
+    await run();
+  } catch (e) { console.warn("[karma] zoho scan:", e.message); }
+}
 function startSweeper() {
   if (timer) return;
   if (process.env.KARMA_NO_SWEEP === "1") {
-    console.log("[karma] KARMA_NO_SWEEP=1 — the 10-minute Zoho CRM scan will NOT run");
+    console.log("[karma] KARMA_NO_SWEEP=1 — the automatic Zoho CRM scan will NOT run");
     return;
   }
   if (!zoho.ENABLED) return;
-  const tick = () => run().catch((e) => console.warn("[karma] zoho scan:", e.message));
-  setTimeout(tick, 60 * 1000);                     // a minute after boot, then every 10
-  timer = setInterval(tick, EVERY_MS);
+  setTimeout(dueTick, 60 * 1000);                  // a minute after boot, then every minute
+  timer = setInterval(dueTick, 60 * 1000);
 }
+
+/* PUT /api/crm/zoho/scan/config — {auto?: boolean, every?: 10 | 30 | 60} */
+router.put("/api/crm/zoho/scan/config", requireAdmin, express.json({ limit: "1kb" }), async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const cur = await config();
+    const next_ = { ...cur };
+    if (b.auto !== undefined) next_.auto = !!b.auto;
+    if (b.every !== undefined) {
+      if (!EVERY_CHOICES.includes(+b.every)) return res.status(400).json({ error: "Choose every 10, 30 or 60 minutes." });
+      next_.every = +b.every;
+    }
+    await settings.set(CONFIG_KEY, next_, req.user.email);
+    res.json({ ok: true, config: next_ });
+  } catch (e) { next(e); }
+});
 
 /* POST /api/crm/zoho/scan — run one now (the "Scan Zoho" button). ?full=1 reads
    everything again from the start instead of only what changed. */
@@ -266,9 +339,12 @@ router.get("/api/crm/zoho/scan", requireAdmin, async (req, res, next) => {
   try {
     const s = await settings.get(STATE_KEY, {});
     const n = (await query(`SELECT module, count(*)::int n FROM zoho_records GROUP BY module`)).rows;
-    res.json({ enabled: zoho.ENABLED, every: EVERY_MS / 60000, last: s.last || null,
-      indexed: Object.fromEntries(n.map((r) => [r.module, r.n])), running: !!running });
+    const c = await config();
+    const cfgRow = await settings.describe(CONFIG_KEY).catch(() => null);
+    res.json({ enabled: zoho.ENABLED, auto: c.auto, every: c.every, choices: EVERY_CHOICES,
+      changedBy: cfgRow?.updated_by || null, changedAt: cfgRow?.updated_at || null,
+      last: s.last || null, indexed: Object.fromEntries(n.map((r) => [r.module, r.n])), running: !!running });
   } catch (e) { next(e); }
 });
 
-module.exports = { router, startSweeper, run, kindsOfPhones, zohoKindSql, _test: { recordOf, flag, resolveCalls, changed } };
+module.exports = { router, startSweeper, run, kindsOfPhones, zohoKindSql, _test: { recordOf, flag, resolveCalls, changed, dueTick, config } };

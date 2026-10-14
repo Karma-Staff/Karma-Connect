@@ -215,6 +215,31 @@ function sourceChip(src) {
 }
 /* Already in the Zoho call list — a Zoho CRM record is linked to this lead,
    whether we created it or it was made in Zoho and matched back to us. */
+/* Beside Scan Zoho: the automatic scan's setting, and — on hover — when the
+   last scan ran and what it found. */
+async function zohoAutoLoad() {
+  const sel = $("zoho-auto");
+  if (!sel || !isAdmin()) return;
+  let s;
+  try { s = await api("/api/crm/zoho/scan"); } catch (e) { sel.title = "Couldn't read the scan setting: " + e.message; return; }
+  sel.value = s.auto ? String(s.every) : "off";
+  sel.disabled = !s.enabled;
+  const last = s.last;
+  const read = last?.read ? Object.values(last.read).reduce((a, b) => a + b, 0) : 0;
+  // relTime says "just now" for anything under an hour — too coarse for a 10-minute scan
+  const relTime = (d) => {
+    const m = Math.floor((Date.now() - new Date(d).getTime()) / 60000);
+    return m < 1 ? "just now" : m < 60 ? `${m} min ago` : window.relTime(d);
+  };
+  sel.title = !s.enabled ? "Zoho CRM isn't configured on this server"
+    : [s.auto ? `Zoho is scanned by itself every ${s.every === 60 ? "hour" : s.every + " minutes"}.` : "Automatic scan is off.",
+      last?.at ? `Last scan ${relTime(last.at)}: ${dashN(read)} Zoho record${read === 1 ? "" : "s"} read, ${
+        dashN((last.labelled?.lead || 0) + (last.labelled?.registered || 0))} lead${(last.labelled?.lead || 0) + (last.labelled?.registered || 0) === 1 ? "" : "s"} newly labelled.`
+        : "No scan has run yet.",
+      last?.errors ? "Problems: " + Object.entries(last.errors).map(([m, e]) => `${m}: ${e}`).join("; ") : "",
+      s.changedBy ? `Set by ${s.changedBy}${s.changedAt ? " " + relTime(s.changedAt) : ""}.` : ""].filter(Boolean).join("\n");
+}
+
 function zohoChip(on, kind) {
   if (!on) return "";
   /* Two kinds, from the 10-minute Zoho scan (zoho-scan.js): the number is a
@@ -9222,6 +9247,8 @@ function setTab(tab) {
   $("stats")?.classList.toggle("hidden", !!paneOf(tab));
   $("clear-recents")?.classList.toggle("hidden", !TABS[tab].activity);
   $("zoho-scan")?.classList.toggle("hidden", !TABS[tab].contacted);
+  $("zoho-auto")?.classList.toggle("hidden", !TABS[tab].contacted);
+  if (TABS[tab].contacted) zohoAutoLoad();
   // the board filter is a job-board thing; S.board is kept, so flipping to
   // People and back does not lose the pick
   $("board-ctl")?.classList.toggle("hidden", tab !== "jobs");
@@ -9642,6 +9669,19 @@ function wire() {
     catch (e) { console.warn("[karma] could not clear recents", e); }
     toast("Recent activity cleared");
   });
+  /* the automatic scan: off, or every 10 / 30 / 60 minutes (zoho-scan.js) */
+  on("zoho-auto", "change", async (e) => {
+    const v = e.target.value;
+    const body = v === "off" ? { auto: false } : { auto: true, every: +v };
+    e.target.disabled = true;
+    try {
+      await api("/api/crm/zoho/scan/config", { method: "PUT", body: JSON.stringify(body) });
+      toast(v === "off" ? "Automatic Zoho scan is off — use Scan Zoho when you want one"
+        : `Zoho is now scanned automatically every ${v === "60" ? "hour" : v + " minutes"}`, 5000);
+    } catch (ex) { toast("Couldn't change it: " + ex.message, 6000); }
+    e.target.disabled = false;
+    zohoAutoLoad();
+  });
   on("zoho-scan", "click", async () => {
     const btn = $("zoho-scan");
     btn.disabled = true; const label = btn.textContent; btn.textContent = "Scanning Zoho…";
@@ -9650,6 +9690,7 @@ function wire() {
       toast(`Scanned ${dashN(r.scanned)} Zoho record${r.scanned === 1 ? "" : "s"} — ${
         dashN(r.flagged)} newly flagged (${dashN(r.matched)} matched here)`, 7000);
       loadList(true);
+      zohoAutoLoad();
     } catch (e) {
       toast("Couldn't scan Zoho: " + (e.message || "unknown"), 8000);
     } finally { btn.disabled = false; btn.textContent = label; }
