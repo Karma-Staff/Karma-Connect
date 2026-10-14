@@ -17,7 +17,7 @@
    future SDK version decides to emit. */
 
 const express = require("express");
-const { query } = require("./db");
+const { query, tx } = require("./db");
 const { requireUser, requireAdmin, rankOf, RANK } = require("./auth");
 const activity = require("./activity");
 
@@ -93,6 +93,12 @@ const OUTCOMES = ["connected", "no-answer", "busy", "failed", "cancelled", "plac
 // a call longer than this is a forgotten tab, not a conversation
 const MAX_SECONDS = 4 * 60 * 60;
 const digits10 = (s) => String(s || "").replace(/\D/g, "").slice(-10);
+/* A stored phone's 10-digit number, in SQL. The extension comes off FIRST:
+   phonefix.js leaves a marked one in the field ("(702) 555-1234 ext 12" — the
+   dialler strips it), and the last ten digits of that are "5512341 2…", which
+   matched no typed number, so a keypad call to such a lead was never linked. */
+const PHONE10 = (col) =>
+  `right(regexp_replace(regexp_replace(coalesce(${col}, ''), '\\s*(ext\\.?|extension|x|#)\\s*\\d+\\s*$', '', 'i'), '\\D', '', 'g'), 10)`;
 
 /* POST /api/leads/:id/call — the softphone reporting how a call went.
    Mounted under /api/leads/:id, so leads.js's requireOwnLead has already
@@ -262,6 +268,179 @@ router.post("/api/calls/disposition", requireUser, express.json({ limit: "4kb" }
       } catch (e) { crm.sendError = e.message; }
       res.json({ ok: true, on: "call", id: hit.id, crm });
     } catch (e) { next(e); }
+  });
+
+/* ---------------- Prospect and DNC for a call that had no lead ----------------
+   A hand-dialled number, or one from an uploaded campaign list, has no lead
+   row, so the two chips that need one were left off its wrap-up. These give
+   them the same effect the lead's own chips have. */
+
+const httpError = (status, msg) => Object.assign(new Error(msg), { status });
+
+/* A number as the dialler had it ("7025551234#12", "+1 702…", "702-555-1234 ext 3")
+   → the phone to store and its 10-digit key. The extension comes off FIRST, as
+   in PHONE10: phonefix.fix() leaves a marked one (and anything starting "+")
+   as typed, and dedupe.pk() keys on the last ten digits, so "…1234#12" would
+   key — and ban — the wrong number. */
+function numberIn(raw) {
+  const { fix } = require("./phonefix");
+  const typed = String(raw || "").trim().slice(0, 32).replace(/\s*(?:ext\.?|extension|x|#)\s*\d+\s*$/i, "");
+  const phone = fix(typed).phone || typed;
+  return { phone, key: require("./dedupe").pk(phone) };
+}
+
+/* This rep's latest call to the number with no lead on it, in the last three
+   hours — the row the disposition is stamped onto (as /api/calls/disposition). */
+async function lastNumberCall(client, actor, number) {
+  return (await client.query(
+    `SELECT id FROM activity_log
+      WHERE action = 'call' AND lead_id IS NULL AND actor = $1
+        AND ${PHONE10("meta->>'number'")} = $2
+        AND at > now() - interval '3 hours'
+      ORDER BY at DESC LIMIT 1 FOR UPDATE`, [actor, number])).rows[0] || null;
+}
+
+/* POST /api/calls/prospect — {number, first_name, last_name, email?, company?, note?}
+   The person becomes a lead in Karma Connect (owned by the rep who called),
+   the call is moved onto that lead, and then — exactly as Prospect on a
+   lead's own wrap-up — they are created as a Lead in Zoho CRM and the call is
+   sent there. A number that is already a lead is never duplicated: the rep's
+   own lead (or any, for an admin) is used; someone else's is refused. */
+router.post("/api/calls/prospect", requireUser, express.json({ limit: "4kb" }),
+  async (req, res, next) => {
+    try {
+      const b = req.body || {};
+      const D = require("./dedupe");
+      const { phone, key } = numberIn(b.number);
+      if (!key) return res.status(400).json({ error: "That number can't be saved as a lead." });
+      const first = String(b.first_name || "").trim().slice(0, 40);
+      const last = String(b.last_name || "").trim().slice(0, 80);
+      const email = String(b.email || "").trim().slice(0, 100);
+      const company = String(b.company || "").trim().slice(0, 120);
+      const note = String(b.note || "").trim().slice(0, 500) || null;
+      if (!last) return res.status(400).json({ error: "Enter their last name to save the prospect." });
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: "That email doesn't look right." });
+      const person = `${first} ${last}`.trim();
+      const isAdmin = rankOf(req.user.role) >= RANK.admin;
+
+      const out = await tx(async (client) => {
+        const call = await lastNumberCall(client, req.user.email, key);
+        if (!call) throw httpError(404, "No recent call to that number to save.");
+        if ((await client.query("SELECT 1 FROM blocklist WHERE phone_key = $1", [key])).rowCount)
+          throw httpError(409, "That number is on Do Not Contact.");
+
+        /* the same person is never inserted twice: a lead with this number, or
+           failing that with this email, is the one the call goes on */
+        let lead = (await client.query(
+          `SELECT id, lead_code, name, owner, removed FROM leads
+            WHERE deleted_at IS NULL
+              AND (phone_key = $1 OR ${PHONE10("phone")} = $1 OR ($2 <> '' AND lower(email) = $2))
+            ORDER BY (phone_key = $1 OR ${PHONE10("phone")} = $1) DESC, removed, id LIMIT 1`,
+          [key, email.toLowerCase()])).rows[0] || null;
+        let created = false;
+        if (lead) {
+          if (lead.removed) throw httpError(409, "That number is on Do Not Contact.");
+          if (!isAdmin && String(lead.owner || "").trim() !== String(req.user.email || "").trim())
+            throw httpError(409, "This number (or email) is already a lead that belongs to someone else — ask an admin to assign it to you.");
+        } else {
+          /* a new lead, through the importer's own insert so its identity keys
+             (phone, email, name+city) are registered like any other lead's */
+          const fields = {
+            name: company || person, company: company || null, contact: company ? person : null,
+            phone, email: email || null, owner: req.user.email, status: "Contacted",
+            source: "Call (Prospect)", date_added: new Date().toISOString().slice(0, 10),
+          };
+          const c = { inserted: { company: 0, person: 0, job: 0 } };
+          const newId = await require("./imports").insertLead(client, D.mintCode(),
+            company ? "company" : "person", fields, new Set(), c);
+          lead = (await client.query(
+            "SELECT id, lead_code, name, owner FROM leads WHERE id = $1", [newId])).rows[0];
+          created = true;
+          await activity.log({ actor: req.user.email, user_id: req.user.id, action: "import",
+            lead_id: lead.id, lead_code: lead.lead_code, lead_name: lead.name,
+            to_value: "Prospect from a call", meta: { source: "call", number: phone } }, client);
+        }
+
+        const stamp = { disposition: "Prospect", dispo_note: note, dispo_at: new Date().toISOString() };
+        await client.query(
+          `UPDATE activity_log SET lead_id = $2, lead_code = $3, lead_name = $4,
+                  meta = coalesce(meta, '{}'::jsonb) || $5::jsonb
+            WHERE id = $1`, [call.id, lead.id, lead.lead_code, lead.name, JSON.stringify(stamp)]);
+        if (note) await activity.log({ actor: req.user.email, user_id: req.user.id, action: "note",
+          lead_id: lead.id, lead_code: lead.lead_code, lead_name: lead.name, to_value: "Prospect",
+          meta: { note } }, client);
+        return { lead, created, callId: call.id };
+      });
+      require("./counts").invalidate();
+
+      /* Zoho CRM after the commit (createLead reads the lead back). As on a
+         lead's own wrap-up, a CRM problem never costs what is already saved. */
+      const crm = {};
+      try {
+        const sync = require("./crm-sync");
+        try { crm.lead = await sync.createLead(req.user, out.lead.id, { first_name: first, last_name: last, email }); }
+        catch (e) {
+          // 409 = an owner switched the CRM sync off, 503 = not configured: a choice, not a failure
+          if (e.status === 409 || e.status === 503) crm.off = true; else crm.leadError = e.message;
+        }
+        const sent = await sync.sendNow(out.callId);
+        if (sent) Object.assign(crm, sent.sent ? { sent: true, as: sent.as } : { sendError: sent.error });
+      } catch (e) { crm.sendError = e.message; }
+      res.json({ ok: true, created: out.created,
+        lead: { id: out.lead.id, name: out.lead.name }, crm });
+    } catch (e) {
+      if (e.status) return res.status(e.status).json({ error: e.message });
+      next(e);
+    }
+  });
+
+/* POST /api/calls/dnc — {number, note?} Do Not Contact for a number with no
+   lead: the same phone ban a lead's DNC is (leads.js /remove) — blocklisted,
+   and every lead sharing the number swept — then the call is stamped DNC and
+   sent to Zoho CRM. */
+router.post("/api/calls/dnc", requireUser, express.json({ limit: "4kb" }),
+  async (req, res, next) => {
+    try {
+      const b = req.body || {};
+      const { phone, key } = numberIn(b.number);
+      if (!key) return res.status(400).json({ error: "That number can't be added to Do Not Contact." });
+      const note = String(b.note || "").trim().slice(0, 500) || null;
+      const reason = "Marked Do Not Contact on a call" + (note ? ` — ${note}` : "");
+
+      const out = await tx(async (client) => {
+        /* Only on a call this rep has just made: a member cannot ban an arbitrary
+           number (and with it other reps' leads) without having dialled it —
+           the per-lead route is gated by requireOwnLead the same way. */
+        const call = await lastNumberCall(client, req.user.email, key);
+        if (!call) throw httpError(404, "No recent call to that number — Do Not Contact is set from the call's wrap-up.");
+        await client.query(
+          `INSERT INTO blocklist (phone, phone_key, company, reason, added_by)
+           VALUES ($1, $2, NULL, $3, $4) ON CONFLICT (phone_key) DO NOTHING`,
+          [phone, key, reason.slice(0, 300), req.user.email]);
+        const ids = (await client.query(
+          `UPDATE leads SET removed = true, updated_at = now()
+            WHERE NOT removed AND deleted_at IS NULL
+              AND (phone_key = $1 OR ${PHONE10("phone")} = $1)
+            RETURNING id`, [key])).rows.map((r) => r.id);
+        await activity.log({ actor: req.user.email, user_id: req.user.id, action: "remove",
+          to_value: reason.slice(0, 300), meta: { number: phone, affected: ids.length } }, client);
+        await client.query(
+          `UPDATE activity_log SET meta = coalesce(meta, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
+          [call.id, JSON.stringify({ disposition: "DNC", dispo_note: note, dispo_at: new Date().toISOString() })]);
+        return { affected: ids.length, callId: call.id };
+      });
+      require("./counts").invalidate();
+
+      const crm = {};
+      try {
+        const sent = await require("./crm-sync").sendNow(out.callId);
+        if (sent) Object.assign(crm, sent.sent ? { sent: true, as: sent.as } : { sendError: sent.error });
+      } catch (e) { crm.sendError = e.message; }
+      res.json({ ok: true, affected: out.affected, crm });
+    } catch (e) {
+      if (e.status) return res.status(e.status).json({ error: e.message });
+      next(e);
+    }
   });
 
 /* ---------------- my calls ----------------
@@ -462,7 +641,7 @@ router.get("/api/calls/whois", requireUser, async (req, res, next) => {
       `SELECT id, kind, name, company, city, state, status, owner, industry
          FROM leads
         WHERE deleted_at IS NULL AND NOT removed
-          AND right(regexp_replace(coalesce(phone, ''), '\\D', '', 'g'), 10) = $1
+          AND (phone_key = $1 OR ${PHONE10("phone")} = $1)
         ORDER BY id LIMIT 1`, [d])).rows[0] || null;
     const last = (await query(
       `SELECT a.at, a.actor, a.meta->>'disposition' AS disposition, a.meta->>'outcome' AS outcome,

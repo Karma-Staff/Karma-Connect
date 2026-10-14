@@ -87,33 +87,27 @@ const CSP = [
 ].join("; ");
 
 // ── Karma Leads' softphone exception ──
-// Zoho Voice's click-to-call is a WebRTC softphone that runs IN the page: its
-// SDK is served from js.zohostatic.com and it talks to Zoho over HTTPS and
-// WebSocket, none of which the policy above permits. So /leads gets a widened
-// policy and the rest of the site — all of Karma Connect — keeps the strict
-// one. Widening it globally would hand every page the right to load and talk
-// to a third party for the sake of one feature on one route.
-//
-// Scoped to Zoho's hosts rather than opened to the web. Wildcards are used for
-// connect-src because the SDK's signalling and TURN hosts are regional
-// (us-relay2.zohovoice.com and friends) and are not a fixed published list.
-/* The softphone authenticates on localhost and failed on the deploy, which
-   pointed at this policy rather than at Zoho: development serves no CSP at all
-   (see !DEV below), so the browser was blocking a host here that it never
-   blocked locally, and the SDK reported the result as "Unauthorized access".
-   A blocked request and a refused credential look identical from inside it.
-   Zoho spreads across more domains than the two I first allowed — API calls on
-   zohoapis.com, assets on zohocdn.com, hosted pages on zohopublic.com — so the
-   family is listed rather than guessed at one host at a time. */
-/* RingCentral's softphone, alongside Zoho's while the team moves across.
-   The bundle is served from jsdelivr (ringcentral-web-phone ships a browser
-   build; the Leads front end has no bundler to import it with), the REST API
-   lives on platform.ringcentral.com, and the SIP signalling and media are
-   WebSocket to sip*.ringcentral.com — regional hostnames, hence the wildcard.
-   Media also needs blob: for the audio element the SDK creates. */
+// RingCentral's WebRTC softphone runs IN the /leads page: its SDK, its REST
+// API and its SIP socket all sit outside the strict policy above. So /leads
+// gets a widened policy and the rest of the site keeps the strict one.
+/* The bundle is served from jsdelivr (ringcentral-web-phone ships a browser
+   build; the Leads front end has no bundler to import it with). Only that ONE
+   pinned package path is allowed — jsdelivr serves every npm package, so
+   allowing the whole host would let an injected <script> load anything from
+   it. app.js also pins the bytes with SRI (RC_SDK_SRI). Bump the version in
+   both places together. The REST API lives on platform.ringcentral.com, and
+   the SIP signalling and media are WebSocket to sip*.ringcentral.com —
+   regional hostnames, hence the wildcard. Media also needs blob: for the
+   audio element the SDK creates.
+
+   Zoho Voice's in-page SDK and its hosts are gone (Oct 2026): calling is
+   RingCentral only, and that SDK loaded from an unpinned /latest/ URL.
+   'unsafe-inline' is gone from script-src too: /leads has no inline scripts
+   or on*= handlers (app.js uses data-act + delegated listeners instead). */
+const RC_SDK_PATH = "https://cdn.jsdelivr.net/npm/ringcentral-web-phone@2.6.0/";
 const RC_HOSTS = [
   "https://platform.ringcentral.com", "https://platform.devtest.ringcentral.com",
-  "https://*.ringcentral.com", "https://cdn.jsdelivr.net",
+  "https://*.ringcentral.com",
 ].join(" ");
 /* The PORT WILDCARD is load-bearing. RingCentral's SIP socket is on a
    non-default port — wss://sip123-1211.ringcentral.com:8083 — and a CSP host
@@ -125,28 +119,20 @@ const RC_HOSTS = [
    is not documented as fixed, so both are wildcards. */
 const RC_SOCKETS = ["wss://*.ringcentral.com:*", "wss://*.ringcentral.com"].join(" ");
 
-const ZOHO_HOSTS = [
-  "https://*.zoho.com", "https://*.zohoapis.com", "https://*.zohostatic.com",
-  "https://*.zohocdn.com", "https://*.zohopublic.com", "https://*.zohovoice.com",
-].join(" ");
-const ZOHO_SOCKETS = [
-  "wss://*.zoho.com", "wss://*.zohoapis.com", "wss://*.zohovoice.com",
-  "wss://*.zohopublic.com",
-].join(" ");
 const LEADS_CSP = [
   "default-src 'self'",
   "base-uri 'self'",
   "object-src 'none'",
   "frame-ancestors 'none'",
-  `img-src 'self' data: blob: ${ZOHO_HOSTS} ${RC_HOSTS}`,
-  `script-src 'self' 'unsafe-inline' ${ZOHO_HOSTS} ${RC_HOSTS}`,
-  `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com ${ZOHO_HOSTS} ${RC_HOSTS}`,
-  `font-src 'self' https://fonts.gstatic.com data: ${ZOHO_HOSTS} ${RC_HOSTS}`,
-  `connect-src 'self' ${ZOHO_HOSTS} ${ZOHO_SOCKETS} ${RC_HOSTS} ${RC_SOCKETS}`,
-  `media-src 'self' blob: ${ZOHO_HOSTS} ${RC_HOSTS}`,
-  `frame-src 'self' ${ZOHO_HOSTS} ${RC_HOSTS}`,
-  // the SDK's call widget is its own window in some flows
-  `child-src 'self' ${ZOHO_HOSTS} ${RC_HOSTS}`,
+  "form-action 'self'",
+  `img-src 'self' data: blob: ${RC_HOSTS}`,
+  `script-src 'self' ${RC_SDK_PATH}`,
+  `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com`,
+  `font-src 'self' https://fonts.gstatic.com data:`,
+  `connect-src 'self' ${RC_HOSTS} ${RC_SOCKETS} ${RC_SDK_PATH}`,
+  `media-src 'self' blob: ${RC_HOSTS} ${RC_SDK_PATH}`,
+  `frame-src 'self' ${RC_HOSTS}`,
+  `child-src 'self' ${RC_HOSTS}`,
 ].join("; ");
 
 const onLeads = (req) => req.path === "/leads" || req.path.startsWith("/leads/");
@@ -175,7 +161,7 @@ app.use((req, res, next) => {
      make the softphone impossible — a WebRTC call cannot happen without it.
      The embedded dialer needs it allowed cross-origin (microphone=*) so the
      host-page iframe can delegate it. Camera and geolocation stay denied. */
-  res.setHeader("Permissions-Policy", embed
+  res.setHeader("Permissions-Policy", embed && !EXTENSION_OFF
     ? "camera=(), microphone=*, geolocation=()"
     : onLeads(req)
       ? "camera=(), microphone=(self), geolocation=()"

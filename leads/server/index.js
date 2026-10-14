@@ -124,6 +124,11 @@ function mount(app, opts = {}) {
   app.use(require("./crm-identity").router);
   /* inbound: a Lead created in Zoho flags the matching Karma Connect lead */
   app.use(require("./zoho-inbound").router);
+  /* every 10 minutes: what changed in Zoho (Leads, Contacts, Accounts, Calls)
+     is matched back to the lead base — the "Zoho Lead" / "In Zoho" labels */
+  const zohoScan = require("./zoho-scan");
+  app.use(zohoScan.router);
+  zohoScan.startSweeper();
   /* each rep's recorded voicemail, for voicemail drop */
   app.use(require("./vm-drop").router);
   /* caller reputation: carrier status where a provider is connected, and the

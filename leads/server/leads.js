@@ -19,6 +19,8 @@ const { requireUser, rankOf, RANK } = require("./auth");
 const activity = require("./activity");
 const counts = require("./counts");
 const { STATUSES } = require("./dedupe");
+/* 'lead' (a Zoho Lead/Contact) | 'registered' (only in Zoho's call history) | null */
+const { zohoKindSql } = require("./zoho-scan");
 
 const router = express.Router();
 /* path-scoped, not bare router.use(requireUser): every feature router is
@@ -188,7 +190,8 @@ router.get("/api/leads", async (req, res, next) => {
       /* in_zoho: is this lead in the Zoho call list (a Zoho CRM record linked)?
          — drives the "Zoho" badge. Uses the activity_log partial index (022). */
       `SELECT *, EXISTS (SELECT 1 FROM activity_log a
-          WHERE a.lead_id = leads.id AND jsonb_exists(a.meta, 'crm_link')) AS in_zoho
+          WHERE a.lead_id = leads.id AND jsonb_exists(a.meta, 'crm_link')) AS in_zoho,
+          ${zohoKindSql("leads")} AS zoho_kind
          FROM leads WHERE ${where}${cursorSql}
        ORDER BY ${col} ${dir} NULLS LAST, id ${dir} LIMIT $${params.push(limit + 1)}`,
       params)).rows;
@@ -266,7 +269,8 @@ router.get("/api/leads/:key", async (req, res, next) => {
    opening a record the app is meant to have stopped showing */
 async function findLead(key) {
   const inZoho = `, EXISTS (SELECT 1 FROM activity_log a
-      WHERE a.lead_id = leads.id AND jsonb_exists(a.meta, 'crm_link')) AS in_zoho`;
+      WHERE a.lead_id = leads.id AND jsonb_exists(a.meta, 'crm_link')) AS in_zoho,
+      ${zohoKindSql("leads")} AS zoho_kind`;
   if (/^\d+$/.test(key))
     return (await query(
       `SELECT *${inZoho} FROM leads WHERE id = $1 AND deleted_at IS NULL`, [+key])).rows[0];

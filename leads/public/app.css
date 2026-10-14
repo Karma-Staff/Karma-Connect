@@ -1218,6 +1218,9 @@ button.fav-star:hover { background: var(--surface-2); color: var(--ink-2); trans
 .chip-st-notinterested { background: #ececea; color: #55544e; }
 .chip-zoho { background: #fde7e6; color: #b42318; font-weight: 700; }
 :root:not([data-theme="light"]) .chip-zoho { background: #4a1f1e; color: #f3a6a1; }
+/* only in Zoho's call history (not a Zoho Lead): amber, not red */
+.chip-zoho-reg { background: #fdf0d9; color: #8a5300; }
+:root:not([data-theme="light"]) .chip-zoho-reg { background: #3f2e12; color: #f2c879; }
 :root:not([data-theme="light"]) .chip-src-job      { background: #1e3a5f; color: #9ec5f5; }
 :root:not([data-theme="light"]) .chip-src-excel    { background: #214023; color: #a5d8a8; }
 :root:not([data-theme="light"]) .chip-src-apollo   { background: #372952; color: #cbb3f0; }
@@ -2558,6 +2561,8 @@ label.check input[type="checkbox"] { width: auto; margin: 0; accent-color: var(-
 .crm-person .asg-tag, .crm-person .dash-chip { flex-shrink: 0; }
 .crm-person-n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .crm-person .dash-mute { font-size: 12px; }
+.crm-person-w { flex-shrink: 0; white-space: nowrap; }
+.crm-person-off { flex-shrink: 0; padding: 3px 10px; font-size: 12px; }
 .dash-chip.ok { color: var(--good); border-color: color-mix(in srgb, var(--good) 40%, transparent); }
 .dash-chip.bad { color: var(--cat-8); border-color: color-mix(in srgb, var(--cat-8) 40%, transparent); }
 .kd-crm-row, .camp-crm-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
@@ -2660,6 +2665,20 @@ label.check input[type="checkbox"] { width: auto; margin: 0; accent-color: var(-
 /* Below the soft dialer (.kd / the call bar, z-index 90) on purpose: it still
    dims the page and takes the centre, but must never cover the phone — a rep
    has to be able to answer an incoming call while this is up. */
+/* the power dialer running behind another screen (pdRunPaint) */
+.pd-run { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 84;
+  display: flex; align-items: center; gap: 12px; max-width: calc(100vw - 32px); box-sizing: border-box;
+  padding: 10px 12px 10px 16px; border-radius: 14px; background: var(--surface); border: 1.5px solid var(--accent);
+  box-shadow: 0 14px 40px -10px rgba(0,0,0,.6); font-size: 13px; color: var(--ink); }
+.pd-run-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--good, #34c46f); flex: none;
+  animation: pd-run-breathe 1.6s ease-in-out infinite; }
+.pd-run-dot.paused { background: var(--muted, #808cb6); animation: none; }
+.pd-run-t { white-space: nowrap; }
+.pd-run-s { color: var(--muted, #808cb6); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pd-run .btn-ghost, .pd-run .btn-primary { flex: none; }
+@keyframes pd-run-breathe { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .pd-run-dot { animation: none; } }
+@media (max-width: 640px) { .pd-run-t { display: none; } }
 .pd-banner { position: fixed; inset: 0; z-index: 85; display: flex; align-items: center; justify-content: center;
   padding: 24px; background: rgba(4,8,16,.55); -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
   animation: pd-fade .18s ease-out both; }

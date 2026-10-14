@@ -99,6 +99,7 @@ function fromApi(r) {
     City: r.city, State: r.state,
     Status: r.status, Owner: r.owner,
     InZoho: !!r.in_zoho,
+    ZohoKind: r.zoho_kind || (r.in_zoho ? "registered" : null),
     Favorite: r.favorite, Removed: r.removed,
     Source: r.source, "Source File": r.source_file,
     "Date Added": r.date_added, Posted: r.date_added,
@@ -214,8 +215,13 @@ function sourceChip(src) {
 }
 /* Already in the Zoho call list — a Zoho CRM record is linked to this lead,
    whether we created it or it was made in Zoho and matched back to us. */
-function zohoChip(on) {
-  return on ? `<span class="chip chip-zoho" title="This lead is registered in Zoho CRM">Zoho</span>` : "";
+function zohoChip(on, kind) {
+  if (!on) return "";
+  /* Two kinds, from the 10-minute Zoho scan (zoho-scan.js): the number is a
+     Zoho Lead (or Contact), or it is only in Zoho's call history. */
+  return kind === "lead"
+    ? `<span class="chip chip-zoho" title="This number is a Lead in Zoho CRM">Zoho Lead</span>`
+    : `<span class="chip chip-zoho chip-zoho-reg" title="This number is in Zoho CRM's call history">In Zoho</span>`;
 }
 
 /* ---------------- auth ---------------- */
@@ -694,8 +700,20 @@ function factsHtml(r) {
    a stale or blocked logo URL just falls back to the initials */
 function avatarHtml(name, logo, cls = "avatar", style = "") {
   return `<span class="${cls}" style="${style}background:${avColor(name)}">${esc(initials(name))}${
-    logo ? `<img class="avatar-img" src="${esc(logo)}" alt="" loading="lazy" onerror="this.remove()">` : ""}</span>`;
+    logo ? `<img class="avatar-img" src="${esc(logo)}" alt="" loading="lazy">` : ""}</span>`;
 }
+/* No inline handlers anywhere (the /leads CSP forbids inline script). A logo
+   that fails to load is removed here instead — error does not bubble, so this
+   listens in the capture phase — and buttons rendered into innerHTML name
+   their action in data-act. */
+document.addEventListener("error", (e) => {
+  if (e.target instanceof HTMLImageElement && e.target.classList.contains("avatar-img")) e.target.remove();
+}, true);
+document.addEventListener("click", (e) => {
+  const el = e.target.closest?.("[data-act]");
+  const act = el && { loadDash, openNewCampaign }[el.dataset.act];
+  if (act) act();
+});
 
 /* bulk imports gave most of the base the same Date Added, so the list column
    shows reachability instead — both slots always render so absence is visible */
@@ -732,7 +750,7 @@ function renderList() {
         <div class="lead-name" title="${esc(full)}">${esc(name)}${co}</div>
         ${rowSubtitle(r) ? `<div class="lead-sub">${esc(rowSubtitle(r))}</div>` : ""}
         ${factsHtml(r)}
-        <div class="lead-meta">${sourceChip(r.Source || (r._t === "jobs" ? "Job board" : ""))}${statusChip(r.Status)}${zohoChip(r.InZoho)}</div>
+        <div class="lead-meta">${sourceChip(r.Source || (r._t === "jobs" ? "Job board" : ""))}${statusChip(r.Status)}${zohoChip(r.InZoho, r.ZohoKind)}</div>
       </div>
       <div class="lead-side">
         <button class="fav-star${r.Favorite ? " on" : ""}" data-fav="${i}"
@@ -974,7 +992,7 @@ function renderDetail(r) {
              class: the density modes hide .lead-meta everywhere -->
         <div class="detail-meta">
           <select class="status-select" id="d-status">${opts}</select>
-          ${sourceChip(r.Source || (tkey === "jobs" ? "Job board" : ""))}${zohoChip(r.InZoho)}
+          ${sourceChip(r.Source || (tkey === "jobs" ? "Job board" : ""))}${zohoChip(r.InZoho, r.ZohoKind)}
         </div>
       </div>
       <div class="detail-actions">
@@ -3064,15 +3082,6 @@ function softphoneUnavailable(reason) {
   }
 }
 
-/* Backstop. We no longer hand Zoho a null token (see the token callback), so
-   the SyntaxError that caused should not fire — but their bundle rejects
-   from other paths too, and those are failures we have already handled by
-   degrading. Scoped to their file so nothing of ours is ever masked. */
-window.addEventListener("unhandledrejection", (e) => {
-  const from = String(e.reason?.stack || "");
-  if (from.includes("zohostatic.com")) e.preventDefault();
-});
-
 /* The Zoho softphone is a 300x520 panel the SDK pins to the bottom-right at
    z-index 99999999 — directly over the reading pane, where it covers the
    lead's own controls. It is not ours to reposition (their markup, their
@@ -3095,35 +3104,6 @@ function softphoneToggle(show) {
   try { localStorage.setItem("kl_zv_open", on ? "1" : ""); } catch (e) { /* fine */ }
 }
 
-/* Added once the SDK has actually put its panel on the page — a button that
-   reveals nothing would be worse than no button. */
-function mountSoftphoneToggle() {
-  if ($("zv-toggle")) return;
-  const btn = document.createElement("button");
-  btn.id = "zv-toggle";
-  btn.className = "zv-toggle";
-  btn.type = "button";
-  btn.innerHTML = "☎";
-  btn.addEventListener("click", () => softphoneToggle());
-  document.body.appendChild(btn);
-  let open = false;
-  try { open = !!localStorage.getItem("kl_zv_open"); } catch (e) { /* default closed */ }
-  softphoneToggle(open);
-}
-
-/* The panel arrives whenever the SDK finishes; watch for it rather than
-   guessing a delay. Gives up after 30s so this is not a permanent observer. */
-function watchForSoftphone() {
-  if (document.querySelector(".zohovoice-container")) return mountSoftphoneToggle();
-  const obs = new MutationObserver(() => {
-    if (!document.querySelector(".zohovoice-container")) return;
-    obs.disconnect();
-    mountSoftphoneToggle();
-  });
-  obs.observe(document.body, { childList: true, subtree: true });
-  setTimeout(() => obs.disconnect(), 30000);
-}
-
 /* ---------------- RingCentral ----------------
 
    Preferred over Zoho when this rep has connected their own account, because
@@ -3137,6 +3117,12 @@ function watchForSoftphone() {
    never knew which telephony vendor it was talking to. */
 
 const RC_SDK = "https://cdn.jsdelivr.net/npm/ringcentral-web-phone@2.6.0/dist/index.iife.js";
+/* Subresource integrity: the browser refuses the bundle if the CDN ever
+   serves different bytes for this pinned version. The softphone runs with the
+   microphone and the rep's session, so a swapped file must not run at all.
+   Bumping the version means recomputing this (and the CSP path in server.js):
+     curl -s <RC_SDK> | openssl dgst -sha384 -binary | openssl base64 -A */
+const RC_SDK_SRI = "sha384-M4k2ywigqA3GWJ5g2f8HgjMqZzCsmFgiQvosZ71trFAv1tcbccwWb91/nrPRmoYK";
 
 function loadRcSdk() {
   if (window.WebPhone) return Promise.resolve(window.WebPhone);
@@ -3144,6 +3130,8 @@ function loadRcSdk() {
   VOICE.rcLoading = new Promise((resolve, reject) => {
     const el = document.createElement("script");
     el.src = RC_SDK;
+    el.integrity = RC_SDK_SRI;
+    el.crossOrigin = "anonymous";
     el.async = true;
     el.onerror = () => reject(new Error("could not load the RingCentral web phone"));
     el.onload = () => (window.WebPhone
@@ -5142,11 +5130,27 @@ function kdMenuPick(k) {
 /* Chips that need a lead — a status, a follow-up, Do Not Contact, a Zoho
    Lead — are left off for a call to a number that is no lead's; the rest
    describe the call itself, and that call is logged against the number. */
-const KD_DISPO_NO_LEAD = new Set(["outcome", "log"]);
+/* A call with no lead (a hand-dialled number) gets the chips that describe
+   the call, plus Prospect (saves them as a lead, then to Zoho CRM —
+   /api/calls/prospect) and DNC (bans the number — /api/calls/dnc). Status and
+   follow-up still need a lead to live on. */
+const KD_DISPO_NO_LEAD = new Set(["outcome", "log", "prospect", "dnc"]);
+/* no row in `leads` behind this call: a hand-dialled number, or an uploaded
+   campaign contact (negative id) */
+const kdNoLeadRow = () => !KD.lead || KD.lead.id < 0;
 const kdDispoChoices = () => KD.lead ? KD_DISPOS : KD_DISPOS.filter((d) => KD_DISPO_NO_LEAD.has(d.kind));
 
 function kdOpenWrap() {
   if (!KD.lead && !KD.number) return kdToast("This call has no lead or number to log against");
+  /* The Prospect form belongs to ONE call. It used to be cleared only after a
+     Prospect/DNC save, so skipping the sheet (or saving VM) left the last
+     contact's name and company in it — and the next uploaded contact's
+     company never replaced it, saving Beta's number as "Acme". */
+  const callKey = (KD.number || "") + "|" + (KD.lead?.id ?? "");
+  if (KD.crmFor !== callKey) {
+    KD.crmFor = callKey;
+    for (const i of ["kd-crm-first", "kd-crm-last", "kd-crm-email", "kd-crm-company"]) if (kdEl(i)) kdEl(i).value = "";
+  }
   kdEl("kd-wrapsub").textContent = KD.phase === "live"
     ? "The call stays connected."
     : KD.phase === "ended" ? "Call ended · " + kdClock(KD.elapsed)
@@ -5193,10 +5197,21 @@ function kdRenderDispos() {
   const fuOn = kdEl("kd-fu-on");
   if (fuOn) fuOn.checked = !!KD.wantFu;
   kdShow("kd-fu-when", !!KD.wantFu);
-  /* The prospect's name — only for Prospect, and only while the Zoho CRM
-     sync is on, since that is where it goes. */
-  kdShow("kd-crm", picked?.kind === "prospect" && !!VOICE.crmOn);
-  if (picked?.kind === "prospect" && VOICE.crmOn) setTimeout(() => kdEl("kd-crm-first")?.focus(), 0);
+  /* The prospect's name — for Prospect. On a lead's call it is only asked
+     while the Zoho CRM sync is on, since that is where it goes; on a call
+     with no lead it is always asked, because it becomes a lead here first
+     (with a Company field, pre-filled from an uploaded list). */
+  const noRow = kdNoLeadRow();
+  const askName = picked?.kind === "prospect" && (noRow || !!VOICE.crmOn);
+  kdShow("kd-crm", askName);
+  kdShow("kd-crm-company", askName && noRow);
+  const hint = kdEl("kd-crm-hint");
+  if (hint) hint.textContent = noRow
+    ? "Saved as a lead in Karma Connect (yours), then as a Lead in Zoho CRM with this call on it. Already a lead? It's linked, not duplicated."
+    : "Saved as a Lead in Zoho CRM, with this call on it. Already there? It's linked, not duplicated.";
+  const co = kdEl("kd-crm-company");
+  if (askName && noRow && co && !co.value && KD.lead?.company) co.value = KD.lead.company;
+  if (askName) setTimeout(() => kdEl("kd-crm-first")?.focus(), 0);
   if (KD.wantFu && !kdEl("kd-fu-at").value) {
     /* A sensible default beats an empty field: tomorrow, same hour, on the
        hour. A rep picking "call back later" means soon, not never. */
@@ -5298,12 +5313,54 @@ async function kdSaveDispo() {
 /* The wrap-up for a call to a number that is no lead's: the disposition and
    note go onto that call's row (POST /api/calls/disposition), which sends it
    to Zoho CRM with its Call Result. There is no lead for a note of its own. */
+/* Prospect and DNC for a call with no lead row. Returns the server's answer,
+   or null when the rep backed out (DNC confirm) or a field needs fixing — the
+   toast has said which. Throws on a server refusal. */
+async function kdNoLeadSpecial(picked, note) {
+  if (picked.kind === "dnc") {
+    if (!confirm(`Add ${kdFmtNum(KD.number)} to Do Not Contact?\n\nThis blocks the number and sweeps every lead sharing it.`))
+      return null;
+    return api("/api/calls/dnc", { method: "POST", body: JSON.stringify({ number: KD.number, note }) });
+  }
+  const p = {
+    first_name: (kdEl("kd-crm-first")?.value || "").trim(),
+    last_name: (kdEl("kd-crm-last")?.value || "").trim(),
+    email: (kdEl("kd-crm-email")?.value || "").trim(),
+    company: (kdEl("kd-crm-company")?.value || "").trim(),
+  };
+  if (!p.last_name) { kdEl("kd-crm-last")?.focus(); kdToast("Enter their last name to save the prospect"); return null; }
+  if (p.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(p.email)) {
+    kdEl("kd-crm-email")?.focus(); kdToast("That email doesn't look right"); return null;
+  }
+  return api("/api/calls/prospect", { method: "POST", body: JSON.stringify({ number: KD.number, note, ...p }) });
+}
+/* What a Prospect / DNC save says back to the rep, Zoho's part included. */
+function kdNoLeadReport(picked, r) {
+  for (const i of ["kd-crm-first", "kd-crm-last", "kd-crm-email", "kd-crm-company"]) if (kdEl(i)) kdEl(i).value = "";
+  if (picked.kind === "dnc") {
+    kdToast(r.affected ? `Do Not Contact · ${r.affected} lead${r.affected === 1 ? "" : "s"} removed` : "Do Not Contact · number blocked");
+  } else {
+    kdToast((r.created ? "Saved as a new lead" : `Linked to the existing lead: ${r.lead?.name || ""}`) + (r.crm?.sent ? " · sent to Zoho CRM" : ""));
+    if (r.crm?.leadError) toast("The lead is saved in Karma Connect, but Zoho CRM did not create it: " + r.crm.leadError, 10000);
+  }
+  if (r.crm?.sendError) toast("Call saved, but Zoho CRM refused it for now — it will retry: " + r.crm.sendError, 9000);
+}
+
 async function kdSaveNumberDispo() {
   const picked = kdDispoChoices().find((d) => d.label === KD.dispo);
   if (!picked) return kdToast("Pick an outcome for this call");
   const note = (kdEl("kd-note")?.value || "").trim();
   try {
     await VOICE.call.logged;      // the row this is stamped onto
+    if (picked.kind === "prospect" || picked.kind === "dnc") {
+      const r = await kdNoLeadSpecial(picked, note);
+      if (!r) return;
+      kdShow("kd-wrap", false);
+      kdEl("kd-note").value = "";
+      KD.dispo = "";
+      kdNoLeadReport(picked, r);
+      return;
+    }
     const r = await api("/api/calls/disposition", {
       method: "POST", body: JSON.stringify({ number: KD.number, disposition: picked.label, note }) });
     kdShow("kd-wrap", false);
@@ -5327,7 +5384,14 @@ async function kdSaveUploadDispo() {
   const note = (kdEl("kd-note")?.value || "").trim();
   try {
     await VOICE.call?.logged;                 // the call row this stamps onto
-    if (picked) await api("/api/calls/disposition", {
+    /* Prospect / DNC do what they do for a hand-dialled number: the contact
+       becomes a lead (and a Zoho CRM Lead), or the number is banned. A refusal
+       keeps the sheet open so nothing is lost; the campaign waits. */
+    let special = null;
+    if (picked && (picked.kind === "prospect" || picked.kind === "dnc")) {
+      special = await kdNoLeadSpecial(picked, note);
+      if (!special) return;
+    } else if (picked) await api("/api/calls/disposition", {
       method: "POST", body: JSON.stringify({ number: KD.number, disposition: picked.label, note }) }).catch(() => {});
     // carry the disposition + note into the campaign's record of this call
     const campNote = [picked?.label, note].filter(Boolean).join(" — ");
@@ -5335,7 +5399,7 @@ async function kdSaveUploadDispo() {
     kdShow("kd-wrap", false);
     if (kdEl("kd-note")) kdEl("kd-note").value = "";
     KD.dispo = "";
-    kdToast("Saved");
+    if (special) kdNoLeadReport(picked, special); else kdToast("Saved");
     kdAfterWrap(picked || null);              // advance the campaign (records to campaign_leads)
   } catch (e) {
     kdToast("Could not save — " + (describeErr(e) || "unknown"));
@@ -5823,113 +5887,10 @@ async function voiceInit() {
        it — a rep cannot mint an OAuth token. */
     if (VOICE.scopeWarning && isAdmin()) console.warn("[karma] " + VOICE.scopeWarning);
   } catch (e) { VOICE.mode = "tel"; }     // config unreachable = stay on tel:
-  if (VOICE.mode !== "sdk") return;       // tel and web need nothing loaded
-  watchForSoftphone();
-  loadVoiceSdk().catch((e) =>
-    console.warn("[karma] click-to-call unavailable:", e.message));
-}
-
-function loadVoiceSdk() {
-  if (VOICE.loading) return VOICE.loading;
-  VOICE.loading = new Promise((resolve, reject) => {
-    const el = document.createElement("script");
-    // -ui build: Zoho renders its own draggable call widget, so we do not have
-    // to build and maintain a dialpad, mute button and call timer of our own
-    el.src = "https://js.zohostatic.com/zvoice_plugin/latest/js/zohovoice-ui.min.js";
-    el.async = true;
-    el.onerror = () => reject(new Error("could not load the Zoho Voice SDK"));
-    el.onload = () => {
-      try {
-        if (typeof ZohoVoice === "undefined") throw new Error("SDK did not define ZohoVoice");
-        const zv = new ZohoVoice({ development: false, debug: false, draggable: true });
-        // the SDK asks for a token whenever it needs one; the server holds the
-        // refresh token and hands back a short-lived access token
-        zv.ajaxOpts.isOAuth = true;
-        zv.ajaxOpts.oAuthCallBack = (cb) => {
-          /* Deliberately not the shared api() helper: it throws away everything
-             but the `error` string, and the whole point here is the `reason`
-             field beside it — Zoho's own words for why the exchange failed. */
-          fetch("/api/voice/token", { method: "POST" })
-            .then(async (res) => {
-              const d = await res.json().catch(() => ({}));
-              if (res.ok && d.access_token) {
-                console.log("[karma] voice token handed to SDK: yes");
-                return cb(d.access_token);
-              }
-              const detail = [d.reason,
-                d.refreshTokenPrefix && ("token in use: " + d.refreshTokenPrefix
-                  + " (" + d.refreshTokenLength + " chars)"),
-                d.clientIdPrefix && ("id " + d.clientIdPrefix)].filter(Boolean).join(" · ");
-              console.warn("[karma] voice token failed:", res.status, d);
-              softphoneUnavailable(detail || d.error || ("HTTP " + res.status));
-              /* Deliberately NOT cb(null). Zoho's bundle takes the null
-                 straight to XMLHttpRequest.open() and throws a SyntaxError
-                 out of a promise nobody owns — a red error in every rep's
-                 console for a failure we have already handled. Leaving the
-                 callback uncalled simply leaves the softphone uninitialised,
-                 which is exactly what it is; softphoneUnavailable() has
-                 already moved dialling to the hand-off path. */
-            })
-            .catch((e) => {
-              console.warn("[karma] voice token request failed:", e.message);
-              softphoneUnavailable(e.message);
-            });
-        };
-        zv.on?.("ready", () => { VOICE.ready = true; });
-        /* Call outcomes. The browser holding the softphone is the only thing
-           that knows a call ended and whether anyone picked up, so this is
-           where the manager's report gets its data — and why a rep dialling
-           any other way contributes none.
-
-           The SDK names its states differently across versions, so match
-           loosely on the words rather than an exact enum, and treat anything
-           unrecognised as ended-without-connecting rather than dropping it. */
-        zv.on?.("callState", (st) => {
-          try {
-            const state = String(st?.callStatus || st?.state || st || "").toLowerCase();
-            if (/answer|connect|active|established|talking/.test(state)) {
-              VOICE.call.connected = true;
-            }
-            if (/end|complete|terminat|hangup|disconnect|closed|failed|cancel/.test(state)) {
-              reportCall(st, state);
-            }
-          } catch (e) { console.warn("[karma] callState:", e.message); }
-        });
-        zv.on?.("timer", (t) => {
-          // seconds the SDK counts while a call is up; the last value wins
-          const s = Number(t?.seconds ?? t?.duration ?? t);
-          if (Number.isFinite(s) && s >= 0) VOICE.call.seconds = Math.floor(s);
-        });
-        zv.on?.("regState", (st) => { VOICE.ready = String(st?.state || st) !== "unregistered"; });
-        zv.on?.("error", (err) => {
-          /* The SDK hands back an object, not a string, and String() on it
-             gives "[object Object]" — which is what the first version of this
-             showed and told nobody anything. Serialise it instead: the message
-             is always "Unauthorized access", so the surrounding fields are the
-             only place the real cause appears. */
-          const msg = describeErr(err);
-          console.warn("[karma] voice error:", err);
-          toast("Zoho softphone: " + msg, 15000);
-          /* The softphone could not sign in — usually the Zoho identity behind
-             the API credentials is not a Voice agent with a seat. Nothing the
-             rep can do about it, and leaving the widget up means every click
-             lands on an error panel. Drop to copy-and-open so the number is
-             still one click from being dialled. */
-          if (/unauthor|forbidden|invalid|denied|401|403/i.test(msg)) {
-            VOICE.ready = false;
-            VOICE.mode = "web";
-            console.warn("[karma] click-to-call fell back to the Zoho dialler tab "
-              + "(the SDK could not authenticate)");
-          }
-        });
-        zv.initialize();
-        VOICE.sdk = zv;
-        resolve(zv);
-      } catch (e) { reject(e); }
-    };
-    document.head.appendChild(el);
-  });
-  return VOICE.loading;
+  /* Zoho's in-page softphone is retired (Oct 2026): its bundle came from an
+     unpinned /latest/ URL that no integrity check could cover. "sdk" from an
+     old server config hands off to Zoho's web dialler instead. */
+  if (VOICE.mode === "sdk") VOICE.mode = "web";
 }
 
 /* Leads carry numbers as people wrote them — "(702) 834-3440", "702.834.3440",
@@ -6672,9 +6633,26 @@ function autoReady() {
   return { ok: true, why: "" };
 }
 
+/* One tick a second for the countdown — from tick-worker.js where the
+   browser allows it, because a page timer in a background tab is slowed to
+   about once a minute. Returns the function that stops it. */
+let CAMP_WORKER;
+function campTicker(fn) {
+  if (CAMP_WORKER === undefined) {
+    try { CAMP_WORKER = new Worker("tick-worker.js"); } catch (e) { CAMP_WORKER = null; }
+  }
+  if (CAMP_WORKER) {
+    CAMP_WORKER.onmessage = fn;
+    CAMP_WORKER.postMessage("start");
+    return () => { CAMP_WORKER.onmessage = null; CAMP_WORKER.postMessage("stop"); };
+  }
+  const id = setInterval(fn, 1000);
+  return () => clearInterval(id);
+}
+
 function cancelAutoDial(reason) {
   const was = !!CAMP.timer;
-  if (CAMP.timer) { clearInterval(CAMP.timer); CAMP.timer = null; }
+  if (CAMP.timer) { CAMP.timer(); CAMP.timer = null; }
   CAMP.countdown = 0;
   CAMP.nextDial = null;
   const el = $("camp-auto-state");
@@ -6715,13 +6693,15 @@ function armAutoDial(r, name) {
      without waiting out the gap. */
   CAMP.nextDial = { phone: r.Phone, name, id: r.Id };
   CAMP.countdown = autoGap();
+  const dueAt = Date.now() + CAMP.countdown * 1000;
   const paint = () => {
     const el = $("camp-auto-state");
     if (el) el.textContent = `calling ${name} in ${CAMP.countdown}s`;
+    pdRunPaint();
   };
   paint();
-  CAMP.timer = setInterval(() => {
-    CAMP.countdown -= 1;
+  CAMP.timer = campTicker(() => {
+    CAMP.countdown = Math.max(0, Math.ceil((dueAt - Date.now()) / 1000));
     if (CAMP.countdown > 0) return paint();
     cancelAutoDial();
     const el = $("camp-auto-state");
@@ -6730,7 +6710,8 @@ function armAutoDial(r, name) {
     const placed = dialInPage(r.Phone, name, r.Id);
     if (el) el.textContent = placed ? "calling " + name + "…" : "could not dial — call it by hand";
     if (!placed) setAutoOn(false);       // stop rather than fail silently each time
-  }, 1000);
+    pdRunPaint();
+  });
   campPaintLive();                         // the bar offers Pause while it counts
 }
 
@@ -7136,6 +7117,17 @@ function renderCampaign(d) {
   $("cs-act").dataset.html = campAction(d, phase);
   CAMP.lastPhase = phase;
   wireAutoDial(r, name);
+  /* Registered in Zoho since the campaign was built (the 10-minute scan): the
+     builder leaves Zoho leads out, but one can turn up mid-campaign. Nothing
+     rings until the rep has seen it and chosen — skip it, or call anyway. */
+  if (d.current.zoho && CAMP.zohoOk !== String(r.Id)) {
+    const keep = CAMP.advanced;
+    CAMP.advanced = false;
+    cancelAutoDial("already registered in Zoho — skip it or call anyway");
+    return campZohoWarn(d.current.zoho, name, r.Phone,
+      () => { CAMP.zohoOk = String(r.Id); CAMP.advanced = keep; renderCampaign(CAMP.s); },
+      () => { CAMP.zohoOk = ""; submitOutcome({ skip: true }); });
+  }
   /* Nobody in reach can be called yet (calling hours): hold auto-dial and
      look again when the soonest lead's 8am comes round. */
   if (d.current.callTime?.waiting) return holdForHours(d.current.callTime);
@@ -7146,10 +7138,31 @@ function renderCampaign(d) {
   CAMP.advanced = false;
 }
 
+/* "Already registered in Zoho" — a pop-up over whatever screen the rep is on
+   (the power dialer keeps running in the background). Skip is the default:
+   the lead is being worked in Zoho. */
+function campZohoWarn(kind, name, phone, onCall, onSkip) {
+  $("modal-title").textContent = "Already registered in Zoho";
+  $("modal-body").innerHTML = `
+    <p class="modal-sub"><b>${esc(name)}</b>${phone ? ` · ${esc(kdFmtNum(phone))}` : ""} ${kind === "lead"
+      ? "is a <b>Lead in Zoho CRM</b>" : "is in <b>Zoho CRM's call history</b>"} — someone may already be working them.</p>
+    <p class="modal-sub">Nothing will ring until you choose.</p>
+    <div class="modal-actions">
+      <button class="btn-ghost" id="zw-call">Call anyway</button>
+      <button class="btn-primary" id="zw-skip">Skip this lead</button>
+    </div>`;
+  $("modal-backdrop").classList.remove("hidden");
+  $("zw-skip").focus();
+  $("zw-skip").addEventListener("click", () => { closeModal(); onSkip(); });
+  $("zw-call").addEventListener("click", () => { closeModal(); onCall(); });
+  toast(`${name} is already registered in Zoho`, 6000);
+}
+
 /* The phone moved on (ringing, answered, ended): keep the card's state,
    eyebrow and action in step without repainting the lead — a note being
    typed must survive a call connecting. Called from kdRender. */
 function campPaintLive() {
+  pdRunPaint();                            // the bar on other screens follows the phone too
   if (S.tab !== "camp" || !$("cs-card")) return;
   const d = CAMP.s;
   if (!d?.current) return;
@@ -7193,7 +7206,7 @@ function holdForHours(ct) {
   // look again when it opens (or every 10 minutes, whichever is sooner)
   const wait = at ? Math.max(60e3, Math.min(at.getTime() - Date.now() + 5e3, 10 * 60e3)) : 10 * 60e3;
   CAMP.hoursTimer = setTimeout(() => {
-    if (S.tab !== "camp" || kdActive() || CAMP.busy) return;
+    if (kdActive() || CAMP.busy) return;
     CAMP.advanced = keep;
     loadCampaign();
   }, wait);
@@ -7431,10 +7444,10 @@ function renderMySettings() {
       : c.connected && c.lastError
         ? `<p class="me-state bad"><span class="me-dot bad"></span>Zoho refused your sign-in: ${esc(c.lastError)} — your calls are going in under the shared account.</p>
            <div class="me-acts"><a class="btn-primary" href="${esc(c.connectUrl)}">Reconnect Zoho CRM</a>
-             <button class="btn-ghost" data-me="crm-off">Disconnect</button></div>`
+             ${isAdmin() ? `<button class="btn-ghost" data-me="crm-off">Disconnect</button>` : ""}</div>`
         : c.connected
           ? `<p class="me-state ok"><span class="me-dot ok"></span>Connected${c.name || c.email ? " as " + esc(c.name || c.email) : ""} — your calls and leads are filed under you</p>
-             <div class="me-acts"><button class="btn-ghost" data-me="crm-off">Disconnect</button></div>`
+             <div class="me-acts">${isAdmin() ? `<button class="btn-ghost" data-me="crm-off">Disconnect</button>` : ""}</div>`
           : `<p class="me-state"><span class="me-dot"></span>Not connected — your calls and leads go into Zoho under the shared account.</p>
              <div class="me-acts"><a class="btn-primary" href="${esc(c.connectUrl)}">Connect Zoho CRM</a></div>`;
 
@@ -9225,8 +9238,11 @@ function setTab(tab) {
   if (pane !== "live") liveStop();
   if (pane !== "power") pdStop();
   if (pane !== "reputation") clearTimeout(REP.poll);
-  // a countdown running behind another screen would ring somebody unseen
-  if (pane !== "camp") { cancelAutoDial(); cancelWrap(); }
+  /* The power dialer keeps going on every screen (it used to stop here, so
+     a countdown would not ring somebody unseen). It is never unseen now: off
+     the Call session screen, a bar on every page says what it is doing and
+     who it rings next, with Pause and Open. */
+  pdRunPaint();
   document.querySelector(".list-pane")?.classList.toggle("hidden", wide);
   $("detail-pane")?.classList.toggle("hidden", wide);
   renderSortOptions();
@@ -9989,7 +10005,7 @@ function renderDash() {
       <b>${connect ? "Connect RingCentral to see the dashboard" : "The dashboard couldn't load"}</b>
       <span>${esc(DASH.error || "")}</span>
       ${connect ? `<a class="btn-primary" href="/api/voice/rc/connect">Connect RingCentral</a>`
-        : `<button class="btn-ghost" onclick="loadDash()">Try again</button>`}</div>`;
+        : `<button class="btn-ghost" data-act="loadDash">Try again</button>`}</div>`;
     return;
   }
 
@@ -10651,11 +10667,11 @@ function crmMeBar() {
   if (c.connected && c.lastError) return `<div id="crm-me-bar" class="rc-bar">
       <b>Zoho CRM refused your sign-in.</b> ${esc(c.lastError)} — your calls are going in under the shared account.
       <a class="btn-primary rc-go" href="${esc(c.connectUrl)}">Reconnect Zoho CRM</a>
-      <button class="btn-ghost rc-off" id="crm-disconnect">Disconnect</button></div>`;
+      ${isAdmin() ? `<button class="btn-ghost rc-off" id="crm-disconnect">Disconnect</button>` : ""}</div>`;
   if (c.connected) return `<div id="crm-me-bar" class="rc-bar on">
       <span class="rc-dot"></span>
       Zoho CRM connected${c.name || c.email ? " as " + esc(c.name || c.email) : ""} — your calls and leads are filed under you
-      <button class="btn-ghost rc-off" id="crm-disconnect">Disconnect</button></div>`;
+      ${isAdmin() ? `<button class="btn-ghost rc-off" id="crm-disconnect">Disconnect</button>` : ""}</div>`;
   return `<div id="crm-me-bar" class="rc-bar">
       <b>Connect your Zoho CRM.</b> The calls and leads you create are then filed under you in Zoho —
       until then they go in under the shared account.
@@ -10709,21 +10725,35 @@ async function openCrmSync() {
                 ${it.call.Call_Result ? ` · Call Result <b>${esc(it.call.Call_Result)}</b>` : ""}</div>
               <pre>${esc(it.call.Description)}</pre></div>`).join("")}</div>
             <p class="dash-mute crm-fine">${esc(prev.note)}</p>`}
-      ${ppl ? `<h4 class="crm-h">Who files calls under their own name</h4>
-        <p class="dash-mute crm-fine">Anyone not connected goes into Zoho under the shared account.</p>
+      ${ppl ? `<h4 class="crm-h">Zoho CRM sign-ins — ${dashN(ppl.people.filter((p) => p.connected_at && !p.last_error).length)} of ${dashN(ppl.people.length)} connected</h4>
+        <p class="dash-mute crm-fine">Connected people file calls and leads in Zoho under their own name; anyone not connected goes in under the shared account.
+          Only an admin can disconnect someone. Connecting is done by each person, because it signs in to their own Zoho account.</p>
         ${ppl.enabled ? "" : `<p class="dash-mute">Personal sign-in isn't set up on this server yet
           (ZOHO_CRM_OAUTH_CLIENT_ID / _SECRET) — everything goes in under the shared account.</p>`}
         <div class="crm-people">${ppl.people.map((p) => `<div class="crm-person">
           <span class="avatar avatar-sm" style="background:${avColor(p.email)}">${esc(initials(p.name))}</span>
           <span class="crm-person-n">${esc(p.name)}</span>${p.role === "sales_rep" ? `<span class="asg-tag">Sales rep</span>` : ""}
           ${p.connected_at
-            ? (p.last_error ? `<span class="dash-chip bad" title="${esc(p.last_error)}">refused — reconnect</span>`
-              : `<span class="dash-chip ok">as ${esc(p.zoho_name || p.zoho_email || "themselves")}</span>`)
-            : `<span class="dash-mute">not connected</span>`}
+            ? (p.last_error ? `<span class="dash-chip bad" title="${esc(p.last_error)}">refused — they need to reconnect</span>`
+              : `<span class="dash-chip ok">connected as ${esc(p.zoho_name || p.zoho_email || "themselves")}</span>`)
+              + `<span class="dash-mute crm-person-w" title="connected ${esc(new Date(p.connected_at).toLocaleString())}">${
+                p.last_used_at ? "used " + esc(relTime(p.last_used_at)) : "since " + esc(relTime(p.connected_at))}</span>`
+              + `<button type="button" class="btn-ghost crm-person-off" data-crm-off="${esc(p.email)}">Disconnect</button>`
+            : `<span class="dash-chip">not connected</span>`}
         </div>`).join("")}</div>
         <p class="dash-mute crm-fine">Each person connects from the Calls tab or the dialler's Settings.</p>` : ""}
       <div class="modal-actions"><button type="button" class="btn-secondary" id="modal-cancel">Close</button></div>`;
     $("modal-cancel").addEventListener("click", closeModal);
+    document.querySelectorAll("[data-crm-off]").forEach((btn) => btn.addEventListener("click", async () => {
+      const who = btn.dataset.crmOff;
+      if (!confirm(`Disconnect ${who}'s Zoho CRM sign-in?\n\nTheir calls and leads will go into Zoho under the shared account until they connect again.`)) return;
+      btn.disabled = true;
+      try {
+        await api(`/api/crm/people/${encodeURIComponent(who)}/connect`, { method: "DELETE" });
+        toast(`Zoho CRM disconnected for ${who}`, 4000);
+        paint();
+      } catch (ex) { toast("Couldn't disconnect: " + ex.message, 6000); btn.disabled = false; }
+    }));
     $("crm-rec-retry")?.addEventListener("click", async (e) => {
       e.currentTarget.disabled = true;
       try {
@@ -10920,7 +10950,7 @@ function renderPower() {
     body.innerHTML = `<div class="live-quiet pd-empty"><div class="live-quiet-ic">${dashIc("M13 3 5 13.5h6L10 21l8-10.5h-6L13 3Z")}</div>
       <b>${PD.q || PD.status ? "No campaigns match" : "No campaigns yet"}</b>
       <span>Build one from a rep's assigned leads, press Start, and their dialler rings each lead in turn.</span>
-      ${PD.q || PD.status ? "" : `<button class="btn-primary" onclick="openNewCampaign()">+ New campaign</button>`}</div>`;
+      ${PD.q || PD.status ? "" : `<button class="btn-primary" data-act="openNewCampaign">+ New campaign</button>`}</div>`;
     return;
   }
 
@@ -11116,7 +11146,8 @@ async function openUploadCampaign() {
       if (!res.ok) throw new Error(out.error || ("Upload failed (" + res.status + ")"));
       closeModal();
       toast(`Uploaded ${dashN(out.total)} contact${out.total === 1 ? "" : "s"}${
-        out.skipped ? ` (${dashN(out.skipped)} skipped — no usable phone)` : ""} — AI note summaries are generating.`, 7000);
+        out.skipped ? ` (${dashN(out.skipped)} skipped — no usable phone)` : ""}${
+        out.skippedInZoho ? ` · ${dashN(out.skippedInZoho)} left out — already in Zoho` : ""} — AI note summaries are generating.`, 8000);
       pdFetch();
     } catch (e2) {
       err.textContent = e2.message; err.classList.remove("hidden");
@@ -11224,7 +11255,8 @@ async function openNewCampaign() {
         source: document.querySelector('input[name="pd-src"]:checked')?.value || "assigned",
         callback_ext: $("pd-callback").value || undefined }) });
       closeModal();
-      toast(`Campaign created with ${dashN(out.total)} lead${out.total === 1 ? "" : "s"}${out.status === "ongoing" ? " — started" : " — press Start when ready"}`, 5000);
+      toast(`Campaign created with ${dashN(out.total)} lead${out.total === 1 ? "" : "s"}${
+        out.skippedInZoho ? ` · ${dashN(out.skippedInZoho)} left out — already in Zoho` : ""}${out.status === "ongoing" ? " — started" : " — press Start when ready"}`, 7000);
       if (S.tab !== "power") setTab("power"); else pdFetch();
     } catch (ex) {
       err.textContent = ex.message; err.classList.remove("hidden");
@@ -11249,7 +11281,9 @@ function pdRepStart() {
 }
 
 async function pdRepCheck() {
-  if (document.hidden) return;
+  /* not skipped when the tab is hidden: a manager's pause must reach a
+     dialer that is running in the background */
+  if (document.hidden && !CAMP.joined) return;
   let c;
   try { c = (await api("/api/campaign/state")).campaign; } catch (e) { return; }
   PDR.last = c;
@@ -11262,7 +11296,7 @@ async function pdRepCheck() {
     campPaintLive();
     const idle = !kdActive() && !CAMP.wrapTimer && !CAMP.awaitDispo && !CAMP.busy;
     if (c.status !== "ongoing") cancelAutoDial("paused by your manager");
-    if (S.tab === "camp" && idle) {
+    if (idle && (S.tab === "camp" || CAMP.joined)) {
       const note = $("camp-note")?.value || "";
       /* resumed after Join: carry straight on to the next lead */
       CAMP.advanced = c.status === "ongoing" && CAMP.joined;
@@ -11273,7 +11307,56 @@ async function pdRepCheck() {
       if (st) st.textContent = campPausedText(CAMP.s.campaign);
     }
   }
-  pdBanner(c && c.status === "ongoing" && S.tab !== "camp" && PDR.dismissed !== c.id + ":" + c.status ? c : null);
+  // the "a campaign has started — Join" alert is for a rep who has not joined it yet
+  const joinedThis = CAMP.joined && CAMP.s?.id === c?.id;
+  pdBanner(c && c.status === "ongoing" && S.tab !== "camp" && !joinedThis && PDR.dismissed !== c.id + ":" + c.status ? c : null);
+  pdRunPaint();
+}
+
+/* The power dialer running behind another screen: a bar on every page saying
+   what it is doing — counting down to the next lead, on a call, waiting for
+   the wrap-up, paused — with Pause/Resume and Open. Switching screens used to
+   stop the dialer so nothing rang unseen; now it keeps going, in plain view. */
+function pdRunActive() {
+  const cur = CAMP.s?.current;
+  if (!cur || CAMP.s.done) return false;
+  const onThisLead = kdActive() && String(KD.lead?.id) === String(cur.lead?.id);
+  return !!(CAMP.joined || CAMP.timer || CAMP.awaitDispo || onThisLead);
+}
+function pdRunPaint() {
+  let el = $("pd-run");
+  if (S.tab === "camp" || !pdRunActive()) { el?.remove(); return; }
+  const d = CAMP.s, c = d.campaign;
+  const paused = c && c.status !== "ongoing";
+  const next = CAMP.nextDial?.name;
+  const state = CAMP.timer && next ? `Calling ${next} in ${CAMP.countdown}s`
+    : kdActive() ? `On a call${KD.lead?.name ? " with " + KD.lead.name : ""}`
+      : CAMP.awaitDispo ? "Wrap up the last call to move on"
+        : paused ? campPausedText(c)
+          : ($("camp-auto-state")?.textContent || "Running");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "pd-run";
+    el.className = "pd-run";
+    el.setAttribute("role", "status");
+    document.body.appendChild(el);
+    el.addEventListener("click", (e) => {
+      if (e.target.closest("#pd-run-open")) return setTab("camp");
+      if (e.target.closest("#pd-run-pause")) {
+        const cc = campOf();
+        if (cc) return campPause(cc.status !== "ongoing");
+        cancelAutoDial("paused — press the number when you are ready");
+        return pdRunPaint();
+      }
+    });
+  }
+  const pos = Math.min(d.total, (d.pos || 0) + 1);
+  const html = `<span class="pd-run-dot${paused ? " paused" : ""}"></span>
+    <span class="pd-run-t"><b>Power dialer</b> · ${esc(c?.name || "Call session")} · ${dashN(pos)}/${dashN(d.total)}</span>
+    <span class="pd-run-s">${esc(state)}</span>
+    ${c || CAMP.timer ? `<button type="button" class="btn-ghost" id="pd-run-pause">${paused ? "Resume" : "Pause"}</button>` : ""}
+    <button type="button" class="btn-primary" id="pd-run-open">Open</button>`;
+  if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
 }
 
 function pdBanner(c) {

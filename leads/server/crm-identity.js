@@ -288,8 +288,14 @@ router.get("/api/crm/me", requireUser, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+/* Disconnecting is a deliberate act by an admin, never a rep's slip of the
+   mouse: reps have no Disconnect button (app.js), and this route refuses them
+   too. Nothing disconnects anyone automatically — a refused sign-in keeps its
+   row and shows "Reconnect"; only this route ever deletes it. */
 router.delete("/api/crm/me/connect", requireUser, async (req, res, next) => {
   try {
+    if (rankOf(req.user.role) < RANK.admin)
+      return res.status(403).json({ error: "Only an admin can disconnect a Zoho CRM sign-in." });
     await query("DELETE FROM crm_identities WHERE user_id = $1", [req.user.id]);
     TOKENS.delete(req.user.id);
     res.json({ ok: true });
@@ -309,6 +315,25 @@ router.get("/api/crm/people", requireAdmin, async (req, res, next) => {
         WHERE NOT u.disabled AND u.email LIKE '%@%'
         ORDER BY (c.user_id IS NULL), (m.role IS DISTINCT FROM 'sales_rep'), 2`)).rows;
     res.json({ enabled: ENABLED, people: rows });
+  } catch (e) { next(e); }
+});
+
+/* DELETE /api/crm/people/:email/connect — an admin disconnects someone's
+   Zoho CRM sign-in (a rep who left, or one connected to the wrong Zoho
+   account). Reps cannot disconnect at all; connecting stays with each person,
+   because it is a sign-in to THEIR Zoho account. Logged to Team activity. */
+router.delete("/api/crm/people/:email/connect", requireAdmin, async (req, res, next) => {
+  try {
+    const email = String(req.params.email || "").trim().toLowerCase();
+    const u = (await query("SELECT id, email FROM app_users WHERE lower(email) = $1", [email])).rows[0];
+    if (!u) return res.status(404).json({ error: "No such person." });
+    const gone = (await query("DELETE FROM crm_identities WHERE user_id = $1 RETURNING zoho_email", [u.id])).rows[0];
+    TOKENS.delete(u.id);
+    if (gone) require("./activity").log({ actor: req.user.email, user_id: req.user.id, action: "note",
+      to_value: "Disconnected Zoho CRM for " + u.email,
+      meta: { note: `Zoho CRM sign-in disconnected for ${u.email}${gone.zoho_email ? " (was " + gone.zoho_email + ")" : ""}`,
+        crm_disconnect: u.email } }).catch(() => {});
+    res.json({ ok: true, disconnected: !!gone });
   } catch (e) { next(e); }
 });
 

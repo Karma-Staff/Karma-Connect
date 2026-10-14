@@ -366,6 +366,7 @@ async function insertLead(client, code, kind, f, banned, c) {
     await client.query(
       `INSERT INTO lead_keys (kind, key_type, key_value, lead_id)
        VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`, [kind, kt, kv, row.id]);
+  return row.id;
 }
 
 /* ---------------- identity lookup (TEMPORARY — phase 6a only) */
@@ -424,4 +425,6 @@ router.post("/api/dnc-import", gate, express.json({ limit: "2mb" }), async (req,
   } catch (e) { next(e); }
 });
 
-module.exports = { router };
+/* insertLead is shared with calls.js: a Prospect saved from a call is one new
+   lead, inserted the same way so its identity keys are registered. */
+module.exports = { router, insertLead };

@@ -16,8 +16,10 @@
  */
 import { readFileSync, writeFileSync, readdirSync, existsSync } from "node:fs";
 import { join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const ROOT = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+// fileURLToPath, not .pathname: the URL form keeps %20 for spaces ("OneDrive - Karma Staff")
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const OUT = join(ROOT, "docs/architecture/API.md");
 
 /* Which files hold routes, and which half of the product they belong to. */

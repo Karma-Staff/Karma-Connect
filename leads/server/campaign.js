@@ -28,6 +28,7 @@ const calltime = require("./calltime");
    too, marked filters.source = 'upload'. They serve and record from their own
    table; current/outcome below hand off to this when they see one. */
 const upload = require("./campaign-upload");
+const { zohoKindSql } = require("./zoho-scan");
 
 const router = express.Router();
 
@@ -36,6 +37,13 @@ const router = express.Router();
    would make the progress bar a lie. */
 const MAX_SESSION = 250;
 const OPEN_STATUSES = ["New", "Contacted", "Responded"];
+/* A lead already in Zoho CRM — a Zoho Lead, or a number in Zoho's call
+   history (zoho-scan.js labels both) — is being worked there, so no campaign
+   or call session includes it. The Contacted tab is where they are worked. */
+const NOT_IN_ZOHO = (alias) =>
+  `NOT EXISTS (SELECT 1 FROM activity_log a WHERE a.lead_id = ${alias}.id AND jsonb_exists(a.meta, 'crm_link'))`;
+const IN_ZOHO = (alias) =>
+  `EXISTS (SELECT 1 FROM activity_log a WHERE a.lead_id = ${alias}.id AND jsonb_exists(a.meta, 'crm_link'))`;
 
 const me = (req) => String(req.user.email || "").trim();
 const seesAll = (req) => rankOf(req.user.role) >= RANK.admin;
@@ -45,7 +53,7 @@ async function leadCard(id, actor) {
   const lead = (await query(
     "SELECT * FROM leads WHERE id = $1 AND deleted_at IS NULL", [id])).rows[0];
   if (!lead) return null;
-  const [brief, notes, last] = await Promise.all([
+  const [brief, notes, last, zoho] = await Promise.all([
     query(`SELECT brief FROM lead_research
             WHERE lead_id = $1 AND superseded_at IS NULL`, [id]),
     query(`SELECT body, author_email, created_at FROM lead_comments
@@ -56,12 +64,16 @@ async function leadCard(id, actor) {
     query(`SELECT at, actor, to_value FROM activity_log
             WHERE lead_id = $1 AND action = 'call'
             ORDER BY at DESC LIMIT 1`, [id]),
+    /* registered in Zoho since the campaign was built (the 10-minute scan):
+       the rep's screen warns before it rings */
+    query(`SELECT ${zohoKindSql("l")} AS kind FROM leads l WHERE l.id = $1`, [id]),
   ]);
   return {
     lead,
     brief: brief.rows[0] ? brief.rows[0].brief : null,
     notes: notes.rows,
     lastCall: last.rows[0] || null,
+    zoho: zoho.rows[0]?.kind || null,
   };
 }
 
@@ -149,7 +161,7 @@ router.get("/api/campaign/preview", requireUser, async (req, res, next) => {
       `SELECT count(*)::int n FROM leads
         WHERE btrim(owner) = $1 AND deleted_at IS NULL AND NOT removed
           AND nullif(btrim(phone), '') IS NOT NULL
-          AND status = ANY($2)`, [owner, OPEN_STATUSES])).rows[0].n;
+          AND status = ANY($2) AND ${NOT_IN_ZOHO("leads")}`, [owner, OPEN_STATUSES])).rows[0].n;
     res.json({ owner, callable: n, max: MAX_SESSION });
   } catch (e) { next(e); }
 });
@@ -171,7 +183,7 @@ router.post("/api/campaign/start", requireUser, express.json({ limit: "4kb" }),
            LEFT JOIN recents r ON r.lead_id = l.id AND r.user_id = $3
           WHERE btrim(l.owner) = $1 AND l.deleted_at IS NULL AND NOT l.removed
             AND nullif(btrim(l.phone), '') IS NOT NULL
-            AND l.status = ANY($2)
+            AND l.status = ANY($2) AND ${NOT_IN_ZOHO("l")}
           ORDER BY r.touched_at ASC NULLS FIRST, l.date_added DESC NULLS LAST, l.id
           LIMIT ${MAX_SESSION}`,
         [owner, OPEN_STATUSES, req.user.id])).rows;
@@ -538,11 +550,19 @@ router.post("/api/dialer/campaigns", requireAdmin, express.json({ limit: "4kb" }
          LEFT JOIN recents r ON r.lead_id = l.id AND r.user_id = $3
         WHERE btrim(l.owner) = $1 AND l.deleted_at IS NULL AND NOT l.removed
           AND nullif(btrim(l.phone), '') IS NOT NULL
-          AND l.status = ANY($2) AND l.kind = ANY($4)
+          AND l.status = ANY($2) AND l.kind = ANY($4) AND ${NOT_IN_ZOHO("l")}
         ORDER BY r.touched_at ASC NULLS FIRST, l.date_added DESC NULLS LAST, l.id
         LIMIT ${limit}`, [rep.email, statuses, rep.id, kinds])).rows.map((r) => r.id) : null;
+    /* how many were left out for being in Zoho — said back to the manager */
+    const inZoho = (await query(
+      `SELECT count(*)::int n FROM leads l
+        WHERE ${source === "assigned" ? "btrim(l.owner) = $3" : "nullif(btrim(l.owner), '') IS NULL"}
+          AND l.deleted_at IS NULL AND NOT l.removed AND nullif(btrim(l.phone), '') IS NOT NULL
+          AND l.status = ANY($1) AND l.kind = ANY($2) AND ${IN_ZOHO("l")}`,
+      source === "assigned" ? [statuses, kinds, rep.email] : [statuses, kinds])).rows[0].n;
     if (ids && !ids.length) return res.status(400).json({
-      error: `${rep.email} has no assigned leads with a phone number and those statuses. Assign them some first.` });
+      error: `${rep.email} has no assigned leads with a phone number and those statuses${inZoho
+        ? ` that aren't already in Zoho (${inZoho} left out)` : ""}. Assign them some first.` });
 
     /* Who callbacks go to — checked against the phone system, never taken
        on trust from the browser, since it decides what number strangers see. */
@@ -566,7 +586,7 @@ router.post("/api/dialer/campaigns", requireAdmin, express.json({ limit: "4kb" }
             WHERE id IN (SELECT id FROM leads
                           WHERE nullif(btrim(owner), '') IS NULL AND deleted_at IS NULL AND NOT removed
                             AND nullif(btrim(phone), '') IS NOT NULL AND status = ANY($2)
-                            AND kind = ANY($3)
+                            AND kind = ANY($3) AND ${NOT_IN_ZOHO("leads")}
                           ORDER BY date_added DESC NULLS LAST, id
                           LIMIT ${limit}
                           FOR UPDATE SKIP LOCKED)
@@ -585,9 +605,10 @@ router.post("/api/dialer/campaigns", requireAdmin, express.json({ limit: "4kb" }
       return { id: row.id, total: leadIds.length };
     });
     if (!out) return res.status(400).json({
-      error: "There are no unassigned leads with a phone number and those statuses." });
+      error: `There are no unassigned leads with a phone number and those statuses${inZoho
+        ? ` that aren't already in Zoho (${inZoho} left out)` : ""}.` });
     if (source === "unassigned") require("./counts").invalidate();   // the Unassigned tile moved
-    res.json({ ok: true, id: out.id, total: out.total, status, source });
+    res.json({ ok: true, id: out.id, total: out.total, status, source, skippedInZoho: inZoho });
   } catch (e) {
     /* the unique open-session index, if two managers raced */
     if (e.code === "23505") return res.status(409).json({ error: "That person was just given another session. Refresh and try again." });

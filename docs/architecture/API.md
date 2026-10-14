@@ -4,7 +4,7 @@
 
 # API
 
-**208 routes**, generated from the source on 2026-10-13.
+**213 routes**, generated from the source on 2026-10-14.
 
 Every path is absolute. That is deliberate: Karma Leads' API paths are the same
 whether it runs standalone or mounted into Connect, which is what let its front
@@ -37,23 +37,23 @@ declared once for the group.
 |---|---|---|
 | `/api/apify-usage` | admin | [leads/server/jobsearch.js:33](../../leads/server/jobsearch.js#L33) |
 | `/api/bulk` | admin | [leads/server/bulk.js:38](../../leads/server/bulk.js#L38) |
-| `/api/comments` | signed in | [leads/server/leads.js:28](../../leads/server/leads.js#L28) |
+| `/api/comments` | signed in | [leads/server/leads.js:30](../../leads/server/leads.js#L30) |
 | `/api/job-search` | admin | [leads/server/jobsearch.js:33](../../leads/server/jobsearch.js#L33) |
-| `/api/leads` | signed in | [leads/server/leads.js:28](../../leads/server/leads.js#L28) |
-| `/api/leads/:id` | own lead | [leads/server/leads.js:55](../../leads/server/leads.js#L55) |
+| `/api/leads` | signed in | [leads/server/leads.js:30](../../leads/server/leads.js#L30) |
+| `/api/leads/:id` | own lead | [leads/server/leads.js:57](../../leads/server/leads.js#L57) |
 | `/api/phone-refresh` | admin | [leads/server/webphone.js:123](../../leads/server/webphone.js#L123) |
 | `/api/recents` | signed in | [leads/server/recents.js:16](../../leads/server/recents.js#L16) |
 | `/api/users` | admin | [leads/server/users.js:22](../../leads/server/users.js#L22) |
 
 ---
 
-## Karma Leads — 146 routes
+## Karma Leads — 151 routes
 
 ### `/api/activity`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/activity` | admin | [leads/server/index.js:162](../../leads/server/index.js#L162) |  |
+| GET | `/api/activity` | admin | [leads/server/index.js:167](../../leads/server/index.js#L167) |  |
 
 ### `/api/alerts`
 
@@ -100,47 +100,49 @@ declared once for the group.
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| POST | `/api/calls/disposition` | signed in | [leads/server/calls.js:237](../../leads/server/calls.js#L237) | POST /api/calls/disposition — the same for a call to a number that is no lead's (POST /api/ca… |
-| GET | `/api/calls/dispositions` | admin | [leads/server/calls.js:500](../../leads/server/calls.js#L500) | GET /api/calls/dispositions — the Dashboard's disposition log. |
-| GET | `/api/calls/export` | admin | [leads/server/calls.js:1100](../../leads/server/calls.js#L1100) |  |
+| POST | `/api/calls/disposition` | signed in | [leads/server/calls.js:243](../../leads/server/calls.js#L243) | POST /api/calls/disposition — the same for a call to a number that is no lead's (POST /api/ca… |
+| GET | `/api/calls/dispositions` | admin | [leads/server/calls.js:679](../../leads/server/calls.js#L679) | GET /api/calls/dispositions — the Dashboard's disposition log. |
+| POST | `/api/calls/dnc` | signed in | [leads/server/calls.js:401](../../leads/server/calls.js#L401) | POST /api/calls/dnc — {number, note?} Do Not Contact for a number with no lead: |
+| GET | `/api/calls/export` | admin | [leads/server/calls.js:1279](../../leads/server/calls.js#L1279) |  |
 | GET | `/api/calls/live` | admin | [leads/server/live.js:121](../../leads/server/live.js#L121) |  |
 | POST | `/api/calls/live` | signed in | [leads/server/live.js:94](../../leads/server/live.js#L94) |  |
-| POST | `/api/calls/log` | signed in | [leads/server/calls.js:118](../../leads/server/calls.js#L118) | POST /api/calls/log — the same, for a number that is no lead's: |
-| GET | `/api/calls/mine` | signed in | [leads/server/calls.js:273](../../leads/server/calls.js#L273) | GET /api/calls/mine — this person's own calls, newest first: |
-| GET | `/api/calls/missed` | signed in | [leads/server/calls.js:371](../../leads/server/calls.js#L371) |  |
-| POST | `/api/calls/missed/:id/done` | signed in | [leads/server/calls.js:410](../../leads/server/calls.js#L410) | POST /api/calls/missed/:id/done — dealt with ({undo:true} puts it back). |
-| GET | `/api/calls/missed/:id/voicemail` | signed in | [leads/server/calls.js:426](../../leads/server/calls.js#L426) | GET /api/calls/missed/:id/voicemail — the voicemail audio, passed through from RingCentral (o… |
-| GET | `/api/calls/missed/:id/voicemail-text` | signed in | [leads/server/calls.js:438](../../leads/server/calls.js#L438) |  |
-| GET | `/api/calls/person/:email` | admin | [leads/server/calls.js:738](../../leads/server/calls.js#L738) | GET /api/calls/person/:email — one person, in depth. |
-| GET | `/api/calls/report` | admin | [leads/server/calls.js:611](../../leads/server/calls.js#L611) | GET /api/calls/report — the manager's screen. |
-| POST | `/api/calls/rollup` | admin | [leads/server/calls.js:860](../../leads/server/calls.js#L860) | POST /api/calls/rollup — rebuild stored days. |
-| GET | `/api/calls/whois` | signed in | [leads/server/calls.js:455](../../leads/server/calls.js#L455) | GET /api/calls/whois?number= — who is ringing in. |
+| POST | `/api/calls/log` | signed in | [leads/server/calls.js:124](../../leads/server/calls.js#L124) | POST /api/calls/log — the same, for a number that is no lead's: |
+| GET | `/api/calls/mine` | signed in | [leads/server/calls.js:452](../../leads/server/calls.js#L452) | GET /api/calls/mine — this person's own calls, newest first: |
+| GET | `/api/calls/missed` | signed in | [leads/server/calls.js:550](../../leads/server/calls.js#L550) |  |
+| POST | `/api/calls/missed/:id/done` | signed in | [leads/server/calls.js:589](../../leads/server/calls.js#L589) | POST /api/calls/missed/:id/done — dealt with ({undo:true} puts it back). |
+| GET | `/api/calls/missed/:id/voicemail` | signed in | [leads/server/calls.js:605](../../leads/server/calls.js#L605) | GET /api/calls/missed/:id/voicemail — the voicemail audio, passed through from RingCentral (o… |
+| GET | `/api/calls/missed/:id/voicemail-text` | signed in | [leads/server/calls.js:617](../../leads/server/calls.js#L617) |  |
+| GET | `/api/calls/person/:email` | admin | [leads/server/calls.js:917](../../leads/server/calls.js#L917) | GET /api/calls/person/:email — one person, in depth. |
+| POST | `/api/calls/prospect` | signed in | [leads/server/calls.js:309](../../leads/server/calls.js#L309) | POST /api/calls/prospect — {number, first_name, last_name, email?, company?, note?} The perso… |
+| GET | `/api/calls/report` | admin | [leads/server/calls.js:790](../../leads/server/calls.js#L790) | GET /api/calls/report — the manager's screen. |
+| POST | `/api/calls/rollup` | admin | [leads/server/calls.js:1039](../../leads/server/calls.js#L1039) | POST /api/calls/rollup — rebuild stored days. |
+| GET | `/api/calls/whois` | signed in | [leads/server/calls.js:634](../../leads/server/calls.js#L634) | GET /api/calls/whois?number= — who is ringing in. |
 
 ### `/api/calltime`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/calltime` | signed in | [leads/server/campaign.js:210](../../leads/server/campaign.js#L210) | Calling hours for a number dialled by hand — a click on a lead's phone, the dial pad, the des… |
+| GET | `/api/calltime` | signed in | [leads/server/campaign.js:222](../../leads/server/campaign.js#L222) | Calling hours for a number dialled by hand — a click on a lead's phone, the dial pad, the des… |
 
 ### `/api/campaign`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/campaign/current` | signed in | [leads/server/campaign.js:221](../../leads/server/campaign.js#L221) |  |
-| POST | `/api/campaign/end` | signed in | [leads/server/campaign.js:361](../../leads/server/campaign.js#L361) |  |
-| GET | `/api/campaign/mine` | signed in | [leads/server/campaign.js:329](../../leads/server/campaign.js#L329) | GET /api/campaign/mine — the power-dialer campaigns given to this person, the open one first: |
-| POST | `/api/campaign/outcome` | signed in | [leads/server/campaign.js:232](../../leads/server/campaign.js#L232) | One press: log the call, set the status, optionally book a follow-back and leave a note, then… |
-| POST | `/api/campaign/pause` | signed in | [leads/server/campaign.js:378](../../leads/server/campaign.js#L378) | A break: whoever is dialling a campaign — the rep it was given to, or a manager working one t… |
-| GET | `/api/campaign/preview` | signed in | [leads/server/campaign.js:145](../../leads/server/campaign.js#L145) | How many are callable, before committing to a session. |
-| POST | `/api/campaign/start` | signed in | [leads/server/campaign.js:157](../../leads/server/campaign.js#L157) |  |
-| GET | `/api/campaign/state` | signed in | [leads/server/campaign.js:351](../../leads/server/campaign.js#L351) |  |
+| GET | `/api/campaign/current` | signed in | [leads/server/campaign.js:233](../../leads/server/campaign.js#L233) |  |
+| POST | `/api/campaign/end` | signed in | [leads/server/campaign.js:373](../../leads/server/campaign.js#L373) |  |
+| GET | `/api/campaign/mine` | signed in | [leads/server/campaign.js:341](../../leads/server/campaign.js#L341) | GET /api/campaign/mine — the power-dialer campaigns given to this person, the open one first: |
+| POST | `/api/campaign/outcome` | signed in | [leads/server/campaign.js:244](../../leads/server/campaign.js#L244) | One press: log the call, set the status, optionally book a follow-back and leave a note, then… |
+| POST | `/api/campaign/pause` | signed in | [leads/server/campaign.js:390](../../leads/server/campaign.js#L390) | A break: whoever is dialling a campaign — the rep it was given to, or a manager working one t… |
+| GET | `/api/campaign/preview` | signed in | [leads/server/campaign.js:157](../../leads/server/campaign.js#L157) | How many are callable, before committing to a session. |
+| POST | `/api/campaign/start` | signed in | [leads/server/campaign.js:169](../../leads/server/campaign.js#L169) |  |
+| GET | `/api/campaign/state` | signed in | [leads/server/campaign.js:363](../../leads/server/campaign.js#L363) |  |
 
 ### `/api/comments`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| PATCH | `/api/comments/:id` | signed in *(inherited)* | [leads/server/leads.js:494](../../leads/server/leads.js#L494) |  |
-| DELETE | `/api/comments/:id` | signed in *(inherited)* | [leads/server/leads.js:510](../../leads/server/leads.js#L510) |  |
+| PATCH | `/api/comments/:id` | signed in *(inherited)* | [leads/server/leads.js:498](../../leads/server/leads.js#L498) |  |
+| DELETE | `/api/comments/:id` | signed in *(inherited)* | [leads/server/leads.js:514](../../leads/server/leads.js#L514) |  |
 
 ### `/api/counts`
 
@@ -156,9 +158,10 @@ declared once for the group.
 | GET | `/api/crm/dedupe` | admin | [leads/server/zoho-crm.js:258](../../leads/server/zoho-crm.js#L258) | GET /api/crm/dedupe — which worked leads the CRM already holds, so a sync attaches to those r… |
 | GET | `/api/crm/me` | signed in | [leads/server/crm-identity.js:275](../../leads/server/crm-identity.js#L275) |  |
 | GET | `/api/crm/me/connect` | signed in | [leads/server/crm-identity.js:91](../../leads/server/crm-identity.js#L91) |  |
-| DELETE | `/api/crm/me/connect` | signed in | [leads/server/crm-identity.js:291](../../leads/server/crm-identity.js#L291) |  |
+| DELETE | `/api/crm/me/connect` | signed in | [leads/server/crm-identity.js:295](../../leads/server/crm-identity.js#L295) | Disconnecting is a deliberate act by an admin, never a rep's slip of the mouse: |
 | GET | `/api/crm/oauth/callback` | — | [leads/server/crm-identity.js:105](../../leads/server/crm-identity.js#L105) |  |
-| GET | `/api/crm/people` | admin | [leads/server/crm-identity.js:301](../../leads/server/crm-identity.js#L301) | Who has connected — the manager's answer to "why are this rep's calls still under the shared… |
+| GET | `/api/crm/people` | admin | [leads/server/crm-identity.js:307](../../leads/server/crm-identity.js#L307) | Who has connected — the manager's answer to "why are this rep's calls still under the shared… |
+| DELETE | `/api/crm/people/:email/connect` | admin | [leads/server/crm-identity.js:325](../../leads/server/crm-identity.js#L325) | DELETE /api/crm/people/:email/connect — an admin disconnects someone's Zoho CRM sign-in (a re… |
 | GET | `/api/crm/preview` | admin | [leads/server/zoho-crm.js:176](../../leads/server/zoho-crm.js#L176) | How much of our own base would ever reach the CRM. |
 | GET | `/api/crm/status` | admin | [leads/server/zoho-crm.js:126](../../leads/server/zoho-crm.js#L126) | GET /api/crm/status — is it connected, and what is actually in there. |
 | GET | `/api/crm/sync` | admin | [leads/server/crm-sync.js:487](../../leads/server/crm-sync.js#L487) |  |
@@ -167,8 +170,10 @@ declared once for the group.
 | GET | `/api/crm/sync/on` | signed in | [leads/server/crm-sync.js:529](../../leads/server/crm-sync.js#L529) | Just "is it on" — for a rep's wrap-up, which offers "Create CRM lead" only when there is some… |
 | GET | `/api/crm/sync/preview` | admin | [leads/server/crm-sync.js:591](../../leads/server/crm-sync.js#L591) |  |
 | POST | `/api/crm/sync/recordings/retry` | admin | [leads/server/crm-sync.js:555](../../leads/server/crm-sync.js#L555) | POST /api/crm/sync/recordings/retry — look again for the recordings of calls already in Zoho… |
-| POST | `/api/crm/zoho/backfill` | admin | [leads/server/zoho-inbound.js:119](../../leads/server/zoho-inbound.js#L119) |  |
+| POST | `/api/crm/zoho/backfill` | admin | [leads/server/zoho-inbound.js:100](../../leads/server/zoho-inbound.js#L100) | The webhook only catches NEW Zoho records. |
 | POST | `/api/crm/zoho/lead-created` | — | [leads/server/zoho-inbound.js:42](../../leads/server/zoho-inbound.js#L42) |  |
+| GET | `/api/crm/zoho/scan` | admin | [leads/server/zoho-scan.js:265](../../leads/server/zoho-scan.js#L265) | GET /api/crm/zoho/scan — when it last ran and what it found. |
+| POST | `/api/crm/zoho/scan` | admin | [leads/server/zoho-scan.js:256](../../leads/server/zoho-scan.js#L256) | POST /api/crm/zoho/scan — run one now (the "Scan Zoho" button). |
 
 ### `/api/cron`
 
@@ -180,20 +185,20 @@ declared once for the group.
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/dialer/callback-targets` | admin | [leads/server/campaign.js:425](../../leads/server/campaign.js#L425) |  |
-| GET | `/api/dialer/campaigns` | admin | [leads/server/campaign.js:438](../../leads/server/campaign.js#L438) |  |
-| POST | `/api/dialer/campaigns` | admin | [leads/server/campaign.js:509](../../leads/server/campaign.js#L509) |  |
-| GET | `/api/dialer/campaigns/:id/export` | admin | [leads/server/campaign-upload.js:250](../../leads/server/campaign-upload.js#L250) |  |
-| POST | `/api/dialer/campaigns/:id/state` | admin | [leads/server/campaign.js:599](../../leads/server/campaign.js#L599) | start / pause / resume / end |
-| POST | `/api/dialer/campaigns/:id/unassign` | admin | [leads/server/campaign.js:628](../../leads/server/campaign.js#L628) | Unassign a campaign's leads: |
-| GET | `/api/dialer/campaigns/reps` | admin | [leads/server/campaign.js:478](../../leads/server/campaign.js#L478) | Who can be given a campaign, and how many callable leads each one has — the New campaign form… |
+| GET | `/api/dialer/callback-targets` | admin | [leads/server/campaign.js:437](../../leads/server/campaign.js#L437) |  |
+| GET | `/api/dialer/campaigns` | admin | [leads/server/campaign.js:450](../../leads/server/campaign.js#L450) |  |
+| POST | `/api/dialer/campaigns` | admin | [leads/server/campaign.js:521](../../leads/server/campaign.js#L521) |  |
+| GET | `/api/dialer/campaigns/:id/export` | admin | [leads/server/campaign-upload.js:259](../../leads/server/campaign-upload.js#L259) |  |
+| POST | `/api/dialer/campaigns/:id/state` | admin | [leads/server/campaign.js:620](../../leads/server/campaign.js#L620) | start / pause / resume / end |
+| POST | `/api/dialer/campaigns/:id/unassign` | admin | [leads/server/campaign.js:649](../../leads/server/campaign.js#L649) | Unassign a campaign's leads: |
+| GET | `/api/dialer/campaigns/reps` | admin | [leads/server/campaign.js:490](../../leads/server/campaign.js#L490) | Who can be given a campaign, and how many callable leads each one has — the New campaign form… |
 | POST | `/api/dialer/campaigns/upload` | admin | [leads/server/campaign-upload.js:181](../../leads/server/campaign-upload.js#L181) |  |
 
 ### `/api/dnc-import`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| POST | `/api/dnc-import` | service token (imports:write) or admin | [leads/server/imports.js:389](../../leads/server/imports.js#L389) |  |
+| POST | `/api/dnc-import` | service token (imports:write) or admin | [leads/server/imports.js:390](../../leads/server/imports.js#L390) |  |
 
 ### `/api/followups`
 
@@ -206,7 +211,7 @@ declared once for the group.
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/identity-lookup` | service token (imports:write) or admin | [leads/server/imports.js:372](../../leads/server/imports.js#L372) |  |
+| GET | `/api/identity-lookup` | service token (imports:write) or admin | [leads/server/imports.js:373](../../leads/server/imports.js#L373) |  |
 
 ### `/api/import-jobs`
 
@@ -229,26 +234,26 @@ declared once for the group.
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
 | GET | `/api/leads` | signed in | [leads/server/demo.js:266](../../leads/server/demo.js#L266) | The whole list, not just the distribute query — otherwise the tabs sit empty while the KPI ti… |
-| GET | `/api/leads` | signed in *(inherited)* | [leads/server/leads.js:170](../../leads/server/leads.js#L170) |  |
-| PATCH | `/api/leads/:id` | own lead *(inherited)* | [leads/server/leads.js:289](../../leads/server/leads.js#L289) | status / owner / favorite — the three judgement fields the UI edits |
+| GET | `/api/leads` | signed in *(inherited)* | [leads/server/leads.js:172](../../leads/server/leads.js#L172) |  |
+| PATCH | `/api/leads/:id` | own lead *(inherited)* | [leads/server/leads.js:293](../../leads/server/leads.js#L293) | status / owner / favorite — the three judgement fields the UI edits |
 | DELETE | `/api/leads/:id` | admin, own lead *(inherited)* | [leads/server/trash.js:110](../../leads/server/trash.js#L110) |  |
-| POST | `/api/leads/:id/call` | signed in, own lead *(inherited)* | [leads/server/calls.js:101](../../leads/server/calls.js#L101) | POST /api/leads/:id/call — the softphone reporting how a call went. |
-| GET | `/api/leads/:id/comments` | own lead *(inherited)* | [leads/server/leads.js:455](../../leads/server/leads.js#L455) |  |
-| POST | `/api/leads/:id/comments` | own lead *(inherited)* | [leads/server/leads.js:466](../../leads/server/leads.js#L466) |  |
+| POST | `/api/leads/:id/call` | signed in, own lead *(inherited)* | [leads/server/calls.js:107](../../leads/server/calls.js#L107) | POST /api/leads/:id/call — the softphone reporting how a call went. |
+| GET | `/api/leads/:id/comments` | own lead *(inherited)* | [leads/server/leads.js:459](../../leads/server/leads.js#L459) |  |
+| POST | `/api/leads/:id/comments` | own lead *(inherited)* | [leads/server/leads.js:470](../../leads/server/leads.js#L470) |  |
 | POST | `/api/leads/:id/crm-lead` | signed in, own lead *(inherited)* | [leads/server/crm-sync.js:679](../../leads/server/crm-sync.js#L679) |  |
 | GET | `/api/leads/:id/delete-preview` | admin, own lead *(inherited)* | [leads/server/trash.js:94](../../leads/server/trash.js#L94) | what the confirm modal shows before the click: |
-| POST | `/api/leads/:id/disposition` | signed in, own lead *(inherited)* | [leads/server/calls.js:181](../../leads/server/calls.js#L181) |  |
+| POST | `/api/leads/:id/disposition` | signed in, own lead *(inherited)* | [leads/server/calls.js:187](../../leads/server/calls.js#L187) |  |
 | GET | `/api/leads/:id/followup` | signed in, own lead *(inherited)* | [leads/server/followups.js:104](../../leads/server/followups.js#L104) | What is set on this lead right now — the reading pane asks on every open. |
 | POST | `/api/leads/:id/followup` | signed in, own lead *(inherited)* | [leads/server/followups.js:51](../../leads/server/followups.js#L51) | Set (or replace) the reminder on a lead. |
 | DELETE | `/api/leads/:id/followup` | signed in, own lead *(inherited)* | [leads/server/followups.js:116](../../leads/server/followups.js#L116) |  |
-| POST | `/api/leads/:id/remove` | own lead *(inherited)* | [leads/server/leads.js:352](../../leads/server/leads.js#L352) | removal is a phone ban: |
-| GET | `/api/leads/:id/remove-preview` | own lead *(inherited)* | [leads/server/leads.js:336](../../leads/server/leads.js#L336) | how many leads a ban would take down — the modal's blast radius line |
+| POST | `/api/leads/:id/remove` | own lead *(inherited)* | [leads/server/leads.js:356](../../leads/server/leads.js#L356) | removal is a phone ban: |
+| GET | `/api/leads/:id/remove-preview` | own lead *(inherited)* | [leads/server/leads.js:340](../../leads/server/leads.js#L340) | how many leads a ban would take down — the modal's blast radius line |
 | GET | `/api/leads/:id/research` | signed in, own lead *(inherited)* | [leads/server/research.js:49](../../leads/server/research.js#L49) | GET — whatever we already hold. |
 | POST | `/api/leads/:id/research` | signed in, own lead *(inherited)* | [leads/server/research.js:90](../../leads/server/research.js#L90) | POST — buy a briefing. |
-| POST | `/api/leads/:id/restore` | own lead *(inherited)* | [leads/server/leads.js:423](../../leads/server/leads.js#L423) |  |
-| GET | `/api/leads/:id/timeline` | signed in, own lead *(inherited)* | [leads/server/calls.js:564](../../leads/server/calls.js#L564) | GET /api/leads/:id/timeline — everything that ever happened to ONE lead. |
+| POST | `/api/leads/:id/restore` | own lead *(inherited)* | [leads/server/leads.js:427](../../leads/server/leads.js#L427) |  |
+| GET | `/api/leads/:id/timeline` | signed in, own lead *(inherited)* | [leads/server/calls.js:743](../../leads/server/calls.js#L743) | GET /api/leads/:id/timeline — everything that ever happened to ONE lead. |
 | GET | `/api/leads/:key` | signed in | [leads/server/demo.js:310](../../leads/server/demo.js#L310) | Opening a lead. |
-| GET | `/api/leads/:key` | signed in *(inherited)* | [leads/server/leads.js:213](../../leads/server/leads.js#L213) | one lead plus everything the reading pane shows beside it |
+| GET | `/api/leads/:key` | signed in *(inherited)* | [leads/server/leads.js:216](../../leads/server/leads.js#L216) | one lead plus everything the reading pane shows beside it |
 
 ### `/api/me`
 
@@ -358,148 +363,148 @@ declared once for the group.
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/admin/activity` | admin, signed in | [server.js:1152](../../server.js#L1152) | ──────────────────────────── Team activity ───────────────────────── Admin-only: |
-| GET | `/api/admin/users` | admin, signed in | [server.js:1083](../../server.js#L1083) | ───────────────────────────── Admin: |
-| DELETE | `/api/admin/users/:id` | owner, signed in | [server.js:1125](../../server.js#L1125) | Remove a member (cascades their data). |
-| POST | `/api/admin/users/:id/role` | owner, signed in | [server.js:1103](../../server.js#L1103) | Owner only. An admin who can appoint admins is an owner in all but name, and one compromised… |
+| GET | `/api/admin/activity` | admin, signed in | [server.js:1138](../../server.js#L1138) | ──────────────────────────── Team activity ───────────────────────── Admin-only: |
+| GET | `/api/admin/users` | admin, signed in | [server.js:1069](../../server.js#L1069) | ───────────────────────────── Admin: |
+| DELETE | `/api/admin/users/:id` | owner, signed in | [server.js:1111](../../server.js#L1111) | Remove a member (cascades their data). |
+| POST | `/api/admin/users/:id/role` | owner, signed in | [server.js:1089](../../server.js#L1089) | Owner only. An admin who can appoint admins is an owner in all but name, and one compromised… |
 
 ### `/api/admins`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/admins` | signed in | [server.js:1141](../../server.js#L1141) | Any signed-in user can see the list of admins (to choose who should approve a lead). |
+| GET | `/api/admins` | signed in | [server.js:1127](../../server.js#L1127) | Any signed-in user can see the list of admins (to choose who should approve a lead). |
 
 ### `/api/analytics`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/analytics` | signed in | [server.js:720](../../server.js#L720) |  |
+| GET | `/api/analytics` | signed in | [server.js:706](../../server.js#L706) |  |
 
 ### `/api/approvals`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/approvals` | admin, signed in | [server.js:1041](../../server.js#L1041) | Admin: list approval requests (pending first). |
-| POST | `/api/approvals` | signed in | [server.js:990](../../server.js#L990) | ───────────────────────────── Lead approvals ─────────────────────── Member requests approval… |
-| POST | `/api/approvals/:id/decide` | admin, signed in | [server.js:1055](../../server.js#L1055) | Admin: approve or deny a request. |
-| GET | `/api/approvals/mine` | signed in | [server.js:1033](../../server.js#L1033) | Member: their own lead statuses, to gate the UI. |
+| GET | `/api/approvals` | admin, signed in | [server.js:1027](../../server.js#L1027) | Admin: list approval requests (pending first). |
+| POST | `/api/approvals` | signed in | [server.js:976](../../server.js#L976) | ───────────────────────────── Lead approvals ─────────────────────── Member requests approval… |
+| POST | `/api/approvals/:id/decide` | admin, signed in | [server.js:1041](../../server.js#L1041) | Admin: approve or deny a request. |
+| GET | `/api/approvals/mine` | signed in | [server.js:1019](../../server.js#L1019) | Member: their own lead statuses, to gate the UI. |
 
 ### `/api/auth`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| DELETE | `/api/auth/account` | signed in | [server.js:433](../../server.js#L433) | Delete the signed-in user's own account (password-confirmed). |
-| POST | `/api/auth/forgot` | rate-limited | [server.js:347](../../server.js#L347) | Request a password reset. |
-| GET | `/api/auth/me` | signed in | [server.js:416](../../server.js#L416) |  |
-| POST | `/api/auth/password` | signed in, rate-limited | [server.js:394](../../server.js#L394) | Change password while signed in (current password required). |
-| POST | `/api/auth/promote` | signed in, rate-limited | [server.js:388](../../server.js#L388) | Self-promotion is gone — see the note in /api/auth/signup. |
-| POST | `/api/auth/resend` | rate-limited | [server.js:329](../../server.js#L329) | Re-send the confirmation email for an unverified account. |
-| POST | `/api/auth/reset` | rate-limited | [server.js:365](../../server.js#L365) | Complete a password reset: |
-| POST | `/api/auth/signin` | rate-limited | [server.js:289](../../server.js#L289) |  |
-| POST | `/api/auth/signout` | — | [server.js:411](../../server.js#L411) |  |
-| POST | `/api/auth/signup` | rate-limited | [server.js:218](../../server.js#L218) |  |
-| GET | `/api/auth/verify` | — | [server.js:312](../../server.js#L312) | Click target from the confirmation email. |
+| DELETE | `/api/auth/account` | signed in | [server.js:419](../../server.js#L419) | Delete the signed-in user's own account (password-confirmed). |
+| POST | `/api/auth/forgot` | rate-limited | [server.js:333](../../server.js#L333) | Request a password reset. |
+| GET | `/api/auth/me` | signed in | [server.js:402](../../server.js#L402) |  |
+| POST | `/api/auth/password` | signed in, rate-limited | [server.js:380](../../server.js#L380) | Change password while signed in (current password required). |
+| POST | `/api/auth/promote` | signed in, rate-limited | [server.js:374](../../server.js#L374) | Self-promotion is gone — see the note in /api/auth/signup. |
+| POST | `/api/auth/resend` | rate-limited | [server.js:315](../../server.js#L315) | Re-send the confirmation email for an unverified account. |
+| POST | `/api/auth/reset` | rate-limited | [server.js:351](../../server.js#L351) | Complete a password reset: |
+| POST | `/api/auth/signin` | rate-limited | [server.js:275](../../server.js#L275) |  |
+| POST | `/api/auth/signout` | — | [server.js:397](../../server.js#L397) |  |
+| POST | `/api/auth/signup` | rate-limited | [server.js:204](../../server.js#L204) |  |
+| GET | `/api/auth/verify` | — | [server.js:298](../../server.js#L298) | Click target from the confirmation email. |
 
 ### `/api/campaigns`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/campaigns` | signed in | [server.js:799](../../server.js#L799) | List campaigns with step + enrollment counts. |
-| POST | `/api/campaigns` | signed in | [server.js:814](../../server.js#L814) | Create a campaign with its steps. |
-| GET | `/api/campaigns/:id` | signed in | [server.js:838](../../server.js#L838) | One campaign: steps + enrollments (joined to prospect label/status). |
-| PATCH | `/api/campaigns/:id` | signed in | [server.js:855](../../server.js#L855) | Update name / sender / status (active\|archived). |
-| DELETE | `/api/campaigns/:id` | signed in | [server.js:886](../../server.js#L886) |  |
-| POST | `/api/campaigns/:id/enroll` | signed in | [server.js:894](../../server.js#L894) | Enroll leads. Body: { prospectIds: [...] }. Sets each to step 0, due after step 0's delay. |
-| PUT | `/api/campaigns/:id/steps` | signed in | [server.js:870](../../server.js#L870) | Replace a campaign's steps wholesale. |
+| GET | `/api/campaigns` | signed in | [server.js:785](../../server.js#L785) | List campaigns with step + enrollment counts. |
+| POST | `/api/campaigns` | signed in | [server.js:800](../../server.js#L800) | Create a campaign with its steps. |
+| GET | `/api/campaigns/:id` | signed in | [server.js:824](../../server.js#L824) | One campaign: steps + enrollments (joined to prospect label/status). |
+| PATCH | `/api/campaigns/:id` | signed in | [server.js:841](../../server.js#L841) | Update name / sender / status (active\|archived). |
+| DELETE | `/api/campaigns/:id` | signed in | [server.js:872](../../server.js#L872) |  |
+| POST | `/api/campaigns/:id/enroll` | signed in | [server.js:880](../../server.js#L880) | Enroll leads. Body: { prospectIds: [...] }. Sets each to step 0, due after step 0's delay. |
+| PUT | `/api/campaigns/:id/steps` | signed in | [server.js:856](../../server.js#L856) | Replace a campaign's steps wholesale. |
 
 ### `/api/claude`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| POST | `/api/claude` | signed in | [server.js:1314](../../server.js#L1314) | ─────────────────────────── Anthropic proxy ──────────────────────── In dev the proxy is open… |
+| POST | `/api/claude` | signed in | [server.js:1300](../../server.js#L1300) | ─────────────────────────── Anthropic proxy ──────────────────────── In dev the proxy is open… |
 
 ### `/api/coach`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/coach/changes` | signed in | [server.js:710](../../server.js#L710) | The change log: |
-| GET | `/api/coach/dataset` | signed in | [server.js:655](../../server.js#L655) | Coach dataset: |
-| GET | `/api/coach/playbook` | signed in | [server.js:674](../../server.js#L674) | Read all learned playbooks for the user (keyed by kind). |
-| PUT | `/api/coach/playbook` | signed in | [server.js:685](../../server.js#L685) | Save/replace a learned playbook for one kind. |
+| GET | `/api/coach/changes` | signed in | [server.js:696](../../server.js#L696) | The change log: |
+| GET | `/api/coach/dataset` | signed in | [server.js:641](../../server.js#L641) | Coach dataset: |
+| GET | `/api/coach/playbook` | signed in | [server.js:660](../../server.js#L660) | Read all learned playbooks for the user (keyed by kind). |
+| PUT | `/api/coach/playbook` | signed in | [server.js:671](../../server.js#L671) | Save/replace a learned playbook for one kind. |
 
 ### `/api/connect`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/connect/leads/:id/notes` | signed in | [server.js:596](../../server.js#L596) | ───────────────────────── Lead notes & activity ──────────────────── |
-| POST | `/api/connect/leads/:id/notes` | signed in | [server.js:606](../../server.js#L606) |  |
-| DELETE | `/api/connect/leads/:id/notes/:noteId` | signed in | [server.js:618](../../server.js#L618) |  |
-| GET | `/api/connect/leads/all` | signed in | [server.js:518](../../server.js#L518) | All of the user's leads (minimal fields) for the board + export. |
-| POST | `/api/connect/leads/brief.pdf` | signed in | [server.js:561](../../server.js#L561) | One prospect's brief PDF (details + computed fit + AI profile). |
-| GET | `/api/connect/leads/export.pdf` | signed in | [server.js:548](../../server.js#L548) | Branded PDF export of the user's leads (rendering in server/pdf.cjs). |
+| GET | `/api/connect/leads/:id/notes` | signed in | [server.js:582](../../server.js#L582) | ───────────────────────── Lead notes & activity ──────────────────── |
+| POST | `/api/connect/leads/:id/notes` | signed in | [server.js:592](../../server.js#L592) |  |
+| DELETE | `/api/connect/leads/:id/notes/:noteId` | signed in | [server.js:604](../../server.js#L604) |  |
+| GET | `/api/connect/leads/all` | signed in | [server.js:504](../../server.js#L504) | All of the user's leads (minimal fields) for the board + export. |
+| POST | `/api/connect/leads/brief.pdf` | signed in | [server.js:547](../../server.js#L547) | One prospect's brief PDF (details + computed fit + AI profile). |
+| GET | `/api/connect/leads/export.pdf` | signed in | [server.js:534](../../server.js#L534) | Branded PDF export of the user's leads (rendering in server/pdf.cjs). |
 
 ### `/api/enrollments`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| POST | `/api/enrollments/:id/advance` | signed in | [server.js:924](../../server.js#L924) | Advance one enrollment to its next step (called when the current step is marked sent). |
-| POST | `/api/enrollments/:id/stop` | signed in | [server.js:952](../../server.js#L952) | Stop an enrollment (remove the lead from the cadence). |
+| POST | `/api/enrollments/:id/advance` | signed in | [server.js:910](../../server.js#L910) | Advance one enrollment to its next step (called when the current step is marked sent). |
+| POST | `/api/enrollments/:id/stop` | signed in | [server.js:938](../../server.js#L938) | Stop an enrollment (remove the lead from the cadence). |
 
 ### `/api/health`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/health` | — | [server.js:1332](../../server.js#L1332) | Health check for Render. |
+| GET | `/api/health` | — | [server.js:1318](../../server.js#L1318) | Health check for Render. |
 
 ### `/api/history`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/history` | signed in | [server.js:452](../../server.js#L452) |  |
-| POST | `/api/history` | signed in | [server.js:489](../../server.js#L489) | Upsert one or more entries. |
-| DELETE | `/api/history/:id` | signed in | [server.js:510](../../server.js#L510) |  |
-| POST | `/api/history/:id/reminder` | signed in | [server.js:570](../../server.js#L570) | Set or clear a lead's follow-up reminder (next-action date + optional note). |
-| POST | `/api/history/:id/status` | signed in | [server.js:471](../../server.js#L471) | Update just the pipeline status of one lead. |
+| GET | `/api/history` | signed in | [server.js:438](../../server.js#L438) |  |
+| POST | `/api/history` | signed in | [server.js:475](../../server.js#L475) | Upsert one or more entries. |
+| DELETE | `/api/history/:id` | signed in | [server.js:496](../../server.js#L496) |  |
+| POST | `/api/history/:id/reminder` | signed in | [server.js:556](../../server.js#L556) | Set or clear a lead's follow-up reminder (next-action date + optional note). |
+| POST | `/api/history/:id/status` | signed in | [server.js:457](../../server.js#L457) | Update just the pipeline status of one lead. |
 
 ### `/api/message-sends`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| POST | `/api/message-sends` | signed in | [server.js:633](../../server.js#L633) | Log that a generated message was sent (the A/B event). |
+| POST | `/api/message-sends` | signed in | [server.js:619](../../server.js#L619) | Log that a generated message was sent (the A/B event). |
 
 ### `/api/outreach`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/outreach/agent/download` | signed in | [server.js:1259](../../server.js#L1259) | The agent's source, zipped, so a recruiter can run it without GitHub access or a clone. |
-| POST | `/api/outreach/agent/enable` | signed in | [server.js:1273](../../server.js#L1273) | The kill switch. |
-| POST | `/api/outreach/agent/lease` | signed in | [server.js:1283](../../server.js#L1283) | Hand the worker its next batch. |
-| POST | `/api/outreach/agent/report/:id` | signed in | [server.js:1297](../../server.js#L1297) | Report one leased item back. |
-| GET | `/api/outreach/agent/status` | signed in | [server.js:1250](../../server.js#L1250) | Agent state for the Send Queue strip: |
-| GET | `/api/outreach/queue` | signed in | [server.js:1195](../../server.js#L1195) | List this user's queue (optional ?status= and ?channel= filters). |
-| POST | `/api/outreach/queue` | signed in | [server.js:1186](../../server.js#L1186) | ───────────────────────── Outreach send queue ────────────────────── Queue a generated messag… |
-| POST | `/api/outreach/queue/:id/approve` | signed in | [server.js:1203](../../server.js#L1203) | Approve a pending item (schedules it; email then auto-sends on the next tick). |
-| POST | `/api/outreach/queue/:id/send-now` | signed in | [server.js:1216](../../server.js#L1216) | Send an approved email item immediately (don't wait for the tick). |
-| POST | `/api/outreach/queue/:id/sent` | signed in | [server.js:1226](../../server.js#L1226) | Mark a LinkedIn item sent after the human one-click hand-off. |
-| POST | `/api/outreach/queue/:id/skip` | signed in | [server.js:1235](../../server.js#L1235) | Skip / cancel a queued item. |
+| GET | `/api/outreach/agent/download` | signed in | [server.js:1245](../../server.js#L1245) | The agent's source, zipped, so a recruiter can run it without GitHub access or a clone. |
+| POST | `/api/outreach/agent/enable` | signed in | [server.js:1259](../../server.js#L1259) | The kill switch. |
+| POST | `/api/outreach/agent/lease` | signed in | [server.js:1269](../../server.js#L1269) | Hand the worker its next batch. |
+| POST | `/api/outreach/agent/report/:id` | signed in | [server.js:1283](../../server.js#L1283) | Report one leased item back. |
+| GET | `/api/outreach/agent/status` | signed in | [server.js:1236](../../server.js#L1236) | Agent state for the Send Queue strip: |
+| GET | `/api/outreach/queue` | signed in | [server.js:1181](../../server.js#L1181) | List this user's queue (optional ?status= and ?channel= filters). |
+| POST | `/api/outreach/queue` | signed in | [server.js:1172](../../server.js#L1172) | ───────────────────────── Outreach send queue ────────────────────── Queue a generated messag… |
+| POST | `/api/outreach/queue/:id/approve` | signed in | [server.js:1189](../../server.js#L1189) | Approve a pending item (schedules it; email then auto-sends on the next tick). |
+| POST | `/api/outreach/queue/:id/send-now` | signed in | [server.js:1202](../../server.js#L1202) | Send an approved email item immediately (don't wait for the tick). |
+| POST | `/api/outreach/queue/:id/sent` | signed in | [server.js:1212](../../server.js#L1212) | Mark a LinkedIn item sent after the human one-click hand-off. |
+| POST | `/api/outreach/queue/:id/skip` | signed in | [server.js:1221](../../server.js#L1221) | Skip / cancel a queued item. |
 
 ### `/api/reminders`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/reminders` | signed in | [server.js:585](../../server.js#L585) | All leads with a follow-up date, soonest first — powers the Reminders view + badge. |
+| GET | `/api/reminders` | signed in | [server.js:571](../../server.js#L571) | All leads with a follow-up date, soonest first — powers the Reminders view + badge. |
 
 ### `/api/stats`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/stats` | signed in | [server.js:529](../../server.js#L529) | Pipeline metrics for the dashboard (counts per stage + this week). |
+| GET | `/api/stats` | signed in | [server.js:515](../../server.js#L515) | Pipeline metrics for the dashboard (counts per stage + this week). |
 
 ### `/api/usage`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/usage` | signed in | [server.js:962](../../server.js#L962) | ─────────────────────────────── Usage ────────────────────────────── |
+| GET | `/api/usage` | signed in | [server.js:948](../../server.js#L948) | ─────────────────────────────── Usage ────────────────────────────── |
 
 ---
 

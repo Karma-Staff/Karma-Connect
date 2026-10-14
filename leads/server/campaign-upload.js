@@ -209,6 +209,15 @@ router.post("/api/dialer/campaigns/upload", requireAdmin,
       for (const r of rows.slice(0, MAX_ROWS)) { const l = rowToLead(r, map); if (l) leads.push(l); }
       if (!leads.length) return res.status(400).json({ error: "No rows had a usable phone number." });
 
+      /* Numbers already in Zoho CRM — a Zoho Lead, or in its call history —
+         are being worked there, so they are left out of the call list
+         (zoho-scan.js keeps the index this reads; no Zoho call is made). */
+      const zk = await require("./zoho-scan").kindsOfPhones(leads.map((l) => l.phone_key));
+      const inZoho = leads.filter((l) => l.phone_key && zk.has(l.phone_key)).length;
+      if (inZoho) leads.splice(0, leads.length, ...leads.filter((l) => !(l.phone_key && zk.has(l.phone_key))));
+      if (!leads.length) return res.status(400).json({
+        error: `Every number in that sheet is already in Zoho CRM (${inZoho}) — nothing left to call.`, skippedInZoho: inZoho });
+
       const filters = { kind: "campaign", source: "upload", name, created_by: req.user.email,
         status: "ongoing", gap, callback, uploaded: new Date().toISOString() };
       const session = await query(
@@ -237,7 +246,7 @@ router.post("/api/dialer/campaigns/upload", requireAdmin,
 
       summariseSession(session.id);              // background; do not await
       res.json({ ok: true, id: session.id, owner, total: leads.length,
-        skipped: rows.length - leads.length, columns: map });
+        skipped: rows.length - leads.length - inZoho, skippedInZoho: inZoho, columns: map });
     } catch (e) { next(e); }
   });
 
@@ -353,7 +362,11 @@ async function serveUpload(s) {
   const callTime = await servableRow(s.id);
   const { total, done } = await counts(s.id);
   const row = await currentRow(s.id);
-  return shapeUpload(s, total, done, cardOf(row, callTime));
+  const card = cardOf(row, callTime);
+  /* registered in Zoho since the sheet was uploaded: the rep is warned first */
+  if (card && row.phone_key)
+    card.zoho = (await require("./zoho-scan").kindsOfPhones([row.phone_key])).get(row.phone_key) || null;
+  return shapeUpload(s, total, done, card);
 }
 
 async function outcomeUpload(s, b) {
