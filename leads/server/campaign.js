@@ -28,7 +28,7 @@ const calltime = require("./calltime");
    too, marked filters.source = 'upload'. They serve and record from their own
    table; current/outcome below hand off to this when they see one. */
 const upload = require("./campaign-upload");
-const { zohoKindSql } = require("./zoho-scan");
+const { zohoKindSql, inZohoSql } = require("./zoho-scan");
 
 const router = express.Router();
 
@@ -40,10 +40,8 @@ const OPEN_STATUSES = ["New", "Contacted", "Responded"];
 /* A lead already in Zoho CRM — a Zoho Lead, or a number in Zoho's call
    history (zoho-scan.js labels both) — is being worked there, so no campaign
    or call session includes it. The Contacted tab is where they are worked. */
-const NOT_IN_ZOHO = (alias) =>
-  `NOT EXISTS (SELECT 1 FROM activity_log a WHERE a.lead_id = ${alias}.id AND jsonb_exists(a.meta, 'crm_link'))`;
-const IN_ZOHO = (alias) =>
-  `EXISTS (SELECT 1 FROM activity_log a WHERE a.lead_id = ${alias}.id AND jsonb_exists(a.meta, 'crm_link'))`;
+const NOT_IN_ZOHO = (alias) => `NOT ${inZohoSql(alias)}`;
+const IN_ZOHO = (alias) => inZohoSql(alias);
 
 const me = (req) => String(req.user.email || "").trim();
 const seesAll = (req) => rankOf(req.user.role) >= RANK.admin;

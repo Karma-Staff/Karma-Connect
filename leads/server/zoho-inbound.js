@@ -72,7 +72,8 @@ router.post("/api/crm/zoho/lead-created",
 
       // already flagged from a previous call/sync — do not pile up duplicate notes
       const already = (await query(
-        `SELECT 1 FROM activity_log WHERE lead_id = $1 AND jsonb_exists(meta, 'crm_link') LIMIT 1`,
+        `SELECT 1 FROM activity_log WHERE lead_id = $1 AND jsonb_exists(meta, 'crm_link')
+            AND meta->'crm_link'->>'module' IN ('Leads', 'Contacts', 'Accounts') LIMIT 1`,
         [lead.id])).rows[0];
       if (already) return res.json({ ok: true, matched: true, id: lead.id, already: true });
 

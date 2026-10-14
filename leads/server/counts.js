@@ -60,7 +60,8 @@ router.get("/api/counts", requireUser, async (req, res, next) => {
                          AND NOT removed)::int                         AS prev_week
       FROM leads
       LEFT JOIN (SELECT DISTINCT lead_id FROM activity_log
-                  WHERE jsonb_exists(meta, 'crm_link') AND lead_id IS NOT NULL) z ON z.lead_id = leads.id
+                  WHERE jsonb_exists(meta, 'crm_link') AND lead_id IS NOT NULL
+                    AND meta->'crm_link'->>'module' IN ('Leads', 'Contacts', 'Accounts')) z ON z.lead_id = leads.id
       WHERE deleted_at IS NULL${scope}`, args)).rows[0];   // the trash bin counts as gone
     if (!isAdmin) delete r.contacted;                   // the Contacted tab is admins' only
     const { all_leads, ...rest } = r;

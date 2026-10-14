@@ -195,8 +195,7 @@ router.get("/api/leads", async (req, res, next) => {
     const rows = (await query(
       /* in_zoho: is this lead in the Zoho call list (a Zoho CRM record linked)?
          — drives the "Zoho" badge. Uses the activity_log partial index (022). */
-      `SELECT *, EXISTS (SELECT 1 FROM activity_log a
-          WHERE a.lead_id = leads.id AND jsonb_exists(a.meta, 'crm_link')) AS in_zoho,
+      `SELECT *, ${inZohoSql("leads")} AS in_zoho,
           ${zohoKindSql("leads")} AS zoho_kind
          FROM leads WHERE ${where}${cursorSql}
        ORDER BY ${col} ${dir} NULLS LAST, id ${dir} LIMIT $${params.push(limit + 1)}`,
@@ -291,8 +290,7 @@ router.get("/api/leads/:key", async (req, res, next) => {
 /* a lead in the trash bin is not findable — a stale link 404s rather than
    opening a record the app is meant to have stopped showing */
 async function findLead(key) {
-  const inZoho = `, EXISTS (SELECT 1 FROM activity_log a
-      WHERE a.lead_id = leads.id AND jsonb_exists(a.meta, 'crm_link')) AS in_zoho,
+  const inZoho = `, ${inZohoSql("leads")} AS in_zoho,
       ${zohoKindSql("leads")} AS zoho_kind`;
   if (/^\d+$/.test(key))
     return (await query(

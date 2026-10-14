@@ -29,6 +29,7 @@ const { query, tx } = require("./db");
 const { requireAdmin, requireUser } = require("./auth");
 const activity = require("./activity");
 const counts = require("./counts");
+const { inZohoSql } = require("./zoho-scan");     // a real Zoho record (Lead, Contact, Account)
 
 const router = express.Router();
 /* the ceiling is the front end's too — a selection is something a person
@@ -92,7 +93,7 @@ router.post("/api/bulk/assign", async (req, res, next) => {
          guards an actual assignment, not an unassign; a single lead can still be
          reassigned from its own card (the escape hatch for a rep who left). */
       const zohoGuard = owner
-        ? " AND NOT EXISTS (SELECT 1 FROM activity_log a WHERE a.lead_id = leads.id AND jsonb_exists(a.meta, 'crm_link'))"
+        ? " AND NOT " + inZohoSql("leads")
         : "";
       const changed = (await client.query(
         `UPDATE leads SET owner = $1, updated_at = now()
@@ -102,7 +103,7 @@ router.post("/api/bulk/assign", async (req, res, next) => {
       const skippedInZoho = owner ? (await client.query(
         `SELECT count(*)::int n FROM leads
           WHERE id = ANY($1) AND deleted_at IS NULL
-            AND EXISTS (SELECT 1 FROM activity_log a WHERE a.lead_id = leads.id AND jsonb_exists(a.meta, 'crm_link'))`,
+            AND ${inZohoSql("leads")}`,
         [ids])).rows[0].n : 0;
       // re-assigning leads to the owner they already had is not an event
       if (changed.length)

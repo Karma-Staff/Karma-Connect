@@ -70,15 +70,25 @@ const STATE_KEY = "zoho.scan";
 const STATE_VERSION = 3;
 const RESCAN_ON_UPGRADE = ["Calls"];
 
-/* SQL for a lead's Zoho label, for list queries: 'lead' | 'registered' | null */
+/* "In Zoho" means a real Zoho record — a Lead, Contact or Account. A number
+   that is only in Zoho's call history is NOT: every call Karma Connect makes
+   is logged in Zoho's Calls (crm-sync.js), matched or not, so counting those
+   put every lead anyone had ever rung into Contacted. The Calls link is still
+   recorded (it is history), it just doesn't make a lead "in Zoho". */
+const RECORD_MODULES = ["Leads", "Contacts", "Accounts"];
+const REAL_LINK = (a) => `${a}.meta->'crm_link'->>'module' IN ('Leads', 'Contacts', 'Accounts')`;
+
+/* SQL for a lead's Zoho label, for list queries:
+   'lead' (a Zoho Lead or Contact) | 'registered' (a Zoho Account) | null */
 const zohoKindSql = (alias = "leads") => `(SELECT CASE
     WHEN bool_or(a.meta->'crm_link'->>'module' IN ('Leads', 'Contacts')) THEN 'lead'
-    WHEN count(*) > 0 THEN 'registered' END
+    WHEN bool_or(a.meta->'crm_link'->>'module' = 'Accounts') THEN 'registered' END
   FROM activity_log a WHERE a.lead_id = ${alias}.id AND jsonb_exists(a.meta, 'crm_link'))`;
 
-/* SQL: is this lead in Zoho (a Zoho record linked)? — the Contacted tab. */
+/* SQL: is this lead in Zoho (a real Zoho record linked)? — the Contacted tab,
+   the campaign builder, the bulk-assign guard. */
 const inZohoSql = (alias = "leads") =>
-  `EXISTS (SELECT 1 FROM activity_log a WHERE a.lead_id = ${alias}.id AND jsonb_exists(a.meta, 'crm_link'))`;
+  `EXISTS (SELECT 1 FROM activity_log a WHERE a.lead_id = ${alias}.id AND jsonb_exists(a.meta, 'crm_link') AND ${REAL_LINK("a")})`;
 
 const zIso = (d) => new Date(d).toISOString().replace(/\.\d{3}Z$/, "+00:00");
 const clean = (v) => String(v == null ? "" : v).trim();
@@ -174,40 +184,46 @@ async function resolveCalls() {
 async function flag() {
   const r = (await query(
     `WITH hit AS (
-       SELECT l.id, l.lead_code, l.name, z.module, z.zoho_id,
-              (z.module = ANY($1)) AS is_lead
+       SELECT l.id, l.lead_code, l.name, z.module, z.zoho_id
          FROM leads l JOIN zoho_records z ON z.phone_key = l.phone_key
         WHERE l.deleted_at IS NULL AND NOT l.removed
        UNION ALL
-       SELECT l.id, l.lead_code, l.name, z.module, z.zoho_id, (z.module = ANY($1))
+       SELECT l.id, l.lead_code, l.name, z.module, z.zoho_id
          FROM leads l JOIN zoho_records z ON z.phone2_key = l.phone_key
         WHERE l.deleted_at IS NULL AND NOT l.removed
        UNION ALL
-       SELECT l.id, l.lead_code, l.name, z.module, z.zoho_id, true
+       SELECT l.id, l.lead_code, l.name, z.module, z.zoho_id
          FROM leads l
          JOIN zoho_records z ON z.email IS NOT NULL AND z.email = lower(l.email) AND z.module = ANY($1)
         WHERE l.deleted_at IS NULL AND NOT l.removed AND nullif(btrim(l.email), '') IS NOT NULL
+     ), ranked AS (
+       /* 2 a Lead/Contact, 1 an Account, 0 only a Call: a better match
+          is added on top of a weaker one, never the other way round */
+       SELECT *, CASE WHEN module = ANY($1) THEN 2 WHEN module = 'Accounts' THEN 1 ELSE 0 END AS rnk FROM hit
      ), best AS (
-       SELECT DISTINCT ON (id) * FROM hit ORDER BY id, is_lead DESC, zoho_id
+       SELECT DISTINCT ON (id) * FROM ranked ORDER BY id, rnk DESC, zoho_id
      ), todo AS (
        SELECT b.* FROM best b
         WHERE NOT EXISTS (
           SELECT 1 FROM activity_log a
            WHERE a.lead_id = b.id AND jsonb_exists(a.meta, 'crm_link')
-             AND (NOT b.is_lead OR a.meta->'crm_link'->>'module' = ANY($1)))
+             AND CASE WHEN a.meta->'crm_link'->>'module' = ANY($1) THEN 2
+                      WHEN a.meta->'crm_link'->>'module' = 'Accounts' THEN 1 ELSE 0 END >= b.rnk)
      )
      INSERT INTO activity_log (actor, user_id, action, lead_id, lead_code, lead_name, to_value, meta)
      SELECT 'zoho', NULL, 'note', id, lead_code, name,
-            CASE WHEN is_lead THEN 'Registered in Zoho as a Lead' ELSE 'Registered in Zoho (call history)' END,
+            CASE rnk WHEN 2 THEN 'Registered in Zoho as a Lead' WHEN 1 THEN 'Registered in Zoho as an Account'
+                     ELSE 'Called — in Zoho''s call history' END,
             jsonb_build_object(
-              'note', CASE WHEN is_lead THEN 'Matched a ' || module || ' record in Zoho CRM'
-                           ELSE 'This number is in Zoho CRM''s call history (' || module || ')' END,
+              'note', CASE WHEN rnk > 0 THEN 'Matched a ' || module || ' record in Zoho CRM'
+                           ELSE 'This number is in Zoho CRM''s call history (not a Zoho record)' END,
               'crm_link', jsonb_build_object('module', module, 'id', zoho_id),
               'crm_source', 'zoho-scan')
        FROM todo
      RETURNING (meta->'crm_link'->>'module') AS module`, [LEAD_MODULES])).rows;
   return { lead: r.filter((x) => LEAD_MODULES.includes(x.module)).length,
-    registered: r.filter((x) => !LEAD_MODULES.includes(x.module)).length };
+    registered: r.filter((x) => x.module === "Accounts").length,
+    called: r.filter((x) => x.module === "Calls").length };
 }
 
 /* A lead's status is the Call Result of the most recent Zoho Call to its
@@ -305,7 +321,7 @@ async function run({ full = false } = {}) {
       const out = { ok: true, at: started.toISOString(), ms: Date.now() - started, read, labelled, statuses,
         ...(Object.keys(errors).length ? { errors } : {}) };
       await settings.set(STATE_KEY, { v: STATE_VERSION, since, last: out }, "zoho-scan");
-      if (labelled.lead || labelled.registered || statuses) {
+      if (labelled.lead || labelled.registered || labelled.called || statuses) {
         try { require("./counts").invalidate(); } catch (e) { /* counts not mounted */ }
       }
       return out;
@@ -325,12 +341,12 @@ async function kindsOfPhones(keys) {
   if (!ks.length) return out;
   const rows = (await query(
     `SELECT k, bool_or(module = ANY($2)) AS is_lead FROM (
-       SELECT phone_key AS k, module FROM zoho_records WHERE phone_key = ANY($1)
-       UNION ALL SELECT phone2_key, module FROM zoho_records WHERE phone2_key = ANY($1)
+       SELECT phone_key AS k, module FROM zoho_records WHERE phone_key = ANY($1) AND module = ANY($3)
+       UNION ALL SELECT phone2_key, module FROM zoho_records WHERE phone2_key = ANY($1) AND module = ANY($3)
        UNION ALL SELECT l.phone_key, a.meta->'crm_link'->>'module'
-         FROM leads l JOIN activity_log a ON a.lead_id = l.id AND jsonb_exists(a.meta, 'crm_link')
+         FROM leads l JOIN activity_log a ON a.lead_id = l.id AND jsonb_exists(a.meta, 'crm_link') AND ${REAL_LINK("a")}
         WHERE l.phone_key = ANY($1) AND l.deleted_at IS NULL) x
-     GROUP BY k`, [ks, LEAD_MODULES])).rows;
+     GROUP BY k`, [ks, LEAD_MODULES, RECORD_MODULES])).rows;
   for (const r of rows) out.set(r.k, r.is_lead ? "lead" : "registered");
   return out;
 }
