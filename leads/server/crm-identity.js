@@ -212,9 +212,13 @@ async function asPerson(id, path, opts) {
     /* A permission added after this person connected (attachments, for the
        call recording) reads as a scope error: say what to do about it. */
     const scope = /OAUTH_?SCOPE/i.test(code || "") || /oauth ?scope/i.test(d?.message || "");
-    const e = new Error(scope
+    /* Zoho's own words, kept on the error: which call, which code — so a
+       refusal can be traced to the permission it is really about */
+    const zohoSaid = [code, d?.data?.[0]?.message || d?.message].filter(Boolean).join(": ");
+    const e = new Error((scope
       ? "Reconnect Zoho CRM to allow this (a permission was added since you connected) — your own Zoho sign-in"
-      : (d?.data?.[0]?.message || d?.message || code || `Zoho ${r.status}`) + " (your own Zoho sign-in)");
+      : (d?.data?.[0]?.message || d?.message || code || `Zoho ${r.status}`) + " (your own Zoho sign-in)")
+      + ` [Zoho: ${zohoSaid || r.status} on ${String(opts.method || "GET")} ${path.split("?")[0].replace(/\/\d{6,}/g, "/…")}]`);
     e.refused = true; e.status = r.status; e.zoho = d;
     /* Only a refusal of the sign-in itself is the rep's to fix by reconnecting.
        NO_PERMISSION and the like are about this one record or their Zoho
@@ -247,7 +251,15 @@ async function writeAs(userId, path, opts = {}) {
          write was lost rather than going in under the shared account. */
       if (!e.refused && !e.tokenRefresh) throw e;
       const dead = e.refused ? e.signIn : DEAD.has(String(e.zoho?.error));
-      if (dead) {
+      /* The recording step (a note on the Call, with the MP3 attached) is not
+         the sign-in: when Zoho refuses only that, the call itself went in
+         under the rep and the recording goes in under the service account.
+         Flagging the sign-in for it told reps to reconnect — and reconnecting
+         grants the same permissions, so the warning came straight back. */
+      const recordingStep = /^\/Notes(\/|$)/.test(path);
+      if (dead && recordingStep) {
+        console.warn("[karma] zoho crm: user", id.user_id, "— recording note refused under their sign-in, saved under the service account:", e.message);
+      } else if (dead) {
         TOKENS.delete(id.user_id);
         const msg = e.refused ? e.message
           : "Your Zoho sign-in has expired or was revoked — reconnect Zoho CRM";

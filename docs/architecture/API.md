@@ -156,12 +156,12 @@ declared once for the group.
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
 | GET | `/api/crm/dedupe` | admin | [leads/server/zoho-crm.js:258](../../leads/server/zoho-crm.js#L258) | GET /api/crm/dedupe — which worked leads the CRM already holds, so a sync attaches to those r… |
-| GET | `/api/crm/me` | signed in | [leads/server/crm-identity.js:275](../../leads/server/crm-identity.js#L275) |  |
+| GET | `/api/crm/me` | signed in | [leads/server/crm-identity.js:287](../../leads/server/crm-identity.js#L287) |  |
 | GET | `/api/crm/me/connect` | signed in | [leads/server/crm-identity.js:91](../../leads/server/crm-identity.js#L91) |  |
-| DELETE | `/api/crm/me/connect` | signed in | [leads/server/crm-identity.js:295](../../leads/server/crm-identity.js#L295) | Disconnecting is a deliberate act by an admin, never a rep's slip of the mouse: |
+| DELETE | `/api/crm/me/connect` | signed in | [leads/server/crm-identity.js:307](../../leads/server/crm-identity.js#L307) | Disconnecting is a deliberate act by an admin, never a rep's slip of the mouse: |
 | GET | `/api/crm/oauth/callback` | — | [leads/server/crm-identity.js:105](../../leads/server/crm-identity.js#L105) |  |
-| GET | `/api/crm/people` | admin | [leads/server/crm-identity.js:307](../../leads/server/crm-identity.js#L307) | Who has connected — the manager's answer to "why are this rep's calls still under the shared… |
-| DELETE | `/api/crm/people/:email/connect` | admin | [leads/server/crm-identity.js:325](../../leads/server/crm-identity.js#L325) | DELETE /api/crm/people/:email/connect — an admin disconnects someone's Zoho CRM sign-in (a re… |
+| GET | `/api/crm/people` | admin | [leads/server/crm-identity.js:319](../../leads/server/crm-identity.js#L319) | Who has connected — the manager's answer to "why are this rep's calls still under the shared… |
+| DELETE | `/api/crm/people/:email/connect` | admin | [leads/server/crm-identity.js:337](../../leads/server/crm-identity.js#L337) | DELETE /api/crm/people/:email/connect — an admin disconnects someone's Zoho CRM sign-in (a re… |
 | GET | `/api/crm/preview` | admin | [leads/server/zoho-crm.js:176](../../leads/server/zoho-crm.js#L176) | How much of our own base would ever reach the CRM. |
 | GET | `/api/crm/status` | admin | [leads/server/zoho-crm.js:126](../../leads/server/zoho-crm.js#L126) | GET /api/crm/status — is it connected, and what is actually in there. |
 | GET | `/api/crm/sync` | admin | [leads/server/crm-sync.js:487](../../leads/server/crm-sync.js#L487) |  |
