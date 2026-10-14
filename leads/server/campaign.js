@@ -282,14 +282,9 @@ router.post("/api/campaign/outcome", requireUser, express.json({ limit: "8kb" })
           meta: { outcome, seconds: 0, provider: "manual", ...stamp },
         });
 
-        if (STATUSES.includes(b.status) && b.status !== lead.status) {
-          await query("UPDATE leads SET status = $1, updated_at = now() WHERE id = $2",
-            [b.status, id]);
-          await activity.log({
-            actor: me(req), user_id: req.user.id, action: "status",
-            lead_id: lead.id, lead_code: lead.lead_code, lead_name: lead.name,
-            from_value: lead.status, to_value: b.status });
-        }
+        /* The status is no longer set here: it follows the call's result in
+           Zoho CRM (crm-sync.js sends the disposition, zoho-scan.js reads it
+           back onto the lead). b.status is ignored. */
 
         const note = String(b.note || "").trim().slice(0, 2000);
         if (note) {
@@ -478,9 +473,11 @@ router.get("/api/dialer/campaigns", requireAdmin, async (req, res, next) => {
       owner: s.owner, ownerName: s.owner_name, createdBy: s.filters.created_by, creatorName: s.creator_name,
       gap: s.filters.gap || null, callback: s.filters.callback || null,
       pausedBy: s.filters.paused_by || null, source: s.filters.source || "assigned",
+      group: s.filters.group || null, unique: !!s.filters.unique, dates: s.filters.dates || null,
+      statuses: s.filters.statuses || [],
       createdAt: s.started_at, startedAt: s.filters.started || null, endedAt: s.ended_at,
     }; }).filter((c) => (!want || c.status === want)
-      && (!q || [c.name, c.ownerName, c.owner, c.creatorName].some((x) => String(x || "").toLowerCase().includes(q))));
+      && (!q || [c.name, c.ownerName, c.owner, c.creatorName, c.group?.name].some((x) => String(x || "").toLowerCase().includes(q))));
     res.json({ list, total: list.length });
   } catch (e) { next(e); }
 });
@@ -490,7 +487,7 @@ router.get("/api/dialer/campaigns", requireAdmin, async (req, res, next) => {
 router.get("/api/dialer/campaigns/reps", requireAdmin, async (req, res, next) => {
   try {
     const { rows } = await query(`
-      SELECT lower(u.email) AS email, coalesce(nullif(btrim(u.display_name), ''), u.email) AS name,
+      SELECT u.id, lower(u.email) AS email, coalesce(nullif(btrim(u.display_name), ''), u.email) AS name,
              (SELECT count(*)::int FROM leads l
                WHERE btrim(l.owner) = u.email AND l.deleted_at IS NULL AND NOT l.removed
                  AND nullif(btrim(l.phone), '') IS NOT NULL AND l.status = ANY($1)) AS callable,
@@ -504,8 +501,8 @@ router.get("/api/dialer/campaigns/reps", requireAdmin, async (req, res, next) =>
              (SELECT s.filters->>'kind' FROM call_sessions s
                WHERE s.actor = u.email AND s.ended_at IS NULL LIMIT 1) AS busy_kind
         FROM app_users u
-       WHERE NOT u.disabled
-       ORDER BY 2`, [OPEN_STATUSES]);
+       WHERE NOT u.disabled AND u.deleted_at IS NULL
+       ORDER BY 3`, [OPEN_STATUSES]);
     /* The pool a campaign can also be filled from: callable leads nobody owns,
        counted per status so the form's number follows its tick-boxes. */
     const pool = (await query(`
@@ -518,54 +515,178 @@ router.get("/api/dialer/campaigns/reps", requireAdmin, async (req, res, next) =>
   } catch (e) { next(e); }
 });
 
-router.post("/api/dialer/campaigns", requireAdmin, express.json({ limit: "4kb" }), async (req, res, next) => {
+/* ---------------- building a campaign ----------------
+
+   What goes in is chosen by filters, and who it goes to is one rep or a
+   group of them:
+
+     statuses   any status leads have (they follow Zoho's Call Result now,
+                zoho-scan.js) — "New", "VM", "No Answer", "CDM"…
+     kinds      company / person / job
+     unique     only numbers nobody has ever called: no call from Karma
+                Connect to that lead or that number, and the number is
+                nowhere in Zoho
+     dates      from / to (the team's local days), on when the lead was last
+                called or when it was added
+     source     unassigned  leads nobody owns, which become the reps'
+                assigned    each rep's own leads
+                any         any lead, reassigned to whichever rep gets it
+     limit      the TOTAL to hand out; a group splits it evenly and at
+                random — 900 between three reps is 300 each
+
+   A lead already in Zoho is left out unless it was picked by a Zoho status
+   (a lead whose status is a Call Result is in Zoho by definition — choosing
+   "VM" means "call the VMs again"). One number is only ever given out once
+   per build, so two reps in a group never ring the same person. */
+const TZ = process.env.REPORT_TZ || process.env.DIGEST_TZ || "America/New_York";
+const KINDS = ["company", "person", "job"];
+const SOURCES = ["unassigned", "assigned", "any"];
+const isYmd = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ""));
+const PHONE10_NUM = `right(regexp_replace(regexp_replace(coalesce(a.meta->>'number', ''), '\\s*(ext\\.?|extension|x|#)\\s*\\d+\\s*$', '', 'i'), '\\D', '', 'g'), 10)`;
+
+function readSpec(b) {
+  const kinds0 = (Array.isArray(b.kinds) ? b.kinds : KINDS).filter((x) => KINDS.includes(x));
+  const statuses = (Array.isArray(b.statuses) ? b.statuses : [])
+    .map((x) => String(x || "").trim()).filter((x) => x && x.length <= 60).slice(0, 50);
+  let from = isYmd(b.from) ? b.from : null, to = isYmd(b.to) ? b.to : null;
+  if (from && to && from > to) [from, to] = [to, from];
+  return {
+    statuses, kinds: kinds0.length ? kinds0 : KINDS, unique: b.unique === true,
+    dateBasis: b.dateBasis === "added" ? "added" : "called", from, to,
+    source: SOURCES.includes(b.source) ? b.source : "assigned",   // as before: the rep's own leads
+    limit: Math.max(1, Math.min(MAX_CAMPAIGN, Math.round(+b.limit || MAX_CAMPAIGN))),
+  };
+}
+
+/* The WHERE for one spec over leads l. `owners` narrows to leads owned by
+   those emails (the assigned source); params continue from `args`. */
+function specWhere(spec, args, { owners = null, skipped = false } = {}) {
+  const p = (v) => `$${args.push(v)}`;
+  const w = [
+    "l.deleted_at IS NULL", "NOT l.removed", "nullif(btrim(l.phone), '') IS NOT NULL",
+    `l.kind = ANY(${p(spec.kinds)})`,
+  ];
+  if (spec.source === "unassigned") w.push("nullif(btrim(l.owner), '') IS NULL");
+  if (owners) w.push(`lower(btrim(l.owner)) = ANY(${p(owners)})`);
+  if (spec.statuses.length) w.push(`l.status = ANY(${p(spec.statuses)})`);
+  /* in Zoho → only when its status is one Zoho gave it (not one of Karma
+     Connect's own: New, Contacted, Responded, Qualified, Not interested) */
+  /* skipped: the opposite — what was left out for being in Zoho, to say back */
+  if (skipped) { w.push(`${IN_ZOHO("l")} AND l.status = ANY(${p(STATUSES)})`); return w.join("\n   AND "); }
+  w.push(`(${NOT_IN_ZOHO("l")} OR l.status <> ALL(${p(STATUSES)}))`);
+  if (spec.unique) w.push(`${NOT_IN_ZOHO("l")}
+    AND NOT EXISTS (SELECT 1 FROM activity_log a WHERE a.action = 'call' AND a.lead_id = l.id)
+    AND (l.phone_key IS NULL OR (
+          NOT EXISTS (SELECT 1 FROM activity_log a WHERE a.action = 'call' AND ${PHONE10_NUM} = l.phone_key)
+      AND NOT EXISTS (SELECT 1 FROM zoho_records z WHERE z.phone_key = l.phone_key OR z.phone2_key = l.phone_key)))`);
+  if (spec.from || spec.to) {
+    const tz = p(TZ);
+    const day = spec.dateBasis === "added" ? "l.date_added"
+      : `(greatest(
+           (SELECT max(a.at) FROM activity_log a WHERE a.action = 'call' AND a.lead_id = l.id),
+           (SELECT max(a.at) FROM activity_log a WHERE a.action = 'call' AND l.phone_key IS NOT NULL AND ${PHONE10_NUM} = l.phone_key),
+           (SELECT max(z.call_at) FROM zoho_records z WHERE z.module = 'Calls' AND l.phone_key IS NOT NULL AND z.phone_key = l.phone_key)
+         ) AT TIME ZONE ${tz})::date`;
+    if (spec.from) w.push(`${day} >= ${p(spec.from)}::date`);
+    if (spec.to) w.push(`${day} <= ${p(spec.to)}::date`);
+  }
+  return w.join("\n   AND ");
+}
+
+/* How many distinct numbers a spec finds. */
+async function countSpec(spec, owners, run = query, skipped = false) {
+  const args = [];
+  const where = specWhere(spec, args, { owners, skipped });
+  return (await run(`SELECT count(DISTINCT coalesce(l.phone_key, l.id::text))::int AS n FROM leads l WHERE ${where}`, args)).rows[0].n;
+}
+
+/* Up to n lead ids, one per number, at random. */
+async function pickSpec(spec, owners, n, run = query, lock = false) {
+  const args = [];
+  const where = specWhere(spec, args, { owners });
+  const ids = (await run(
+    `SELECT id FROM (
+       SELECT DISTINCT ON (coalesce(l.phone_key, l.id::text)) l.id
+         FROM leads l WHERE ${where}
+        ORDER BY coalesce(l.phone_key, l.id::text), random()) one
+      ORDER BY random() LIMIT ${Math.max(0, Math.floor(n))}`, args)).rows.map((r) => +r.id);
+  if (lock && ids.length) await run(`SELECT id FROM leads WHERE id = ANY($1) FOR UPDATE`, [ids]);
+  return ids;
+}
+
+/* n split as evenly as it goes: 900 / 3 → 300, 300, 300; 10 / 3 → 4, 3, 3 */
+const shares = (n, k) => Array.from({ length: k }, (_, i) => Math.floor(n / k) + (i < n % k ? 1 : 0));
+
+async function repsByEmail(emails) {
+  if (!emails.length) return [];
+  return (await query(
+    `SELECT id, email, coalesce(nullif(btrim(display_name), ''), email) AS name
+       FROM app_users WHERE lower(email) = ANY($1) AND NOT disabled AND deleted_at IS NULL`, [emails])).rows;
+}
+
+/* The reps a request names: owners[] (or the old single owner), and/or a group. */
+async function requestedReps(b) {
+  const emails = new Set((Array.isArray(b.owners) ? b.owners : b.owner ? [b.owner] : [])
+    .map((e) => String(e || "").trim().toLowerCase()).filter(Boolean));
+  let group = null;
+  if (b.group_id) {
+    group = (await query(`SELECT id, name FROM rep_groups WHERE id = $1`, [+b.group_id])).rows[0] || null;
+    if (group && !emails.size) {
+      for (const r of (await query(
+        `SELECT lower(u.email) AS email FROM rep_group_members m JOIN app_users u ON u.id = m.user_id
+          WHERE m.group_id = $1`, [group.id])).rows) emails.add(r.email);
+    }
+  }
+  return { reps: await repsByEmail([...emails]), group };
+}
+
+/* POST /api/dialer/campaigns/preview — what a build would hand out, before
+   anything is changed: how many numbers match, and each rep's share. */
+router.post("/api/dialer/campaigns/preview", requireAdmin, express.json({ limit: "8kb" }), async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const spec = readSpec(b);
+    const { reps } = await requestedReps(b);
+    const busy = reps.length ? (await query(
+      `SELECT lower(actor) AS email FROM call_sessions WHERE ended_at IS NULL AND lower(actor) = ANY($1)`,
+      [reps.map((r) => r.email.toLowerCase())])).rows.map((r) => r.email) : [];
+    let available, perRep;
+    if (spec.source === "assigned") {
+      const own = await Promise.all(reps.map((r) => countSpec(spec, [r.email.toLowerCase()])));
+      available = own.reduce((a, n) => a + n, 0);
+      const sh = shares(spec.limit, Math.max(1, reps.length));
+      perRep = reps.map((r, i) => ({ email: r.email, name: r.name, n: Math.min(own[i], sh[i]), available: own[i] }));
+    } else {
+      available = await countSpec(spec, null);
+      const sh = shares(Math.min(spec.limit, available), Math.max(1, reps.length));
+      perRep = reps.map((r, i) => ({ email: r.email, name: r.name, n: sh[i] }));
+    }
+    const inZoho = await countSpec(spec, spec.source === "assigned" ? reps.map((r) => r.email.toLowerCase()) : null, query, true);
+    res.json({ available, total: perRep.reduce((a, r) => a + r.n, 0), perRep, busy, inZoho });
+  } catch (e) { next(e); }
+});
+
+router.post("/api/dialer/campaigns", requireAdmin, express.json({ limit: "8kb" }), async (req, res, next) => {
   try {
     const b = req.body || {};
     const name = String(b.name || "").trim().slice(0, NAME_MAX);
-    const owner = String(b.owner || "").trim().toLowerCase();
-    const statuses = (Array.isArray(b.statuses) ? b.statuses : OPEN_STATUSES).filter((x) => STATUSES.includes(x));
-    /* Which kinds of lead go in: companies, people, job postings — or any.
-       Lets a manager build a campaign of just the people, or just the
-       companies, rather than everything the rep has. */
-    const KINDS = ["company", "person", "job"];
-    let kinds = (Array.isArray(b.kinds) ? b.kinds : KINDS).filter((x) => KINDS.includes(x));
-    if (!kinds.length) kinds = KINDS;
+    const spec = readSpec(b);
     const gap = Math.max(2, Math.min(60, Math.round(+b.gap || 6)));
-    const limit = Math.max(1, Math.min(MAX_CAMPAIGN, Math.round(+b.limit || MAX_CAMPAIGN)));
     if (!name) return res.status(400).json({ error: "Give the campaign a name." });
-    if (!statuses.length) return res.status(400).json({ error: "Pick at least one lead status." });
-    const rep = (await query("SELECT id, email FROM app_users WHERE lower(email) = $1 AND NOT disabled", [owner])).rows[0];
-    if (!rep) return res.status(400).json({ error: "Pick a person to assign the campaign to." });
+    const { reps, group } = await requestedReps(b);
+    if (!reps.length) return res.status(400).json({ error: group
+      ? `The group "${group.name}" has nobody in it. Add reps to it first.`
+      : "Pick a person (or a group) to give the campaign to." });
 
-    const open = await openSession(rep.email);
-    if (open) return res.status(409).json({ error: isCampaign(open)
-      ? `${rep.email} already has the campaign "${open.filters.name}" open. End it before giving them another.`
-      : `${rep.email} is in the middle of their own call session. Ask them to stop it first.` });
+    /* one open session per rep — say exactly who is busy, rather than give
+       some of the group their share and not the others */
+    for (const rep of reps) {
+      const open = await openSession(rep.email);
+      if (open) return res.status(409).json({ error: isCampaign(open)
+        ? `${rep.name} already has the campaign "${open.filters.name}" open. End it before giving them another.`
+        : `${rep.name} is in the middle of their own call session. Ask them to stop it first.` });
+    }
 
-    /* Where the leads come from: the rep's own assigned leads, or callable
-       leads nobody owns — which become the rep's as the campaign is made. */
-    const source = b.source === "unassigned" ? "unassigned" : "assigned";
-    const ids = source === "assigned" ? (await query(
-      `SELECT l.id FROM leads l
-         LEFT JOIN recents r ON r.lead_id = l.id AND r.user_id = $3
-        WHERE btrim(l.owner) = $1 AND l.deleted_at IS NULL AND NOT l.removed
-          AND nullif(btrim(l.phone), '') IS NOT NULL
-          AND l.status = ANY($2) AND l.kind = ANY($4) AND ${NOT_IN_ZOHO("l")}
-        ORDER BY r.touched_at ASC NULLS FIRST, l.date_added DESC NULLS LAST, l.id
-        LIMIT ${limit}`, [rep.email, statuses, rep.id, kinds])).rows.map((r) => r.id) : null;
-    /* how many were left out for being in Zoho — said back to the manager */
-    const inZoho = (await query(
-      `SELECT count(*)::int n FROM leads l
-        WHERE ${source === "assigned" ? "btrim(l.owner) = $3" : "nullif(btrim(l.owner), '') IS NULL"}
-          AND l.deleted_at IS NULL AND NOT l.removed AND nullif(btrim(l.phone), '') IS NOT NULL
-          AND l.status = ANY($1) AND l.kind = ANY($2) AND ${IN_ZOHO("l")}`,
-      source === "assigned" ? [statuses, kinds, rep.email] : [statuses, kinds])).rows[0].n;
-    if (ids && !ids.length) return res.status(400).json({
-      error: `${rep.email} has no assigned leads with a phone number and those statuses${inZoho
-        ? ` that aren't already in Zoho (${inZoho} left out)` : ""}. Assign them some first.` });
-
-    /* Who callbacks go to — checked against the phone system, never taken
-       on trust from the browser, since it decides what number strangers see. */
     let callback = null;
     if (b.callback_ext) {
       const t = (await callbackTargets(req.user.id).catch(() => [])).find((x) => x.ext === String(b.callback_ext));
@@ -574,46 +695,136 @@ router.post("/api/dialer/campaigns", requireAdmin, express.json({ limit: "4kb" }
     }
 
     const status = b.start ? "ongoing" : "draft";
-    const filters = JSON.stringify({ kind: "campaign", name, created_by: me(req), status, gap, source,
-      statuses, kinds, hasPhone: true, callback, ...(b.start ? { started: new Date().toISOString() } : {}) });
+    const batch = reps.length > 1 ? require("crypto").randomUUID() : null;
     const out = await tx(async (client) => {
-      let leadIds = ids;
-      if (source === "unassigned") {
-        /* Claim and assign in one statement, so two managers building at
-           once cannot hand the same lead to two reps. Newest first. */
-        leadIds = (await client.query(
-          `UPDATE leads SET owner = $1, updated_at = now()
-            WHERE id IN (SELECT id FROM leads
-                          WHERE nullif(btrim(owner), '') IS NULL AND deleted_at IS NULL AND NOT removed
-                            AND nullif(btrim(phone), '') IS NOT NULL AND status = ANY($2)
-                            AND kind = ANY($3) AND ${NOT_IN_ZOHO("leads")}
-                          ORDER BY date_added DESC NULLS LAST, id
-                          LIMIT ${limit}
-                          FOR UPDATE SKIP LOCKED)
-            RETURNING id`, [rep.email, statuses, kinds])).rows.map((r) => r.id);
-        if (!leadIds.length) return null;
-        await activity.log({
-          actor: me(req), user_id: req.user.id, action: "owner",
-          lead_name: `${leadIds.length} lead${leadIds.length === 1 ? "" : "s"}`, to_value: rep.email,
-          meta: { bulk: true, count: leadIds.length, owner: rep.email, campaign: name,
-            ...(leadIds.length <= 500 ? { ids: leadIds } : {}) },
-        }, client);
+      const run = (q, p) => client.query(q, p);
+      /* each rep's list */
+      const lists = [];
+      if (spec.source === "assigned") {
+        const sh = shares(spec.limit, reps.length);
+        for (let i = 0; i < reps.length; i++)
+          lists.push(await pickSpec(spec, [reps[i].email.toLowerCase()], sh[i], run, true));
+      } else {
+        /* one random draw for the whole group, then dealt out: no number
+           twice, and nobody's share is "the leftovers" */
+        const ids = await pickSpec(spec, null, spec.limit, run, true);
+        const sh = shares(ids.length, reps.length);
+        let at = 0;
+        for (let i = 0; i < reps.length; i++) { lists.push(ids.slice(at, at + sh[i])); at += sh[i]; }
       }
-      const row = (await client.query(
-        `INSERT INTO call_sessions (actor, owner, lead_ids, filters)
-         VALUES ($1, $1, $2, $3) RETURNING id`, [rep.email, leadIds, filters])).rows[0];
-      return { id: row.id, total: leadIds.length };
+      if (!lists.some((l) => l.length)) return null;
+      const made = [];
+      for (let i = 0; i < reps.length; i++) {
+        const rep = reps[i], leadIds = lists[i];
+        if (!leadIds.length) continue;
+        if (spec.source !== "assigned") {
+          /* the leads become this rep's */
+          await run(`UPDATE leads SET owner = $1, updated_at = now() WHERE id = ANY($2)`, [rep.email, leadIds]);
+          await activity.log({
+            actor: me(req), user_id: req.user.id, action: "owner",
+            lead_name: `${leadIds.length} lead${leadIds.length === 1 ? "" : "s"}`, to_value: rep.email,
+            meta: { bulk: true, count: leadIds.length, owner: rep.email, campaign: name,
+              ...(leadIds.length <= 500 ? { ids: leadIds } : {}) },
+          }, client);
+        }
+        const filters = JSON.stringify({ kind: "campaign", name, created_by: me(req), status, gap,
+          source: spec.source, statuses: spec.statuses, kinds: spec.kinds, unique: spec.unique,
+          dates: spec.from || spec.to ? { basis: spec.dateBasis, from: spec.from, to: spec.to } : null,
+          hasPhone: true, callback,
+          ...(batch ? { group: { batch, id: group?.id || null, name: group?.name || null, size: reps.length } } : {}),
+          ...(b.start ? { started: new Date().toISOString() } : {}) });
+        const row = (await run(
+          `INSERT INTO call_sessions (actor, owner, lead_ids, filters)
+           VALUES ($1, $1, $2, $3) RETURNING id`, [rep.email, leadIds, filters])).rows[0];
+        made.push({ id: row.id, email: rep.email, name: rep.name, total: leadIds.length });
+      }
+      return made;
     });
-    if (!out) return res.status(400).json({
-      error: `There are no unassigned leads with a phone number and those statuses${inZoho
-        ? ` that aren't already in Zoho (${inZoho} left out)` : ""}.` });
-    if (source === "unassigned") require("./counts").invalidate();   // the Unassigned tile moved
-    res.json({ ok: true, id: out.id, total: out.total, status, source, skippedInZoho: inZoho });
+    /* how many were left out for being in Zoho — said back to the manager */
+    const inZoho = await countSpec(spec, spec.source === "assigned" ? reps.map((r) => r.email.toLowerCase()) : null, query, true);
+    if (!out) return res.status(400).json({ error: `No leads match those filters${inZoho
+      ? ` that aren't already in Zoho (${inZoho} left out)` : ""} — widen them and try again.` });
+    if (spec.source !== "assigned") require("./counts").invalidate();
+    res.json({ ok: true, id: out[0].id, ids: out.map((m) => m.id), total: out.reduce((a, m) => a + m.total, 0),
+      perRep: out, status, source: spec.source, skippedInZoho: inZoho });
   } catch (e) {
-    /* the unique open-session index, if two managers raced */
-    if (e.code === "23505") return res.status(409).json({ error: "That person was just given another session. Refresh and try again." });
+    if (e.code === "23505") return res.status(409).json({ error: "Someone in that list was just given another session. Refresh and try again." });
     next(e);
   }
+});
+
+/* ---------------- rep groups ----------------
+   Named sets of reps, picked by a manager, for giving a campaign to several
+   people at once. GET lists them; POST makes one {name, members:[user ids]};
+   PUT /:id renames or changes members; DELETE /:id removes it (campaigns
+   already built keep their sessions). */
+async function groupsList() {
+  return (await query(
+    `SELECT g.id, g.name, g.created_by, g.updated_at,
+            coalesce(jsonb_agg(jsonb_build_object('id', u.id, 'email', lower(u.email),
+              'name', coalesce(nullif(btrim(u.display_name), ''), u.email)) ORDER BY u.display_name)
+              FILTER (WHERE u.id IS NOT NULL), '[]') AS members
+       FROM rep_groups g
+       LEFT JOIN rep_group_members m ON m.group_id = g.id
+       LEFT JOIN app_users u ON u.id = m.user_id AND NOT u.disabled AND u.deleted_at IS NULL
+      GROUP BY g.id ORDER BY lower(g.name)`)).rows;
+}
+async function setMembers(client, groupId, members) {
+  const ids = [...new Set((Array.isArray(members) ? members : []).map((x) => +x).filter(Number.isInteger))].slice(0, 200);
+  await client.query(`DELETE FROM rep_group_members WHERE group_id = $1`, [groupId]);
+  if (ids.length) await client.query(
+    `INSERT INTO rep_group_members (group_id, user_id)
+     SELECT $1, id FROM app_users WHERE id = ANY($2) AND NOT disabled ON CONFLICT DO NOTHING`, [groupId, ids]);
+}
+router.get("/api/dialer/groups", requireAdmin, async (req, res, next) => {
+  try { res.json({ groups: await groupsList() }); } catch (e) { next(e); }
+});
+router.post("/api/dialer/groups", requireAdmin, express.json({ limit: "8kb" }), async (req, res, next) => {
+  try {
+    const name = String((req.body || {}).name || "").trim().slice(0, 60);
+    if (!name) return res.status(400).json({ error: "Give the group a name." });
+    const id = await tx(async (client) => {
+      const g = (await client.query(`INSERT INTO rep_groups (name, created_by) VALUES ($1, $2) RETURNING id`,
+        [name, me(req)])).rows[0];
+      await setMembers(client, g.id, req.body.members);
+      return g.id;
+    });
+    res.json({ ok: true, id, groups: await groupsList() });
+  } catch (e) {
+    if (e.code === "23505") return res.status(409).json({ error: "There is already a group with that name." });
+    next(e);
+  }
+});
+router.put("/api/dialer/groups/:id", requireAdmin, express.json({ limit: "8kb" }), async (req, res, next) => {
+  try {
+    const id = +req.params.id, b = req.body || {};
+    const ok = await tx(async (client) => {
+      const g = (await client.query(`SELECT id FROM rep_groups WHERE id = $1 FOR UPDATE`, [id])).rows[0];
+      if (!g) return false;
+      if (b.name !== undefined) {
+        const name = String(b.name || "").trim().slice(0, 60);
+        if (!name) throw Object.assign(new Error("Give the group a name."), { status: 400 });
+        await client.query(`UPDATE rep_groups SET name = $2, updated_at = now() WHERE id = $1`, [id, name]);
+      }
+      if (b.members !== undefined) {
+        await setMembers(client, id, b.members);
+        await client.query(`UPDATE rep_groups SET updated_at = now() WHERE id = $1`, [id]);
+      }
+      return true;
+    });
+    if (!ok) return res.status(404).json({ error: "No such group." });
+    res.json({ ok: true, groups: await groupsList() });
+  } catch (e) {
+    if (e.status === 400) return res.status(400).json({ error: e.message });
+    if (e.code === "23505") return res.status(409).json({ error: "There is already a group with that name." });
+    next(e);
+  }
+});
+router.delete("/api/dialer/groups/:id", requireAdmin, async (req, res, next) => {
+  try {
+    await query(`DELETE FROM rep_groups WHERE id = $1`, [+req.params.id]);
+    res.json({ ok: true, groups: await groupsList() });
+  } catch (e) { next(e); }
 });
 
 /* start / pause / resume / end */

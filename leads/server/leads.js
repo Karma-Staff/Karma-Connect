@@ -18,9 +18,9 @@ const { query, tx } = require("./db");
 const { requireUser, rankOf, RANK } = require("./auth");
 const activity = require("./activity");
 const counts = require("./counts");
-const { STATUSES } = require("./dedupe");
+// statuses are open-ended now: they come from Zoho call results (zoho-scan.js applyStatus)
 /* 'lead' (a Zoho Lead/Contact) | 'registered' (only in Zoho's call history) | null */
-const { zohoKindSql } = require("./zoho-scan");
+const { zohoKindSql, inZohoSql } = require("./zoho-scan");
 
 const router = express.Router();
 /* path-scoped, not bare router.use(requireUser): every feature router is
@@ -122,20 +122,26 @@ function buildFilters(p, user) {
   if (user && rankOf(user.role) < RANK.admin)
     add("btrim(owner) = ?", String(user.email || "").trim());
   if (["company", "person", "job"].includes(p.kind)) add("kind = ?", p.kind);
+  /* A company or person already in Zoho has moved on: it is listed under
+     Contacted (admins), not in Companies or People, so nobody works it twice.
+     Favorites, the DNC tab and Contacted itself still show it. */
+  if (["company", "person"].includes(p.kind) && p.inzoho !== "true" && p.favorite !== "true" && p.removed !== "true")
+    add("NOT " + inZohoSql("leads"));
   // removed=true is the DNC tab; everything else excludes banned leads
   add(p.removed === "true" ? "removed" : "NOT removed");
   // a deleted lead is in the admin's trash bin: no tab, DNC included, shows it
   add("deleted_at IS NULL");
   if (p.favorite === "true") add("favorite");
-  if (STATUSES.includes(p.status)) add("status = ?", p.status);
+  /* any status a lead actually has — they now come from Zoho's Call Result,
+     so the list is open-ended (GET /api/lead-statuses) */
+  if (p.status && String(p.status).length <= 60) add("status = ?", String(p.status));
   if (p.owner) add("owner = ?", p.owner);
   /* The Contacted tab: leads that have a Zoho CRM record linked — a Zoho Lead
      is only created once a lead has been worked, so this is the "already in the
      Zoho call list" set, there to stop anyone calling or being assigned a
      person who is already being worked. jsonb_exists (not the ? operator) so the
      add() placeholder substitution above leaves it alone. */
-  if (p.inzoho === "true")
-    add("EXISTS (SELECT 1 FROM activity_log a WHERE a.lead_id = leads.id AND jsonb_exists(a.meta, 'crm_link'))");
+  if (p.inzoho === "true") add(inZohoSql("leads"));
   /* A KPI tile was clicked. Comma-separated so tiles can be combined —
      "unassigned,ready" is the assignments board asking for work that is both
      unclaimed and actually callable. Unknown keys are ignored, and a single
@@ -209,6 +215,23 @@ router.get("/api/leads", async (req, res, next) => {
       list: rows, total,
       nextCursor: more ? enc({ v: last[col] ?? null, id: last.id }) : null,
     });
+  } catch (e) { next(e); }
+});
+
+/* GET /api/lead-statuses — every status leads currently have (New first,
+   then by how many), for the status filters and the power dialler. Scoped
+   like the list: a member counts only their own leads. */
+router.get("/api/lead-statuses", requireUser, async (req, res, next) => {
+  try {
+    const seesAll = rankOf(req.user.role) >= RANK.admin;
+    const rows = (await query(
+      `SELECT status, count(*)::int AS n FROM leads
+        WHERE deleted_at IS NULL AND NOT removed AND nullif(btrim(status), '') IS NOT NULL
+          ${seesAll ? "" : "AND btrim(owner) = $1"}
+        GROUP BY status ORDER BY (status = 'New') DESC, count(*) DESC, status`,
+      seesAll ? [] : [String(req.user.email || "").trim()])).rows;
+    if (!rows.some((r) => r.status === "New")) rows.unshift({ status: "New", n: 0 });
+    res.json({ statuses: rows });
   } catch (e) { next(e); }
 });
 
@@ -294,8 +317,10 @@ router.patch("/api/leads/:id", express.json({ limit: "8kb" }), async (req, res, 
   try {
     const id = +req.params.id;
     const b = req.body || {};
-    if ("status" in b && !STATUSES.includes(b.status))
-      return res.status(400).json({ error: "unknown status" });
+    /* A lead's status follows the Call Result of its latest call in Zoho CRM
+       (zoho-scan.js applyStatus) — it is changed in Zoho, not here. */
+    if ("status" in b)
+      return res.status(409).json({ error: "Status follows the call result in Zoho CRM — change it there and the next Zoho scan brings it here." });
     const row = await tx(async (client) => {
       const cur = (await client.query(
         `SELECT * FROM leads WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,

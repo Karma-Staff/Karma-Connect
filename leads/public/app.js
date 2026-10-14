@@ -112,7 +112,7 @@ const SRC_CHIP = {
   "Job board": "job", "Excel import": "excel", "Apollo export": "apollo",
   "Bitrix CRM": "bitrix", "Master DB": "master",
 };
-const STATUSES = ["New", "Contacted", "Responded", "Qualified", "Not interested"];
+// lead statuses are not a fixed list any more: they follow Zoho's Call Result (loadStatusFilter)
 
 /* Sort options — the keys go straight to /api/leads?sort=. An option is only
    offered where the underlying data exists: certifications only ever came in
@@ -207,8 +207,23 @@ function chip(cls, label) {
   return label ? `<span class="chip ${cls}">${esc(label)}</span>` : "";
 }
 function statusChip(st) {
-  const cls = "chip-st-" + (st || "New").toLowerCase().replace(/\s+/g, "");
+  const cls = "chip-st-" + (st || "New").toLowerCase().replace(/[^a-z0-9]+/g, "");
   return chip(cls, st || "New");
+}
+/* The statuses leads actually have — they follow Zoho's Call Result now, so
+   the list is the server's, not a fixed one. Fills the status filter. */
+async function loadStatusFilter() {
+  const sel = $("filter-status");
+  if (!sel) return;
+  try {
+    const { statuses } = await api("/api/lead-statuses");
+    const cur = sel.value;
+    sel.innerHTML = `<option value="">All statuses</option>` + statuses.map((s) =>
+      `<option value="${esc(s.status)}">${esc(s.status)}${s.n ? ` (${s.n.toLocaleString()})` : ""}</option>`).join("");
+    if (cur && !statuses.some((s) => s.status === cur))
+      sel.insertAdjacentHTML("beforeend", `<option value="${esc(cur)}">${esc(cur)}</option>`);
+    sel.value = cur;
+  } catch (e) { /* keep whatever the page shipped with */ }
 }
 function sourceChip(src) {
   return chip("chip-src-" + (SRC_CHIP[src] || "other"), src);
@@ -371,6 +386,8 @@ async function runCounts() {
   $("count-jobs").textContent = c.jobs.toLocaleString();
   $("count-favorites").textContent = c.favorites.toLocaleString();
   $("count-removed").textContent = c.removed.toLocaleString();
+  // companies and people already in Zoho are counted here instead (admins)
+  if ($("count-contacted")) $("count-contacted").textContent = c.contacted != null ? c.contacted.toLocaleString() : "";
   // ("Recent" is the activity trail — its badge comes from S.recents)
 
   // the three work queues, each as a count + its share of the live base
@@ -1003,8 +1020,6 @@ function renderDetail(r) {
       : [r.Category, locationLabel(r)].filter(Boolean).join(" · ");
   const band = sizeBand(r.Employees);
 
-  const opts = STATUSES.map((s) =>
-    `<option${(r.Status || "New") === s ? " selected" : ""}>${s}</option>`).join("");
 
   $("detail").innerHTML = `
     <div class="detail-top">
@@ -1016,7 +1031,7 @@ function renderDetail(r) {
              steals half the header width and wraps long company names. Own
              class: the density modes hide .lead-meta everywhere -->
         <div class="detail-meta">
-          <select class="status-select" id="d-status">${opts}</select>
+          <span class="status-zoho" title="Status follows the call result logged in Zoho CRM — change it in Zoho">${statusChip(r.Status)}</span>
           ${sourceChip(r.Source || (tkey === "jobs" ? "Job board" : ""))}${zohoChip(r.InZoho, r.ZohoKind)}
         </div>
       </div>
@@ -1095,15 +1110,6 @@ function renderDetail(r) {
 
     <div class="detail-section" id="related-section"></div>`;
 
-  $("d-status").addEventListener("change", async (e) => {
-    // the server logs the change (with old -> new) and touches the trail
-    await patchLead(r.Id, { status: e.target.value });
-    r.Status = e.target.value;
-    const li = S.list.find((x) => x.Id === r.Id && x._t === tkey);
-    if (li) li.Status = r.Status;
-    renderList();
-    refreshCounts();
-  });
   $("detail").querySelectorAll("[data-copy]").forEach((el) =>
     el.addEventListener("click", (e) => {
       const value = el.dataset.copy;
@@ -1503,7 +1509,7 @@ function wireGlobalDrop() {
 
 function closeModal() {
   $("modal-backdrop").classList.add("hidden");
-  document.querySelector(".modal")?.classList.remove("wide", "js-panel", "team-panel");
+  document.querySelector(".modal")?.classList.remove("wide", "js-panel", "team-panel", "crm-panel");
 }
 
 /* ---------------- manage team (admin) ----------------
@@ -9617,6 +9623,7 @@ function wire() {
     debounce = setTimeout(() => { S.q = e.target.value.trim(); loadList(true); }, 300);
   });
   on("filter-status", "change", (e) => { S.status = e.target.value; loadList(true); });
+  loadStatusFilter();
   on("filter-state", "change", (e) => { S.state = e.target.value; loadList(true); });
   on("filter-board", "change", (e) => { S.board = e.target.value; loadList(true); });
   on("sort-by", "change", (e) => {
@@ -10719,72 +10726,166 @@ function crmMeBar() {
       <a class="btn-primary rc-go" href="${esc(c.connectUrl)}">Connect Zoho CRM</a></div>`;
 }
 
+/* ---------------- Zoho CRM call logging: the panel ----------------
+   One wide modal (.modal.crm-panel), read top to bottom:
+     header   — On/Off, who changed it, the owner's switch
+     health   — four quiet tiles; a tile only colours when it is a problem
+     attention— failed sends / missing recordings and their retry buttons,
+                rendered only when there is something to fix
+     tabs     — "Next calls" (the preview, each Description folded away) and
+                "Sign-ins" (the admin roster); no nested scroll boxes, the
+                modal itself scrolls
+   Same three reads as before (/api/crm/sync, /sync/preview, /people), same
+   handlers, same confirms, same role gating (isOwner for the switch; the
+   roster is whatever /api/crm/people returns, which is admin-only). */
+
+/* sub is HTML (the recordings tile colours one phrase of it); label and value are text */
+function crmTile(label, value, sub, mood) {
+  return `<div class="crm-tile${mood ? " " + mood : ""}"><div class="crm-tile-l">${esc(label)}</div>
+    <div class="crm-tile-v">${esc(value)}</div>${sub ? `<div class="crm-tile-s">${sub}</div>` : ""}</div>`;
+}
+
+/* one call from the preview — the long Description sits behind Show details */
+function crmPreviewCard(it) {
+  if (it.error) return `<div class="crm-card"><div class="crm-card-h"><b>${esc(it.lead || "Call")}</b></div>
+    <p class="login-error">${esc(it.error)}</p></div>`;
+  const c = it.call;
+  const start = new Date(c.Call_Start_Time);
+  const meta = [
+    it.as === "rep" ? `Filed under <b>${esc(it.asName)}</b>` : "Shared account",
+    esc(Number.isNaN(start.getTime()) ? c.Call_Start_Time : start.toLocaleString()),
+    esc(c.Call_Duration),
+    c.Call_Result ? `Call Result <b>${esc(c.Call_Result)}</b>` : "",
+  ].filter(Boolean).join(" · ");
+  return `<div class="crm-card">
+    <div class="crm-card-h"><b>${esc(c.Subject)}</b>
+      ${it.link ? `<span class="dash-chip">${esc(it.link.module)} · ${esc(it.link.name || it.link.id)}</span>`
+        : `<span class="dash-chip crm-chip-warn">No CRM match — logged unattached</span>`}</div>
+    <div class="crm-card-m">${meta}</div>
+    ${c.Description ? `<details class="crm-more"><summary><span class="crm-more-show">Show details</span><span class="crm-more-hide">Hide details</span></summary>
+      <pre>${esc(c.Description)}</pre></details>` : ""}
+  </div>`;
+}
+
+/* one person on the roster: name, their connection state, Disconnect */
+function crmPersonRow(p) {
+  const connected = !!p.connected_at;
+  const state = !connected ? `<span class="dash-chip">Not connected</span>`
+    : p.last_error ? `<span class="dash-chip bad" title="${esc(p.last_error)}">Refused — needs to reconnect</span>`
+      : `<span class="dash-chip ok">Connected as ${esc(p.zoho_name || p.zoho_email || "themselves")}</span>`;
+  const when = connected ? `<span title="connected ${esc(new Date(p.connected_at).toLocaleString())}">${
+    p.last_used_at ? "used " + esc(relTime(p.last_used_at)) : "since " + esc(relTime(p.connected_at))}</span>` : "";
+  return `<div class="crm-row${connected ? "" : " off"}">
+    <span class="avatar avatar-sm" style="background:${avColor(p.email)}">${esc(initials(p.name))}</span>
+    <div class="crm-row-id">
+      <div class="crm-row-n">${esc(p.name)}${p.role === "sales_rep" ? `<span class="asg-tag">Sales rep</span>` : ""}</div>
+      <div class="crm-row-s">${state}${when}</div>
+    </div>
+    ${connected ? `<button type="button" class="btn-ghost crm-row-off" data-crm-off="${esc(p.email)}">Disconnect</button>` : ""}
+  </div>`;
+}
+
+function crmShowTab(name) {
+  document.querySelectorAll("[data-crm-tab]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.crmTab === name)));
+  document.querySelectorAll("[data-crm-pane]").forEach((p) => p.toggleAttribute("hidden", p.dataset.crmPane !== name));
+}
+
 async function openCrmSync() {
   $("modal-title").textContent = "Zoho CRM call logging";
+  document.querySelector(".modal")?.classList.add("crm-panel");
   $("modal-body").innerHTML = `<p class="modal-sub">Loading…</p>`;
   $("modal-backdrop").classList.remove("hidden");
+  let tab = "preview";                    // which tab is open; kept across repaints
   const paint = async () => {
     let s, prev = null;
-    try { s = await api("/api/crm/sync"); } catch (e) { $("modal-body").innerHTML = `<p class="login-error">${esc(e.message)}</p>`; return; }
+    try { s = await api("/api/crm/sync"); } catch (e) {
+      $("modal-body").innerHTML = `<p class="login-error">${esc(e.message)}</p>
+        <div class="modal-actions"><button type="button" class="btn-secondary" id="modal-cancel">Close</button></div>`;
+      $("modal-cancel").addEventListener("click", closeModal);
+      return;
+    }
     try { prev = await api("/api/crm/sync/preview"); } catch (e) { prev = { error: e.message }; }
     let ppl = null;
     try { ppl = await api("/api/crm/people"); } catch (e) { ppl = null; }
     const st = s.stats;
-    $("modal-body").innerHTML = `
-      <p class="modal-sub">When this is on, every RingCentral call placed from Karma Connect is written into
-        Zoho CRM's <b>Calls</b> — who called, when, how long, the disposition (as the CRM's Call Result), the
-        rep's notes and the recording link — attached to the Lead, Account or Contact with that number.
-        After a <b>connected</b> call, a rep can also create the person as a <b>Lead</b>.
-        Calls made through Zoho Voice are skipped: Zoho Voice already logs those itself.
-        Nothing from before it was first turned on is sent.</p>
-      <div class="crm-state">
-        <span class="pd-status ${s.on ? "ongoing" : "draft"}"><i></i>${s.on ? "On" : "Off"}</span>
-        <span class="dash-mute">${s.changedBy ? `last changed by ${esc(s.changedBy)} · ${esc(new Date(s.changedAt).toLocaleString())}` : "never turned on"}</span>
-        ${isOwner() && s.configured ? `<button class="${s.on ? "btn-ghost" : "btn-primary"}" id="crm-toggle">${s.on ? "Turn off" : "Turn on"}</button>`
-          : `<span class="dash-mute">${s.configured ? "Only an owner can turn it on or off." : "Zoho CRM is not configured on this server."}</span>`}
-      </div>
-      ${s.since ? `<div class="crm-stats">
-        <div><b>${dashN(st.synced)}</b><span>calls sent</span></div>
-        <div><b>${dashN(st.today)}</b><span>in the last 24h</span></div>
-        <div><b>${dashN(st.pending)}</b><span>waiting</span></div>
-        <div class="${st.errors ? "bad" : ""}"><b>${dashN(st.errors)}</b><span>failed</span></div>
-      </div>${st.lastError ? `<p class="login-error">Last error: ${esc(st.lastError)}</p>` : ""}${
-        st.errors ? `<p class="dash-mute"><button type="button" class="btn-ghost" id="crm-failed-retry"
-          title="Send the ${dashN(st.errors)} failed call${st.errors === 1 ? "" : "s"} again — a stale lead link is dropped so they still land (unattached)">Retry ${dashN(st.errors)} failed send${st.errors === 1 ? "" : "s"}</button></p>` : ""}
-      <p class="dash-mute">Recordings: ${dashN(st.recAttached || 0)} attached in Zoho${st.recPending ? ` · ${dashN(st.recPending)} waiting for RingCentral` : ""}${
-        st.recMissing ? ` · ${dashN(st.recMissing)} sent without one <button type="button" class="btn-ghost crm-retry" id="crm-rec-retry"
-          title="Look again in RingCentral for these calls' recordings and attach any it has">Retry missing recordings</button>` : ""}</p>${
-        st.lastRecError ? `<p class="login-error">Last recording problem (${esc(relTime(st.lastRecError.at))}): ${esc(st.lastRecError.error)}</p>` : ""}` : ""}
-      <h4 class="crm-h">Preview — what the next calls would look like in the CRM</h4>
+    const n = (v) => dashN(v || 0);
+    const plural = (v, w) => `${n(v)} ${w}${v === 1 ? "" : "s"}`;
+
+    /* ---- header: state, who flipped it, the owner's switch ---- */
+    const changed = s.changedBy
+      ? `Changed by <b>${esc(s.changedBy)}</b>${s.changedAt ? ` <span title="${esc(new Date(s.changedAt).toLocaleString())}">${esc(relTime(s.changedAt))}</span>` : ""}`
+      : "Never turned on";
+    const head = `<div class="crm-head">
+      <span class="pd-status ${s.on ? "ongoing" : "draft"}"><i></i>${s.on ? "On" : "Off"}</span>
+      <span class="crm-head-s">${s.since ? `Logging since ${esc(fmtDate(s.since))} · ` : ""}${changed}</span>
+      ${isOwner() && s.configured
+        ? `<button type="button" class="${s.on ? "btn-ghost" : "btn-primary"}" id="crm-toggle">${s.on ? "Turn off" : "Turn on"}</button>`
+        : `<span class="crm-head-gate">${s.configured ? "Only an owner can turn it on or off." : "Zoho CRM is not configured on this server."}</span>`}
+    </div>
+    <p class="crm-lead">Each RingCentral call placed here is logged in Zoho CRM's <b>Calls</b> against the matching
+      Lead, Account or Contact; a connected call can also become a <b>Lead</b>.</p>`;
+
+    /* ---- health: four tiles, quiet unless something is wrong ---- */
+    let health = "", attention = "";
+    if (s.since) {
+      const recBits = ["attached"];
+      if (st.recPending) recBits.push(`${n(st.recPending)} waiting`);
+      if (st.recMissing) recBits.push(`<span class="crm-warn-ink">${n(st.recMissing)} missing</span>`);
+      health = `<div class="crm-tiles">
+        ${crmTile("Sent today", n(st.today), `${n(st.synced)} in total${st.lastSyncedAt ? " · last sent " + relTime(st.lastSyncedAt) : ""}`)}
+        ${crmTile("Waiting", n(st.pending), st.pending ? "go out within minutes" : "nothing queued")}
+        ${crmTile("Failed", n(st.errors), st.errors ? "needs a retry" : "none", st.errors ? "bad" : "")}
+        ${crmTile("Recordings", n(st.recAttached), recBits.join(" · "), st.recMissing ? "warn" : "")}
+      </div>`;
+
+      const rows = [];
+      if (st.errors || st.lastError) rows.push({
+        t: st.errors ? `${plural(st.errors, "call")} failed to send` : "The last send failed",
+        d: st.lastError,
+        b: st.errors ? `<button type="button" class="btn-ghost crm-attn-btn" id="crm-failed-retry"
+          title="Send the ${plural(st.errors, "failed call")} again — a stale lead link is dropped so they still land (unattached)">Retry ${plural(st.errors, "failed send")}</button>` : "",
+      });
+      if (st.recMissing || st.lastRecError) rows.push({
+        t: st.recMissing ? `${plural(st.recMissing, "call")} sent without a recording` : "A recording couldn't be attached",
+        d: st.lastRecError ? `${relTime(st.lastRecError.at)}: ${st.lastRecError.error}` : "",
+        b: st.recMissing ? `<button type="button" class="btn-ghost crm-attn-btn" id="crm-rec-retry"
+          title="Look again in RingCentral for these calls' recordings and attach any it has">Retry missing recordings</button>` : "",
+      });
+      if (rows.length) attention = `<section class="crm-attn"><h4 class="crm-h">Needs attention</h4>
+        ${rows.map((r) => `<div class="crm-attn-row"><div class="crm-attn-t"><b>${esc(r.t)}</b>${r.d ? `<div class="crm-attn-d">${esc(r.d)}</div>` : ""}</div>${r.b}</div>`).join("")}
+      </section>`;
+    } else {
+      health = `<p class="crm-empty">Nothing has been sent yet${s.configured ? " — calls start logging the moment it is turned on" : ""}.</p>`;
+    }
+
+    /* ---- tabs: the preview, and (admins) the roster ---- */
+    if (tab === "people" && !ppl) tab = "preview";
+    const items = prev.items || [];
+    const connectedN = ppl ? ppl.people.filter((p) => p.connected_at && !p.last_error).length : 0;
+    const tabs = `<div class="crm-tabs" role="tablist">
+      <button type="button" class="crm-tab" role="tab" data-crm-tab="preview" aria-selected="${tab === "preview"}">Next calls${prev.error ? "" : ` <em>${n(items.length)}</em>`}</button>
+      ${ppl ? `<button type="button" class="crm-tab" role="tab" data-crm-tab="people" aria-selected="${tab === "people"}">Sign-ins <em>${n(connectedN)} of ${n(ppl.people.length)}</em></button>` : ""}
+    </div>`;
+
+    const preview = `<div class="crm-pane" data-crm-pane="preview"${tab === "preview" ? "" : " hidden"}>
       ${prev.error ? `<p class="login-error">${esc(prev.error)}</p>`
-        : !prev.items.length ? `<p class="dash-mute">No RingCentral calls waiting to be sent${s.since ? "" : " in the last 7 days"}.</p>`
-          : `<div class="crm-prev">${prev.items.map((it) => it.error ? `<div class="crm-item"><b>${esc(it.lead || "Call")}</b><p class="login-error">${esc(it.error)}</p></div>`
-            : `<div class="crm-item">
-              <div class="crm-item-h"><b>${esc(it.call.Subject)}</b>
-                <span class="dash-chip">${it.link ? `→ ${esc(it.link.module)}: ${esc(it.link.name || it.link.id)}` : "no CRM match — logged unattached"}</span></div>
-              <div class="crm-item-m">${it.as === "rep" ? `Filed under <b>${esc(it.asName)}</b> · ` : "Shared account · "}${esc(new Date(it.call.Call_Start_Time).toLocaleString())} · ${esc(it.call.Call_Duration)}
-                ${it.call.Call_Result ? ` · Call Result <b>${esc(it.call.Call_Result)}</b>` : ""}</div>
-              <pre>${esc(it.call.Description)}</pre></div>`).join("")}</div>
-            <p class="dash-mute crm-fine">${esc(prev.note)}</p>`}
-      ${ppl ? `<h4 class="crm-h">Zoho CRM sign-ins — ${dashN(ppl.people.filter((p) => p.connected_at && !p.last_error).length)} of ${dashN(ppl.people.length)} connected</h4>
-        <p class="dash-mute crm-fine">Connected people file calls and leads in Zoho under their own name; anyone not connected goes in under the shared account.
-          Only an admin can disconnect someone. Connecting is done by each person, because it signs in to their own Zoho account.</p>
-        ${ppl.enabled ? "" : `<p class="dash-mute">Personal sign-in isn't set up on this server yet
-          (ZOHO_CRM_OAUTH_CLIENT_ID / _SECRET) — everything goes in under the shared account.</p>`}
-        <div class="crm-people">${ppl.people.map((p) => `<div class="crm-person">
-          <span class="avatar avatar-sm" style="background:${avColor(p.email)}">${esc(initials(p.name))}</span>
-          <span class="crm-person-n">${esc(p.name)}</span>${p.role === "sales_rep" ? `<span class="asg-tag">Sales rep</span>` : ""}
-          ${p.connected_at
-            ? (p.last_error ? `<span class="dash-chip bad" title="${esc(p.last_error)}">refused — they need to reconnect</span>`
-              : `<span class="dash-chip ok">connected as ${esc(p.zoho_name || p.zoho_email || "themselves")}</span>`)
-              + `<span class="dash-mute crm-person-w" title="connected ${esc(new Date(p.connected_at).toLocaleString())}">${
-                p.last_used_at ? "used " + esc(relTime(p.last_used_at)) : "since " + esc(relTime(p.connected_at))}</span>`
-              + `<button type="button" class="btn-ghost crm-person-off" data-crm-off="${esc(p.email)}">Disconnect</button>`
-            : `<span class="dash-chip">not connected</span>`}
-        </div>`).join("")}</div>
-        <p class="dash-mute crm-fine">Each person connects from the Calls tab or the dialler's Settings.</p>` : ""}
-      <div class="modal-actions"><button type="button" class="btn-secondary" id="modal-cancel">Close</button></div>`;
+        : !items.length ? `<p class="crm-empty">No RingCentral calls waiting to be sent${s.since ? "" : " in the last 7 days"}.</p>`
+          : `<p class="crm-note">${esc(prev.note || "")}</p><div class="crm-list">${items.map(crmPreviewCard).join("")}</div>`}
+    </div>`;
+
+    const people = ppl ? `<div class="crm-pane" data-crm-pane="people"${tab === "people" ? "" : " hidden"}>
+      <p class="crm-note">Connected people file calls and leads in Zoho under their own name; everyone else goes in under the shared account.</p>
+      ${ppl.enabled ? "" : `<p class="crm-note crm-warn-ink">Personal sign-in isn't set up on this server (ZOHO_CRM_OAUTH_CLIENT_ID / _SECRET) — everything goes in under the shared account.</p>`}
+      <div class="crm-roster">${ppl.people.map(crmPersonRow).join("")}</div>
+      <p class="crm-note crm-note-foot">Each person connects from the Calls tab or the dialler's Settings; only an admin can disconnect someone.</p>
+    </div>` : "";
+
+    $("modal-body").innerHTML = head + health + attention + tabs + preview + people +
+      `<div class="modal-actions"><button type="button" class="btn-secondary" id="modal-cancel">Close</button></div>`;
+
+    /* ---- handlers ---- */
     $("modal-cancel").addEventListener("click", closeModal);
+    document.querySelectorAll("[data-crm-tab]").forEach((b) => b.addEventListener("click", () => { tab = b.dataset.crmTab; crmShowTab(tab); }));
     document.querySelectorAll("[data-crm-off]").forEach((btn) => btn.addEventListener("click", async () => {
       const who = btn.dataset.crmOff;
       if (!confirm(`Disconnect ${who}'s Zoho CRM sign-in?\n\nTheir calls and leads will go into Zoho under the shared account until they connect again.`)) return;
@@ -10959,6 +11060,7 @@ function pdWire() {
   on("pd-q", "input", (e) => { clearTimeout(t); t = setTimeout(() => { PD.q = e.target.value.trim(); pdFetch(); }, 300); });
   on("pd-status", "change", (e) => { PD.status = e.target.value; e.target.closest(".cl-chip").classList.toggle("on", !!PD.status); pdFetch(); });
   on("pd-new", "click", openNewCampaign);
+  on("pd-groups", "click", () => openRepGroups());
   on("pd-upload", "click", openUploadCampaign);
   $("pd-body").addEventListener("click", async (e) => {
     const b = e.target.closest("[data-pd-act]");
@@ -11020,7 +11122,9 @@ function renderPower() {
       const pct = c.total ? Math.round((c.completed / c.total) * 100) : 0;
       const [label, cls] = PD_STATUS[c.status] || [c.status, "draft"];
       return `<tr class="pd-${cls}">
-        <td><div class="cl-party"><b>${esc(c.name)}</b><span>${esc(new Date(c.createdAt).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" }))} · ${c.gap || 6}s between calls</span></div></td>
+        <td><div class="cl-party"><b>${esc(c.name)}</b><span>${esc(new Date(c.createdAt).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" }))} · ${c.gap || 6}s between calls${
+          c.group ? ` · <span class="pd-grptag" title="Shared at random between ${c.group.size} reps">${esc(c.group.name || "Group")} · ${c.group.size} reps</span>` : ""}${
+          c.unique ? ` · unique numbers` : ""}</span></div></td>
         <td class="n"><b>${dashN(c.total)}</b></td>
         <td class="n">${dashN(c.completed)}</td>
         <td class="n">${dashN(c.pending)}</td>
@@ -11200,58 +11304,89 @@ async function openUploadCampaign() {
 async function openNewCampaign() {
   $("modal-title").textContent = "New power-dialer campaign";
   $("modal-body").innerHTML = `<p class="modal-sub">Loading the team…</p>`;
+  document.querySelector(".modal")?.classList.add("team-panel");
   $("modal-backdrop").classList.remove("hidden");
-  let reps, targets = { targets: [] };
+  let reps, targets = { targets: [] }, groups = { groups: [] }, sts = { statuses: [] };
   try {
-    [reps, targets] = await Promise.all([api("/api/dialer/campaigns/reps"),
-      api("/api/dialer/callback-targets").catch((e) => ({ targets: [], error: e.message }))]);
+    [reps, targets, groups, sts] = await Promise.all([api("/api/dialer/campaigns/reps"),
+      api("/api/dialer/callback-targets").catch((e) => ({ targets: [], error: e.message })),
+      api("/api/dialer/groups").catch(() => ({ groups: [] })),
+      api("/api/lead-statuses").catch(() => ({ statuses: [{ status: "New", n: 0 }] }))]);
   } catch (e) { $("modal-body").innerHTML = `<p class="login-error">${esc(e.message)}</p>`; return; }
   const today = new Date().toLocaleDateString([], { day: "2-digit", month: "2-digit", year: "numeric" }).replace(/\D/g, "");
-  const pool = reps.unassigned || {};
-  const poolTotal = Object.values(pool).reduce((a, n) => a + n, 0);
+  const busyOf = (r) => r.busy_with ? ` (busy: ${r.busy_kind === "campaign" ? r.busy_with : "own session"})` : "";
+  const repOpts = reps.reps.map((r) => `<option value="${esc(r.email)}"${r.busy_with ? " disabled" : ""}>${esc(r.name)}${esc(busyOf(r))}</option>`).join("");
   $("modal-body").innerHTML = `
-    <p class="modal-sub">Name it, pick who calls, and choose where the leads come from — only leads with a phone
-      number go in. When you press <b>Start</b>, their Call session rings each lead in turn —
-      they join with one click, then it runs by itself.</p>
-    <form id="pd-form" class="pd-form">
+    <p class="modal-sub">Choose who calls and which numbers they get. When you press <b>Start</b>, each rep's
+      Call session rings their numbers in turn.</p>
+    <form id="pd-form" class="pd-form pd-form2">
       <label class="modal-field">Campaign name
         <input id="pd-name" maxlength="80" required placeholder="e.g. Water restoration ${today}"></label>
-      <label class="modal-field">Assign to
-        <select id="pd-owner" required>
-          <option value="">Choose a person…</option>
-          ${reps.reps.map((r) => `<option value="${esc(r.email)}"${r.busy_with ? " disabled" : ""}>
-            ${esc(r.name)} — ${r.callable ? dashN(r.callable) + " callable lead" + (r.callable === 1 ? "" : "s") : "no callable leads"}${
-            r.busy_with ? ` (busy: ${esc(r.busy_kind === "campaign" ? r.busy_with : "own session")})` : ""}</option>`).join("")}
-        </select></label>
-      <label class="modal-field">Inbound callbacks go to
-        <select id="pd-callback">
-          <option value="">The rep's own number (default)</option>
-          ${targets.targets.map((t) => `<option value="${esc(t.ext)}">${esc(t.name)} · x${esc(t.ext)} · ${esc(dashPhone(t.number))}</option>`).join("")}
-        </select>
-        <span class="pd-help">${targets.error ? esc(targets.error)
-          : "The campaign's calls show this person's number, so a lead who calls back rings them directly — and their dialler shows who it is."}</span>
-      </label>
-      <fieldset class="modal-field pd-source"><legend>Leads</legend>
-        <label class="pd-choice"><input type="radio" name="pd-src" value="unassigned" ${poolTotal ? "checked" : "disabled"}>
-          <span><b>New unassigned leads</b> · ${dashN(poolTotal)} with a phone number — they're assigned to this person as the campaign is created</span></label>
-        <label class="pd-choice"><input type="radio" name="pd-src" value="assigned" ${poolTotal ? "" : "checked"}>
-          <span><b>Leads already assigned to this person</b>, oldest-untouched first</span></label>
+
+      <fieldset class="modal-field pd-who2"><legend>Who calls</legend>
+        <div class="pd-seg" role="radiogroup">
+          <label><input type="radio" name="pd-to" value="one" checked><span>One rep</span></label>
+          <label><input type="radio" name="pd-to" value="group"${groups.groups.length ? "" : " disabled"}><span>A group</span></label>
+        </div>
+        <div id="pd-one"><select id="pd-owner"><option value="">Choose a person…</option>${repOpts}</select></div>
+        <div id="pd-grp" class="hidden">
+          <div class="pd-grprow">
+            <select id="pd-group">${groups.groups.map((g) => `<option value="${g.id}">${esc(g.name)} · ${g.members.length} rep${g.members.length === 1 ? "" : "s"}</option>`).join("")}</select>
+            <button type="button" class="btn-ghost" id="pd-groups-edit">Edit groups</button>
+          </div>
+          <div id="pd-members" class="pd-members"></div>
+          <span class="pd-help">The numbers are shared out at random and evenly between the ticked reps.</span>
+        </div>
+        ${groups.groups.length ? "" : `<span class="pd-help">No groups yet — <a href="#" id="pd-groups-new">make one</a> to give a campaign to several reps at once.</span>`}
       </fieldset>
-      <fieldset class="modal-field pd-statuses"><legend>Lead statuses to include</legend>
-        ${reps.statuses.map((s) => `<label><input type="checkbox" name="pd-st" value="${esc(s)}" checked> ${esc(s)}</label>`).join("")}
+
+      <fieldset class="modal-field"><legend>Lead status <span class="pd-help-inline">— follows the call result in Zoho</span></legend>
+        <div class="pd-chips" id="pd-sts">${sts.statuses.map((s) => `<label class="pd-chip"><input type="checkbox" name="pd-st" value="${esc(s.status)}"${s.status === "New" ? " checked" : ""}>
+          <span>${esc(s.status)} <i>${dashN(s.n)}</i></span></label>`).join("")}</div>
+        <label class="pd-check"><input type="checkbox" id="pd-unique" checked>
+          <span><b>Unique numbers only</b> — numbers nobody has called yet, from Karma Connect or in Zoho</span></label>
       </fieldset>
-      <fieldset class="modal-field pd-kinds"><legend>Lead types to include</legend>
-        <label><input type="checkbox" name="pd-kind" value="company" checked> Companies</label>
-        <label><input type="checkbox" name="pd-kind" value="person" checked> People</label>
-        <label><input type="checkbox" name="pd-kind" value="job" checked> Job postings</label>
+
+      <fieldset class="modal-field"><legend>Dates</legend>
+        <div class="pd-dates">
+          <select id="pd-datebasis" aria-label="Which date">
+            <option value="called">Last called</option>
+            <option value="added">Date added</option>
+          </select>
+          <input type="date" id="pd-from" aria-label="From">
+          <span class="dash-mute">to</span>
+          <input type="date" id="pd-to" aria-label="To">
+          <button type="button" class="btn-ghost pd-clear" id="pd-dates-clear" title="Any date">Any time</button>
+        </div>
       </fieldset>
+
+      <div class="pd-cols">
+        <fieldset class="modal-field pd-kinds"><legend>Lead types</legend>
+          <label><input type="checkbox" name="pd-kind" value="company" checked> Companies</label>
+          <label><input type="checkbox" name="pd-kind" value="person" checked> People</label>
+          <label><input type="checkbox" name="pd-kind" value="job" checked> Job postings</label>
+        </fieldset>
+        <fieldset class="modal-field pd-source"><legend>Take leads from</legend>
+          <label class="pd-choice"><input type="radio" name="pd-src" value="unassigned" checked><span><b>Unassigned</b> — they become the reps'</span></label>
+          <label class="pd-choice"><input type="radio" name="pd-src" value="assigned"><span><b>Each rep's own</b> leads</span></label>
+          <label class="pd-choice"><input type="radio" name="pd-src" value="any"><span><b>Anyone's</b> — reassigned to the rep who gets them</span></label>
+        </fieldset>
+      </div>
+
       <div class="pd-row">
-        <label class="modal-field">Max contacts
-          <input id="pd-limit" type="number" min="1" max="${reps.max}" value="${reps.max}"></label>
+        <label class="modal-field">Total contacts
+          <input id="pd-limit" type="number" min="1" max="${reps.max}" value="300"></label>
         <label class="modal-field">Seconds between calls
           <input id="pd-gap" type="number" min="2" max="60" value="6"></label>
       </div>
-      <p class="pd-count" id="pd-count" aria-live="polite"></p>
+      <label class="modal-field">Inbound callbacks go to
+        <select id="pd-callback">
+          <option value="">Each rep's own number (default)</option>
+          ${targets.targets.map((t) => `<option value="${esc(t.ext)}">${esc(t.name)} · x${esc(t.ext)} · ${esc(dashPhone(t.number))}</option>`).join("")}
+        </select>
+        ${targets.error ? `<span class="pd-help">${esc(targets.error)}</span>` : ""}
+      </label>
+      <div class="pd-count pd-preview" id="pd-count" aria-live="polite"></div>
       <label class="pd-startnow"><input type="checkbox" id="pd-start"> Start straight away</label>
       <div id="pd-err" class="login-error hidden"></div>
       <div class="modal-actions">
@@ -11261,49 +11396,158 @@ async function openNewCampaign() {
     </form>`;
   $("modal-cancel").addEventListener("click", closeModal);
   $("pd-name").focus();
-  /* How many leads this will be, as the form stands: the source's callable
-     leads in the ticked statuses, capped by Max contacts. */
-  const count = () => {
-    const src = document.querySelector('input[name="pd-src"]:checked')?.value;
-    const rep = reps.reps.find((r) => r.email === $("pd-owner").value);
-    const by = src === "unassigned" ? pool : rep?.callable_by || {};
-    const avail = [...document.querySelectorAll('input[name="pd-st"]:checked')].reduce((a, x) => a + (by[x.value] || 0), 0);
-    const n = Math.min(avail, Math.max(0, +$("pd-limit").value || 0));
-    const out = $("pd-count");
-    if (src === "assigned" && !rep) { out.textContent = "Choose a person to see how many of their leads go in."; return; }
-    /* The counts are per status, not per type, so note when the type filter
-       will narrow it further — the exact total is shown after it's made. */
-    const kindsOff = document.querySelectorAll('input[name="pd-kind"]:checked').length < 3;
-    out.innerHTML = n
-      ? `<b>${dashN(n)}</b> lead${n === 1 ? "" : "s"} will be in this campaign${avail > n ? ` (of ${dashN(avail)} available)` : ""}${
-          src === "unassigned" && rep ? ` and assigned to <b>${esc(rep.name)}</b>` : ""}${kindsOff ? ", or fewer after the lead-type filter" : ""}.`
-      : `<span class="login-error">No ${src === "unassigned" ? "unassigned" : "assigned"} leads with a phone number in those statuses.</span>`;
+  const toGroup = () => document.querySelector('input[name="pd-to"]:checked')?.value === "group";
+  const busy = new Map(reps.reps.filter((r) => r.busy_with).map((r) => [r.email, busyOf(r)]));
+  /* the ticked members of the chosen group — editable for this campaign only */
+  const paintMembers = () => {
+    const g = groups.groups.find((x) => String(x.id) === $("pd-group").value);
+    $("pd-members").innerHTML = !g ? "" : !g.members.length ? `<span class="dash-mute">Nobody in this group yet.</span>`
+      : g.members.map((m) => `<label class="pd-chip${busy.has(m.email) ? " off" : ""}" title="${esc(busy.get(m.email) || m.email)}">
+          <input type="checkbox" name="pd-mem" value="${esc(m.email)}"${busy.has(m.email) ? " disabled" : " checked"}>
+          <span>${esc(m.name)}${busy.has(m.email) ? " <i>busy</i>" : ""}</span></label>`).join("");
   };
-  $("pd-form").addEventListener("input", count);
-  $("pd-form").addEventListener("change", count);
-  count();
+  const who = () => toGroup()
+    ? [...document.querySelectorAll('input[name="pd-mem"]:checked')].map((x) => x.value)
+    : $("pd-owner").value ? [$("pd-owner").value] : [];
+  const spec = () => ({
+    owners: who(), group_id: toGroup() ? +$("pd-group").value || undefined : undefined,
+    statuses: [...document.querySelectorAll('input[name="pd-st"]:checked')].map((x) => x.value),
+    kinds: [...document.querySelectorAll('input[name="pd-kind"]:checked')].map((x) => x.value),
+    unique: $("pd-unique").checked,
+    dateBasis: $("pd-datebasis").value, from: $("pd-from").value || undefined, to: $("pd-to").value || undefined,
+    source: document.querySelector('input[name="pd-src"]:checked')?.value || "unassigned",
+    limit: +$("pd-limit").value,
+  });
+  /* the live preview: asked of the server, so it counts exactly what
+     Create would hand out — status, type, unique, dates, Zoho and all */
+  let seq = 0, t = null;
+  const preview = () => {
+    clearTimeout(t);
+    t = setTimeout(async () => {
+      const my = ++seq, out = $("pd-count"), s = spec();
+      if (!s.owners.length) { out.innerHTML = `<span class="dash-mute">Choose ${toGroup() ? "who in the group calls" : "a person"} to see who gets what.</span>`; return; }
+      if (!s.statuses.length && !s.unique) { out.innerHTML = `<span class="login-error">Tick at least one status.</span>`; return; }
+      out.classList.add("loading");
+      try {
+        const p = await api("/api/dialer/campaigns/preview", { method: "POST", body: JSON.stringify(s) });
+        if (my !== seq) return;
+        out.innerHTML = !p.total
+          ? `<span class="login-error">No numbers match those filters${p.inZoho ? ` (${dashN(p.inZoho)} left out — already in Zoho)` : ""}.</span>`
+          : `<div class="pd-pv-h"><b>${dashN(p.total)}</b> number${p.total === 1 ? "" : "s"} in this campaign
+               <span class="dash-mute">of ${dashN(p.available)} that match${p.inZoho ? ` · ${dashN(p.inZoho)} left out — already in Zoho` : ""}</span></div>
+             ${p.perRep.length > 1 || s.source !== "assigned" ? `<div class="pd-pv-reps">${p.perRep.map((r) =>
+               `<span class="pd-pv-rep"><span class="live-av pd-av">${esc(initials(r.name))}</span>${esc(r.name)} <b>${dashN(r.n)}</b></span>`).join("")}</div>` : ""}
+             ${p.busy.length ? `<div class="login-error">Busy with another session: ${p.busy.map(esc).join(", ")} — end it first.</div>` : ""}`;
+      } catch (e) { if (my === seq) out.innerHTML = `<span class="login-error">${esc(e.message)}</span>`; }
+      finally { if (my === seq) out.classList.remove("loading"); }
+    }, 250);
+  };
+  const paintWho = () => {
+    $("pd-one").classList.toggle("hidden", toGroup());
+    $("pd-grp").classList.toggle("hidden", !toGroup());
+    if (toGroup()) paintMembers();
+  };
+  $("pd-form").addEventListener("change", (e) => {
+    if (e.target.name === "pd-to") paintWho();
+    if (e.target.id === "pd-group") paintMembers();
+    preview();
+  });
+  $("pd-form").addEventListener("input", (e) => { if (e.target.type === "number") preview(); });
+  $("pd-dates-clear").addEventListener("click", () => { $("pd-from").value = ""; $("pd-to").value = ""; preview(); });
+  const toGroups = (e) => { e.preventDefault(); openRepGroups(reps, openNewCampaign); };
+  $("pd-groups-edit")?.addEventListener("click", toGroups);
+  $("pd-groups-new")?.addEventListener("click", toGroups);
+  paintWho(); preview();
   $("pd-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const err = $("pd-err"), btn = $("pd-create");
     err.classList.add("hidden");
+    const s = spec();
+    if (!s.owners.length) { err.textContent = toGroup() ? "Tick at least one rep in the group." : "Choose who calls."; err.classList.remove("hidden"); return; }
     btn.disabled = true; btn.textContent = "Creating…";
     try {
       const out = await api("/api/dialer/campaigns", { method: "POST", body: JSON.stringify({
-        name: $("pd-name").value, owner: $("pd-owner").value,
-        statuses: [...document.querySelectorAll('input[name="pd-st"]:checked')].map((x) => x.value),
-        kinds: [...document.querySelectorAll('input[name="pd-kind"]:checked')].map((x) => x.value),
-        limit: +$("pd-limit").value, gap: +$("pd-gap").value, start: $("pd-start").checked,
-        source: document.querySelector('input[name="pd-src"]:checked')?.value || "assigned",
+        ...s, name: $("pd-name").value, gap: +$("pd-gap").value, start: $("pd-start").checked,
         callback_ext: $("pd-callback").value || undefined }) });
       closeModal();
-      toast(`Campaign created with ${dashN(out.total)} lead${out.total === 1 ? "" : "s"}${
-        out.skippedInZoho ? ` · ${dashN(out.skippedInZoho)} left out — already in Zoho` : ""}${out.status === "ongoing" ? " — started" : " — press Start when ready"}`, 7000);
+      const split = out.perRep && out.perRep.length > 1 ? ` between ${out.perRep.length} reps (${out.perRep.map((r) => `${r.name} ${dashN(r.total)}`).join(", ")})` : "";
+      toast(`Campaign created with ${dashN(out.total)} number${out.total === 1 ? "" : "s"}${split}${
+        out.skippedInZoho ? ` · ${dashN(out.skippedInZoho)} left out — already in Zoho` : ""}${out.status === "ongoing" ? " — started" : " — press Start when ready"}`, 8000);
       if (S.tab !== "power") setTab("power"); else pdFetch();
     } catch (ex) {
       err.textContent = ex.message; err.classList.remove("hidden");
       btn.disabled = false; btn.textContent = "Create campaign";
     }
   });
+}
+
+/* Rep groups: named sets of reps a campaign can be given to at once. Made
+   here by a manager; who is in each is entirely their choice. `back`
+   reopens whatever sent us here (the New campaign form). */
+async function openRepGroups(reps, back) {
+  $("modal-title").textContent = "Rep groups";
+  document.querySelector(".modal")?.classList.add("team-panel");
+  $("modal-backdrop").classList.remove("hidden");
+  if (!reps) {
+    try { reps = await api("/api/dialer/campaigns/reps"); }
+    catch (e) { $("modal-body").innerHTML = `<p class="login-error">${esc(e.message)}</p>`; return; }
+  }
+  let groups = [];
+  const load = async () => { groups = (await api("/api/dialer/groups")).groups; };
+  const repList = (sel, name) => `<div class="pd-members">${reps.reps.map((r) =>
+    `<label class="pd-chip"><input type="checkbox" name="${name}" value="${r.id}"${sel.has(r.id) ? " checked" : ""}><span>${esc(r.name)}</span></label>`).join("")}</div>`;
+  const paint = () => {
+    $("modal-body").innerHTML = `
+      <p class="modal-sub">Put together the reps who work a campaign together. A campaign given to a group shares
+        its numbers out at random and evenly between them.</p>
+      <div class="rg-list">${groups.map((g) => `
+        <div class="rg-card" data-g="${g.id}">
+          <div class="rg-head">
+            <input class="rg-name" value="${esc(g.name)}" maxlength="60" aria-label="Group name">
+            <span class="dash-mute">${g.members.length} rep${g.members.length === 1 ? "" : "s"}</span>
+          </div>
+          ${repList(new Set(g.members.map((m) => m.id)), "rg-m-" + g.id)}
+          <div class="rg-acts">
+            <button class="btn-ghost rg-del" data-del="${g.id}">Delete</button>
+            <button class="btn-primary rg-save" data-save="${g.id}">Save</button>
+          </div>
+        </div>`).join("") || `<p class="dash-mute">No groups yet.</p>`}
+      </div>
+      <div class="rg-card rg-new">
+        <div class="rg-head"><input class="rg-name" id="rg-new-name" maxlength="60" placeholder="New group name, e.g. Team A"></div>
+        ${repList(new Set(), "rg-m-new")}
+        <div class="rg-acts"><button class="btn-primary" id="rg-create">Create group</button></div>
+      </div>
+      <div id="rg-err" class="login-error hidden"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="modal-cancel">${back ? "Back to the campaign" : "Close"}</button>
+      </div>`;
+    const err = (m) => { const x = $("rg-err"); x.textContent = m; x.classList.toggle("hidden", !m); };
+    const picked = (name) => [...document.querySelectorAll(`input[name="${name}"]:checked`)].map((x) => +x.value);
+    $("modal-cancel").addEventListener("click", () => { closeModal(); if (back) back(); });
+    $("rg-create").addEventListener("click", async () => {
+      try {
+        groups = (await api("/api/dialer/groups", { method: "POST", body: JSON.stringify({ name: $("rg-new-name").value, members: picked("rg-m-new") }) })).groups;
+        toast("Group created"); paint();
+      } catch (e) { err(e.message); }
+    });
+    $("modal-body").querySelectorAll("[data-save]").forEach((b) => b.addEventListener("click", async () => {
+      const id = b.dataset.save, card = b.closest(".rg-card");
+      try {
+        groups = (await api(`/api/dialer/groups/${id}`, { method: "PUT",
+          body: JSON.stringify({ name: card.querySelector(".rg-name").value, members: picked("rg-m-" + id) }) })).groups;
+        toast("Group saved"); paint();
+      } catch (e) { err(e.message); }
+    }));
+    $("modal-body").querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", async () => {
+      const g = groups.find((x) => String(x.id) === b.dataset.del);
+      if (b.dataset.sure !== "1") { b.dataset.sure = "1"; b.textContent = `Delete "${g?.name}"?`; b.classList.add("btn-danger"); return; }
+      try { groups = (await api(`/api/dialer/groups/${b.dataset.del}`, { method: "DELETE" })).groups; toast("Group deleted"); paint(); }
+      catch (e) { err(e.message); }
+    }));
+  };
+  try { await load(); } catch (e) { $("modal-body").innerHTML = `<p class="login-error">${esc(e.message)}</p>`; return; }
+  paint();
 }
 
 /* ---------------- Power dialer: the rep's side ----------------

@@ -182,7 +182,7 @@
             <span class="nav-label">Recent</span><span class="nav-count" id="count-recent"></span></button>
           <!-- admin-only: leads already in the Zoho call list, so nobody
                double-calls or re-assigns someone already being worked -->
-          <button class="nav-item admin-only hidden" data-tab="contacted" title="Leads registered in Zoho CRM">
+          <button class="nav-item admin-only hidden" data-tab="contacted" title="Companies and people already in Zoho CRM — they move here from Companies and People">
             <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
             <span class="nav-label">Contacted</span><span class="nav-count" id="count-contacted"></span></button>
         </div>
@@ -314,6 +314,7 @@
           <select id="zoho-auto" class="zoho-auto hidden" aria-label="Automatic Zoho scan"
                   title="How often Zoho is scanned by itself">
             <option value="off">Auto-scan: off</option>
+            <option value="5">Auto-scan: every 5 min</option>
             <option value="10">Auto-scan: every 10 min</option>
             <option value="30">Auto-scan: every 30 min</option>
             <option value="60">Auto-scan: every hour</option>
@@ -335,8 +336,7 @@
         <label class="ctl"><span class="ctl-ic">◉</span>
           <select id="filter-status" title="Filter by status">
             <option value="">All statuses</option>
-            <option>New</option><option>Contacted</option><option>Responded</option>
-            <option>Qualified</option><option>Not interested</option>
+            <option>New</option>
           </select>
         </label>
         <!-- Job board only: which board the posting was scraped from -->
@@ -617,6 +617,7 @@
             <input type="search" id="pd-q" placeholder="Search campaigns" autocomplete="off" aria-label="Search campaigns">
           </label>
           <button id="pd-upload" class="btn-secondary">⬆ Upload spreadsheet</button>
+          <button id="pd-groups" class="btn-secondary" title="Groups of reps a campaign can be shared between">Groups</button>
           <button id="pd-new" class="btn-primary">+ New campaign</button>
         </div>
       </div>
