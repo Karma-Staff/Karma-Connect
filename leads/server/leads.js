@@ -20,7 +20,7 @@ const activity = require("./activity");
 const counts = require("./counts");
 // statuses are open-ended now: they come from Zoho call results (zoho-scan.js applyStatus)
 /* 'lead' (a Zoho Lead/Contact) | 'registered' (only in Zoho's call history) | null */
-const { zohoKindSql, inZohoSql } = require("./zoho-scan");
+const { zohoKindSql, inZohoSql, contactedSql } = require("./zoho-scan");
 
 const router = express.Router();
 /* path-scoped, not bare router.use(requireUser): every feature router is
@@ -126,7 +126,7 @@ function buildFilters(p, user) {
      Contacted (admins), not in Companies or People, so nobody works it twice.
      Favorites, the DNC tab and Contacted itself still show it. */
   if (["company", "person"].includes(p.kind) && p.inzoho !== "true" && p.favorite !== "true" && p.removed !== "true")
-    add("NOT " + inZohoSql("leads"));
+    add("NOT " + contactedSql("leads"));
   // removed=true is the DNC tab; everything else excludes banned leads
   add(p.removed === "true" ? "removed" : "NOT removed");
   // a deleted lead is in the admin's trash bin: no tab, DNC included, shows it
@@ -141,7 +141,7 @@ function buildFilters(p, user) {
      Zoho call list" set, there to stop anyone calling or being assigned a
      person who is already being worked. jsonb_exists (not the ? operator) so the
      add() placeholder substitution above leaves it alone. */
-  if (p.inzoho === "true") add(inZohoSql("leads"));
+  if (p.inzoho === "true") add(contactedSql("leads"));
   /* A KPI tile was clicked. Comma-separated so tiles can be combined —
      "unassigned,ready" is the assignments board asking for work that is both
      unclaimed and actually callable. Unknown keys are ignored, and a single

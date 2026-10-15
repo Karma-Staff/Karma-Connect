@@ -90,6 +90,12 @@ const zohoKindSql = (alias = "leads") => `(SELECT CASE
 const inZohoSql = (alias = "leads") =>
   `EXISTS (SELECT 1 FROM activity_log a WHERE a.lead_id = ${alias}.id AND jsonb_exists(a.meta, 'crm_link') AND ${REAL_LINK("a")})`;
 
+/* SQL: is this lead listed under Contacted instead of Companies / People?
+   In Zoho AND worked there — its status is a Zoho Call Result, not still
+   'New'. A Zoho record nobody has called yet stays in Companies / People.
+   Campaigns and bulk assign still guard on inZohoSql (any Zoho record). */
+const contactedSql = (alias = "leads") => `(${inZohoSql(alias)} AND ${alias}.status <> 'New')`;
+
 const zIso = (d) => new Date(d).toISOString().replace(/\.\d{3}Z$/, "+00:00");
 const clean = (v) => String(v == null ? "" : v).trim();
 
@@ -425,4 +431,4 @@ router.get("/api/crm/zoho/scan", requireAdmin, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-module.exports = { router, startSweeper, run, kindsOfPhones, zohoKindSql, inZohoSql, _test: { recordOf, flag, resolveCalls, changed, dueTick, config, applyStatus } };
+module.exports = { router, startSweeper, run, kindsOfPhones, zohoKindSql, inZohoSql, contactedSql, _test: { recordOf, flag, resolveCalls, changed, dueTick, config, applyStatus } };
