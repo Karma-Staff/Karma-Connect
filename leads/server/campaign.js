@@ -29,6 +29,11 @@ const calltime = require("./calltime");
    table; current/outcome below hand off to this when they see one. */
 const upload = require("./campaign-upload");
 const { zohoKindSql, inZohoSql } = require("./zoho-scan");
+/* the state filter takes "TX" or "Texas" — the data holds both (CLAUDE.md) */
+const { STATE_NAME } = require("./leads");
+/* the AI filter box on the New campaign form — the same proxy and model the
+   spreadsheet upload uses to read its columns (campaign-upload.js) */
+const { handleClaude } = require("../../api/_proxy.cjs");
 
 const router = express.Router();
 
@@ -509,7 +514,8 @@ router.get("/api/dialer/campaigns/reps", requireAdmin, async (req, res, next) =>
          AND nullif(btrim(phone), '') IS NOT NULL AND status = ANY($1)
        GROUP BY status`, [OPEN_STATUSES])).rows;
     const unassigned = Object.fromEntries(pool.map((r) => [r.status, r.n]));
-    res.json({ reps: rows, statuses: OPEN_STATUSES, max: MAX_CAMPAIGN, unassigned });
+    /* states: code → name, for the form's State box (typed either way) */
+    res.json({ reps: rows, statuses: OPEN_STATUSES, max: MAX_CAMPAIGN, unassigned, states: STATE_NAME });
   } catch (e) { next(e); }
 });
 
@@ -531,6 +537,9 @@ router.get("/api/dialer/campaigns/reps", requireAdmin, async (req, res, next) =>
                 any         any lead, reassigned to whichever rep gets it
      limit      the TOTAL to hand out; a group splits it evenly and at
                 random — 900 between three reps is 300 each
+     states     US states, as "TX" or "Texas" (the data holds both spellings)
+     city       the city contains this
+     q          the lead's name contains this
 
    A lead already in Zoho is left out unless it was picked by a Zoho status
    (a lead whose status is a Call Result is in Zoho by definition — choosing
@@ -540,7 +549,18 @@ const TZ = process.env.REPORT_TZ || process.env.DIGEST_TZ || "America/New_York";
 const KINDS = ["company", "person", "job"];
 const SOURCES = ["unassigned", "assigned", "any"];
 const isYmd = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ""));
-const PHONE10_NUM = `right(regexp_replace(regexp_replace(coalesce(a.meta->>'number', ''), '\\s*(ext\\.?|extension|x|#)\\s*\\d+\\s*$', '', 'i'), '\\D', '', 'g'), 10)`;
+/* "TX", "tx" or "Texas" → "TX"; anything else → null */
+const stateCode = (s) => {
+  const v = String(s || "").trim();
+  if (!v) return null;
+  if (STATE_NAME[v.toUpperCase()]) return v.toUpperCase();
+  return Object.keys(STATE_NAME).find((k) => STATE_NAME[k].toLowerCase() === v.toLowerCase()) || null;
+};
+const trimTo = (v, max) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, max);
+/* a contains-match for ILIKE, with the pattern characters escaped (the
+   default escape is backslash) */
+const like = (s) => "%" + s.replace(/[\\%_]/g, (c) => "\\" + c) + "%";
+const PHONE10_NUM =`right(regexp_replace(regexp_replace(coalesce(a.meta->>'number', ''), '\\s*(ext\\.?|extension|x|#)\\s*\\d+\\s*$', '', 'i'), '\\D', '', 'g'), 10)`;
 
 function readSpec(b) {
   const kinds0 = (Array.isArray(b.kinds) ? b.kinds : KINDS).filter((x) => KINDS.includes(x));
@@ -548,11 +568,14 @@ function readSpec(b) {
     .map((x) => String(x || "").trim()).filter((x) => x && x.length <= 60).slice(0, 50);
   let from = isYmd(b.from) ? b.from : null, to = isYmd(b.to) ? b.to : null;
   if (from && to && from > to) [from, to] = [to, from];
+  const states = [...new Set((Array.isArray(b.states) ? b.states : b.state ? [b.state] : [])
+    .map(stateCode).filter(Boolean))].slice(0, 20);
   return {
     statuses, kinds: kinds0.length ? kinds0 : KINDS, unique: b.unique === true,
     dateBasis: b.dateBasis === "added" ? "added" : "called", from, to,
     source: SOURCES.includes(b.source) ? b.source : "assigned",   // as before: the rep's own leads
     limit: Math.max(1, Math.min(MAX_CAMPAIGN, Math.round(+b.limit || MAX_CAMPAIGN))),
+    states, city: trimTo(b.city, 60), q: trimTo(b.q, 80),
   };
 }
 
@@ -567,6 +590,11 @@ function specWhere(spec, args, { owners = null, skipped = false } = {}) {
   if (spec.source === "unassigned") w.push("nullif(btrim(l.owner), '') IS NULL");
   if (owners) w.push(`lower(btrim(l.owner)) = ANY(${p(owners)})`);
   if (spec.statuses.length) w.push(`l.status = ANY(${p(spec.statuses)})`);
+  /* a state is stored as "TX" or "Texas" — match either, as the leads list does */
+  if (spec.states.length) w.push(`(upper(btrim(l.state)) = ANY(${p(spec.states)})
+    OR lower(btrim(l.state)) = ANY(${p(spec.states.map((s) => STATE_NAME[s].toLowerCase()))}))`);
+  if (spec.city) w.push(`l.city ILIKE ${p(like(spec.city))}`);
+  if (spec.q) w.push(`l.name ILIKE ${p(like(spec.q))}`);
   /* in Zoho → only when its status is one Zoho gave it (not one of Karma
      Connect's own: New, Contacted, Responded, Qualified, Not interested) */
   /* skipped: the opposite — what was left out for being in Zoho, to say back */
@@ -664,6 +692,147 @@ router.post("/api/dialer/campaigns/preview", requireAdmin, express.json({ limit:
   } catch (e) { next(e); }
 });
 
+/* ---------------- the AI filter box ----------------
+
+   POST /api/dialer/campaigns/ai-filter {text} — the manager describes the
+   leads in plain words ("No Answer and VM companies in Texas called last
+   week, unique numbers only") and gets back the filter spec the form then
+   sets. The model only proposes: every field comes through the whitelist
+   below (unknown statuses and states are dropped and said back, dates must
+   parse, the limit is clamped), the manager sees the result as chips and
+   the live preview, and nothing the model wrote reaches SQL except as a
+   parameter through readSpec/specWhere. If the model is unavailable the
+   form is left alone and the manager sets the filters by hand. */
+const AI_MODEL = process.env.RESEARCH_MODEL || "claude-haiku-4-5";
+const AI_TEXT_MAX = 500;
+const SOURCE_WORDS = { unassigned: "from the unassigned pool", assigned: "from each rep's own leads", any: "from anyone's leads" };
+
+/* every status leads currently have — the same query /api/lead-statuses runs
+   for an admin, so the model only ever sees real spellings */
+async function allStatuses() {
+  const rows = (await query(
+    `SELECT status, count(*)::int AS n FROM leads
+      WHERE deleted_at IS NULL AND NOT removed AND nullif(btrim(status), '') IS NOT NULL
+      GROUP BY status ORDER BY (status = 'New') DESC, count(*) DESC, status`)).rows;
+  if (!rows.some((r) => r.status === "New")) rows.unshift({ status: "New", n: 0 });
+  return rows.map((r) => r.status);
+}
+
+function aiSystemPrompt(statuses, today) {
+  return [
+    "You turn a sales manager's description of which leads to call into a JSON filter for a power-dialer campaign.",
+    `Today is ${today} (${TZ}).`,
+    "Reply with ONLY a JSON object — no prose, no code fences — with exactly these keys:",
+    `- statuses: array of lead statuses from this list ONLY, spelled exactly as listed: ${statuses.map((s) => JSON.stringify(s)).join(", ")}. `
+      + `"voicemail" means "VM", "no answer"/"NA" means "No Answer", "new"/"fresh"/"never called" means "New". [] when no status is mentioned.`,
+    `- kinds: array from ["company","person","job"]: companies/businesses → "company"; people/contacts/decision makers → "person"; jobs/job postings/hiring → "job". [] when not mentioned.`,
+    "- unique: true if the text asks for unique, fresh or never-called numbers; false if it asks to call them again / re-call; null when not mentioned.",
+    `- dateBasis: "called" (when the lead was last called) or "added" (when it was added or imported), or null.`,
+    `- from, to: "YYYY-MM-DD" or null, worked out from any time words relative to today ("last week" = the previous Monday to Sunday, "past 7 days", "yesterday", "this month", "since 1 Oct", "in September"). Both null when the text says nothing about time.`,
+    `- source: "unassigned" (leads nobody owns yet — words like unassigned, the pool, nobody's), "assigned" (the reps' own leads — their own, already assigned to them), "any" (anyone's leads, whoever owns them), or null when not mentioned.`,
+    "- limit: an integer when the text says how many numbers in total, else null.",
+    `- states: array of two-letter US state codes mentioned ("Texas" → "TX"), [] when none.`,
+    "- city: a city name when one is mentioned, else null.",
+    `- name: text the lead's name or company name must contain when the text asks for that ("named Servpro", "with plumbing in the name"), else null.`,
+    "- unmapped: array of short phrases from the text that none of the keys above can express (e.g. \"with over 50 employees\"), [] when everything mapped.",
+  ].join("\n");
+}
+
+/* the model's answer → a spec the form can set. null = "not mentioned", so
+   the form keeps its own default for that field. `dropped` says back what
+   was not usable. */
+function aiReadSpec(raw, statuses) {
+  const dropped = [];
+  const arr = (v) => (Array.isArray(v) ? v : []).slice(0, 30);
+  const byLower = new Map(statuses.map((s) => [s.toLowerCase(), s]));
+  const picked = [];
+  for (const s of arr(raw.statuses)) {
+    const hit = byLower.get(trimTo(s, 60).toLowerCase());
+    if (hit) { if (!picked.includes(hit)) picked.push(hit); } else dropped.push(`status "${trimTo(s, 40)}"`);
+  }
+  const kinds = [];
+  for (const k of arr(raw.kinds)) {
+    const v = trimTo(k, 20).toLowerCase();
+    if (KINDS.includes(v)) { if (!kinds.includes(v)) kinds.push(v); } else dropped.push(`lead type "${trimTo(k, 40)}"`);
+  }
+  const states = [];
+  for (const s of arr(raw.states)) {
+    const code = stateCode(s);
+    if (code) { if (!states.includes(code)) states.push(code); } else dropped.push(`state "${trimTo(s, 40)}"`);
+  }
+  const day = (v, label) => {
+    if (v == null || v === "") return null;
+    const s = trimTo(v, 10);
+    if (isYmd(s) && !Number.isNaN(new Date(s + "T00:00:00Z").getTime())) return s;
+    dropped.push(`${label} date "${trimTo(v, 40)}"`);
+    return null;
+  };
+  let from = day(raw.from, "from"), to = day(raw.to, "to");
+  if (from && to && from > to) [from, to] = [to, from];
+  const n = Number(raw.limit);
+  const str = (v, max) => (typeof v === "string" ? trimTo(v, max) : "") || null;   // a number or an array is not a name
+  return {
+    spec: {
+      statuses: picked, kinds,
+      unique: typeof raw.unique === "boolean" ? raw.unique : null,
+      dateBasis: raw.dateBasis === "added" || raw.dateBasis === "called" ? raw.dateBasis : null,
+      from, to,
+      source: SOURCES.includes(raw.source) ? raw.source : null,
+      limit: Number.isFinite(n) && n > 0 ? Math.max(1, Math.min(MAX_CAMPAIGN, Math.round(n))) : null,
+      states, city: str(raw.city, 60), q: str(raw.name, 80),
+    },
+    dropped: dropped.concat(arr(raw.unmapped).map((x) => trimTo(x, 80)).filter(Boolean)).slice(0, 10),
+  };
+}
+
+/* one plain line of what the spec says, so the manager can check it */
+function describeAiSpec(s) {
+  const fmt = (d) => new Date(d + "T00:00:00Z").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+  const list = (xs) => xs.length < 2 ? xs.join("") : xs.slice(0, -1).join(", ") + " or " + xs[xs.length - 1];
+  const KIND_WORD = { company: "companies", person: "people", job: "job postings" };
+  const parts = [];
+  if (s.statuses.length) parts.push("status " + list(s.statuses));
+  if (s.kinds.length) parts.push(list(s.kinds.map((k) => KIND_WORD[k])));
+  if (s.states.length) parts.push("in " + list(s.states.map((k) => STATE_NAME[k])));
+  if (s.city) parts.push("city " + s.city);
+  if (s.q) parts.push(`name contains "${s.q}"`);
+  if (s.from || s.to) {
+    const basis = s.dateBasis === "added" ? "added" : "last called";
+    parts.push(s.from && s.to ? `${basis} ${fmt(s.from)} to ${fmt(s.to)}` : s.from ? `${basis} since ${fmt(s.from)}` : `${basis} up to ${fmt(s.to)}`);
+  }
+  if (s.unique === true) parts.push("unique numbers only");
+  if (s.unique === false) parts.push("including numbers already called");
+  if (s.source) parts.push(SOURCE_WORDS[s.source]);
+  if (s.limit) parts.push(`${s.limit} numbers in total`);
+  return parts.length ? parts.join(" · ") : "No filters recognised — the form is set to its defaults";
+}
+
+/* POST /api/dialer/campaigns/ai-filter {text} — plain words → the form's
+   filter spec, whitelisted above; the model never reaches SQL */
+router.post("/api/dialer/campaigns/ai-filter", requireAdmin, express.json({ limit: "4kb" }), async (req, res, next) => {
+  try {
+    const text = trimTo((req.body || {}).text, AI_TEXT_MAX);
+    if (!text) return res.status(400).json({ error: "Describe the leads first." });
+    const statuses = await allStatuses();
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: TZ });   // YYYY-MM-DD, the team's day
+    const body = JSON.stringify({ model: AI_MODEL, max_tokens: 400,
+      system: aiSystemPrompt(statuses, today), messages: [{ role: "user", content: text }] });
+    let raw;
+    try {
+      const out = await handleClaude({ method: "POST", bodyString: body, authHeader: "", identity: null },
+        { requireAuth: false, recordUsage: false });
+      if (out.status !== 200) throw new Error("ai upstream " + out.status);
+      const reply = (JSON.parse(out.body).content || []).filter((c) => c.type === "text").map((c) => c.text).join("");
+      raw = JSON.parse(reply.slice(reply.indexOf("{"), reply.lastIndexOf("}") + 1));
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("not an object");
+    } catch (e) {
+      return res.status(502).json({ error: "The AI couldn't read that just now — set the filters by hand, or try again." });
+    }
+    const { spec, dropped } = aiReadSpec(raw, statuses);
+    res.json({ spec, summary: describeAiSpec(spec), unmapped: dropped });
+  } catch (e) { next(e); }
+});
+
 router.post("/api/dialer/campaigns", requireAdmin, express.json({ limit: "8kb" }), async (req, res, next) => {
   try {
     const b = req.body || {};
@@ -728,6 +897,8 @@ router.post("/api/dialer/campaigns", requireAdmin, express.json({ limit: "8kb" }
         const filters = JSON.stringify({ kind: "campaign", name, created_by: me(req), status, gap,
           source: spec.source, statuses: spec.statuses, kinds: spec.kinds, unique: spec.unique,
           dates: spec.from || spec.to ? { basis: spec.dateBasis, from: spec.from, to: spec.to } : null,
+          ...(spec.states.length ? { states: spec.states } : {}),
+          ...(spec.city ? { city: spec.city } : {}), ...(spec.q ? { q: spec.q } : {}),
           hasPhone: true, callback,
           ...(batch ? { group: { batch, id: group?.id || null, name: group?.name || null, size: reps.length } } : {}),
           ...(b.start ? { started: new Date().toISOString() } : {}) });

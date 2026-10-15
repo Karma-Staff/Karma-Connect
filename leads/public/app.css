@@ -3796,10 +3796,6 @@ body.kc-desktop .kd-win { display: flex; align-items: center; gap: 2px; margin-l
   background: var(--surface-2); color: var(--ink); font: inherit; font-size: 13px; color-scheme: inherit; min-width: 0; }
 .pd-dates select { width: auto; }
 .pd-clear { height: 38px; }
-.pd-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr); gap: 16px; align-items: start; }
-.pd-form2 .pd-kinds { display: flex; flex-direction: column; gap: 8px; }
-.pd-form2 .pd-kinds label { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; color: var(--ink); }
-.pd-form2 .pd-choice { padding: 8px 10px; }
 .pd-preview { padding: 12px 14px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface-2);
   transition: opacity .15s; }
 .pd-preview.loading { opacity: .6; }
@@ -3812,8 +3808,76 @@ body.kc-desktop .kd-win { display: flex; align-items: center; gap: 2px; margin-l
 .pd-preview .login-error { margin: 8px 0 0; }
 .pd-grptag { color: var(--accent-ink); font-weight: 600; }
 @media (max-width: 600px) {
-  .pd-cols, .pd-row { grid-template-columns: 1fr; }
+  .pd-row { grid-template-columns: 1fr; }
   .pd-dates input[type="date"] { flex: 1 1 130px; }
+}
+
+/* ---- New campaign: three steps, the AI box, the filter chips ----
+   Sits on the v2 rules above (.pd-seg, .pd-chip, .pd-choice, .pd-dates,
+   .pd-preview). Few boxes: each step is a heading with a number and a quiet
+   rule above it; only the AI box and the preview are tinted. */
+.pd-step { padding: 16px 0 18px; border-top: 1px solid var(--border); }
+.pd-step:first-child { padding-top: 2px; border-top: 0; }
+.pd-step-h { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; font-size: 14px; font-weight: 700; color: var(--ink); }
+.pd-step-h span { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%;
+  flex: none; background: var(--accent); color: #fff; font-size: 12px; font-weight: 700; }
+.pd-form2 .pd-seg { margin-bottom: 10px; }
+.pd-form2 .pd-help { display: block; margin: 8px 0 0; }
+.pd-f { margin-top: 16px; }
+.pd-f-l { margin-bottom: 7px; font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
+.pd-f-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.pd-form2 .pd-chips { margin: 0; }
+.modal .pd-form2 .pd-kinds + label.pd-check { margin-top: 12px; }
+/* whose leads: three cards, the hint under each title */
+.pd-src { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.pd-form2 .pd-choice { padding: 10px 12px; align-items: flex-start; }
+.pd-choice small { display: block; margin-top: 3px; font-size: 11.5px; line-height: 1.4; color: var(--ink-3); }
+.pd-choice:has(input:checked) small { color: var(--ink-2); }
+.modal .pd-form2 .pd-f-3 label.modal-field { margin: 0; }
+.pd-form2 .modal-field .pd-help { margin-top: 2px; }
+.pd-state-bad { color: #ff8a80; }
+:root[data-theme="light"] .pd-state-bad { color: #b3261e; }
+/* the AI box */
+.pd-ai { padding: 12px 14px 12px; border-radius: 12px; background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); }
+.modal .pd-form2 label.pd-ai-l { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--ink); }
+.pd-ai-l i { font-style: normal; font-size: 10px; font-weight: 800; letter-spacing: .08em; padding: 2px 6px; border-radius: 6px;
+  background: var(--accent); color: #fff; flex: none; }
+.pd-ai-row { display: flex; gap: 8px; }
+.pd-form2 .pd-ai-row input { flex: 1; min-width: 0; margin: 0; height: 40px; background: var(--surface); }
+.pd-ai-row .btn-primary { flex: none; height: 40px; padding: 0 16px; font-size: 13px; white-space: nowrap; }
+.pd-ai-row .btn-primary:disabled { opacity: .6; }
+.pd-ai-out { margin-top: 9px; font-size: 12.5px; line-height: 1.5; color: var(--ink-2); }
+.pd-ai-out b { color: var(--ink); }
+.pd-ai-out.bad { color: #ff8a80; }
+:root[data-theme="light"] .pd-ai-out.bad { color: #b3261e; }
+.pd-ai-miss { display: block; color: var(--ink-3); }
+/* call settings, folded */
+.pd-more { margin-top: 12px; }
+.pd-more summary { display: inline-block; cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--accent-ink); list-style: none; }
+.pd-more summary::-webkit-details-marker { display: none; }
+.pd-more summary::before { content: "▸"; display: inline-block; width: 14px; }
+.pd-more[open] summary::before { content: "▾"; }
+.pd-more .pd-row { margin-top: 10px; }
+.modal .pd-form2 .pd-more label.pd-check { margin-top: 12px; }
+/* the preview: the chips that narrow the list, then the count */
+.pd-form2 .pd-preview { margin-top: 4px; }
+.pd-active { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.pd-tag { display: inline-flex; align-items: center; gap: 2px; padding: 3px 4px 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 500;
+  background: var(--surface); border: 1px solid var(--border); color: var(--ink-2); }
+.pd-tag b { color: var(--ink); font-weight: 600; margin-right: 3px; }
+.pd-tag-none { padding-right: 10px; color: var(--ink-3); }
+.pd-tag button { width: 18px; height: 18px; margin-left: 2px; padding: 0; border: 0; border-radius: 50%; background: transparent;
+  color: var(--ink-3); font: inherit; font-size: 15px; line-height: 18px; cursor: pointer; }
+.pd-tag button:hover { background: var(--surface-2); color: var(--ink); }
+/* the count again, beside Create, for when the preview has scrolled off */
+.pd-foot { margin-right: auto; font-size: 12.5px; font-weight: 600; color: var(--ink-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pd-foot.bad { color: #ff8a80; }
+:root[data-theme="light"] .pd-foot.bad { color: #b3261e; }
+@media (max-width: 600px) {
+  .pd-f-3, .pd-src { grid-template-columns: 1fr; }
+  .pd-ai-row { flex-wrap: wrap; }
+  .pd-ai-row .btn-primary { flex: 1 1 100%; }
 }
 
 /* ---- Rep groups ---- */
@@ -3846,13 +3910,16 @@ body.kc-desktop .kd-win { display: flex; align-items: center; gap: 2px; margin-l
 .pd-form2 .pd-choice input[type="radio"] { width: 16px; height: 16px; padding: 0; margin: 2px 0 0; flex: none; }
 .pd-form2 .pd-dates input[type="date"] { width: auto; flex: 0 1 165px; margin: 0; }
 .pd-form2 .pd-dates select { width: auto; flex: none; margin: 0; }
-.pd-form2 .pd-check input[type="checkbox"], .pd-form2 .pd-kinds input[type="checkbox"] { padding: 0; }
-@media (max-width: 600px) { .pd-form2 .pd-dates input[type="date"] { flex: 1 1 130px; } }
+.pd-form2 .pd-check input[type="checkbox"] { padding: 0; }
+/* phone: the basis on its own row, from–to together, Clear last */
+@media (max-width: 600px) {
+  .pd-form2 .pd-dates select { flex: 1 1 100%; }
+  .pd-form2 .pd-dates input[type="date"] { flex: 1 1 120px; }
+}
 /* .modal label is display:block with a bottom margin — these labels lay out their own way */
 .modal .pd-form2 label.pd-choice { display: flex; margin: 0; }
 .modal .pd-form2 .pd-seg label, .modal .pd-form2 label.pd-chip { display: inline-flex; margin: 0; }
 .modal .pd-form2 label.pd-check { display: flex; margin: 8px 0 0; }
-.modal .pd-form2 .pd-kinds label { margin: 0; }
 .modal .pd-form2 label.modal-field { margin-bottom: 0; }
 .modal .rg-card label.pd-chip { display: inline-flex; margin: 0; }
 

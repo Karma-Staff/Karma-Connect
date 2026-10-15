@@ -11301,8 +11301,22 @@ async function openUploadCampaign() {
   });
 }
 
+/* New campaign, in three steps: who makes the calls, which leads (with a
+   plain-English box the AI turns into the filters), how many and a name.
+   The preview is the server's — it counts exactly what Create would hand
+   out — and the filter chips above it are the one place to see, and clear,
+   everything that narrows the list, however it was set. */
+const PD_KINDS = [["company", "Companies"], ["person", "People"], ["job", "Job postings"]];
+/* `source` — whose leads the campaign is built from. campaign.js: unassigned
+   and any give the picked leads to the rep who gets them; assigned only
+   draws from what each rep already owns. */
+const PD_SOURCES = [
+  ["unassigned", "Nobody's yet", "Leads with no owner. They become the rep's when the campaign is made."],
+  ["assigned", "Each rep's own", "Only leads already on that rep's list. Nothing changes hands."],
+  ["any", "Anyone's", "Any lead, whoever owns it. It moves to the rep who gets it."],
+];
 async function openNewCampaign() {
-  $("modal-title").textContent = "New power-dialer campaign";
+  $("modal-title").textContent = "New campaign";
   $("modal-body").innerHTML = `<p class="modal-sub">Loading the team…</p>`;
   document.querySelector(".modal")?.classList.add("team-panel");
   $("modal-backdrop").classList.remove("hidden");
@@ -11313,89 +11327,124 @@ async function openNewCampaign() {
       api("/api/dialer/groups").catch(() => ({ groups: [] })),
       api("/api/lead-statuses").catch(() => ({ statuses: [{ status: "New", n: 0 }] }))]);
   } catch (e) { $("modal-body").innerHTML = `<p class="login-error">${esc(e.message)}</p>`; return; }
+  const STATES = reps.states || {};
   const today = new Date().toLocaleDateString([], { day: "2-digit", month: "2-digit", year: "numeric" }).replace(/\D/g, "");
   const busyOf = (r) => r.busy_with ? ` (busy: ${r.busy_kind === "campaign" ? r.busy_with : "own session"})` : "";
   const repOpts = reps.reps.map((r) => `<option value="${esc(r.email)}"${r.busy_with ? " disabled" : ""}>${esc(r.name)}${esc(busyOf(r))}</option>`).join("");
   $("modal-body").innerHTML = `
-    <p class="modal-sub">Choose who calls and which numbers they get. When you press <b>Start</b>, each rep's
-      Call session rings their numbers in turn.</p>
-    <form id="pd-form" class="pd-form pd-form2">
-      <label class="modal-field">Campaign name
-        <input id="pd-name" maxlength="80" required placeholder="e.g. Water restoration ${today}"></label>
-
-      <fieldset class="modal-field pd-who2"><legend>Who calls</legend>
-        <div class="pd-seg" role="radiogroup">
+    <form id="pd-form" class="pd-form pd-form2" autocomplete="off">
+      <section class="pd-step">
+        <h4 class="pd-step-h"><span>1</span>Who makes the calls</h4>
+        <div class="pd-seg" role="radiogroup" aria-label="One rep or a group">
           <label><input type="radio" name="pd-to" value="one" checked><span>One rep</span></label>
           <label><input type="radio" name="pd-to" value="group"${groups.groups.length ? "" : " disabled"}><span>A group</span></label>
         </div>
-        <div id="pd-one"><select id="pd-owner"><option value="">Choose a person…</option>${repOpts}</select></div>
+        <div id="pd-one"><select id="pd-owner" aria-label="Rep"><option value="">Choose a rep…</option>${repOpts}</select></div>
         <div id="pd-grp" class="hidden">
           <div class="pd-grprow">
-            <select id="pd-group">${groups.groups.map((g) => `<option value="${g.id}">${esc(g.name)} · ${g.members.length} rep${g.members.length === 1 ? "" : "s"}</option>`).join("")}</select>
+            <select id="pd-group" aria-label="Group">${groups.groups.map((g) => `<option value="${g.id}">${esc(g.name)} · ${g.members.length} rep${g.members.length === 1 ? "" : "s"}</option>`).join("")}</select>
             <button type="button" class="btn-ghost" id="pd-groups-edit">Edit groups</button>
           </div>
           <div id="pd-members" class="pd-members"></div>
-          <span class="pd-help">The numbers are shared out at random and evenly between the ticked reps.</span>
+          <p class="pd-help">Untick anyone who shouldn't get a share. The numbers are split evenly, at random.</p>
         </div>
-        ${groups.groups.length ? "" : `<span class="pd-help">No groups yet — <a href="#" id="pd-groups-new">make one</a> to give a campaign to several reps at once.</span>`}
-      </fieldset>
+        ${groups.groups.length ? "" : `<p class="pd-help">No groups yet — <a href="#" id="pd-groups-new">make one</a> to give a campaign to several reps at once.</p>`}
+      </section>
 
-      <fieldset class="modal-field"><legend>Lead status <span class="pd-help-inline">— follows the call result in Zoho</span></legend>
-        <div class="pd-chips" id="pd-sts">${sts.statuses.map((s) => `<label class="pd-chip"><input type="checkbox" name="pd-st" value="${esc(s.status)}"${s.status === "New" ? " checked" : ""}>
-          <span>${esc(s.status)} <i>${dashN(s.n)}</i></span></label>`).join("")}</div>
-        <label class="pd-check"><input type="checkbox" id="pd-unique" checked>
-          <span><b>Unique numbers only</b> — numbers nobody has called yet, from Karma Connect or in Zoho</span></label>
-      </fieldset>
-
-      <fieldset class="modal-field"><legend>Dates</legend>
-        <div class="pd-dates">
-          <select id="pd-datebasis" aria-label="Which date">
-            <option value="called">Last called</option>
-            <option value="added">Date added</option>
-          </select>
-          <input type="date" id="pd-from" aria-label="From">
-          <span class="dash-mute">to</span>
-          <input type="date" id="pd-to" aria-label="To">
-          <button type="button" class="btn-ghost pd-clear" id="pd-dates-clear" title="Any date">Any time</button>
+      <section class="pd-step">
+        <h4 class="pd-step-h"><span>2</span>Which leads</h4>
+        <div class="pd-ai">
+          <label class="pd-ai-l" for="pd-ai-text"><i>AI</i>Describe the leads and the filters below fill themselves in</label>
+          <div class="pd-ai-row">
+            <input id="pd-ai-text" maxlength="500" placeholder="e.g. No Answer and VM companies in Texas called last week, unique numbers only">
+            <button type="button" class="btn-primary" id="pd-ai-go">Fill in filters</button>
+          </div>
+          <div id="pd-ai-out" class="pd-ai-out hidden" aria-live="polite"></div>
         </div>
-      </fieldset>
 
-      <div class="pd-cols">
-        <fieldset class="modal-field pd-kinds"><legend>Lead types</legend>
-          <label><input type="checkbox" name="pd-kind" value="company" checked> Companies</label>
-          <label><input type="checkbox" name="pd-kind" value="person" checked> People</label>
-          <label><input type="checkbox" name="pd-kind" value="job" checked> Job postings</label>
-        </fieldset>
-        <fieldset class="modal-field pd-source"><legend>Take leads from</legend>
-          <label class="pd-choice"><input type="radio" name="pd-src" value="unassigned" checked><span><b>Unassigned</b> — they become the reps'</span></label>
-          <label class="pd-choice"><input type="radio" name="pd-src" value="assigned"><span><b>Each rep's own</b> leads</span></label>
-          <label class="pd-choice"><input type="radio" name="pd-src" value="any"><span><b>Anyone's</b> — reassigned to the rep who gets them</span></label>
-        </fieldset>
-      </div>
+        <div class="pd-f">
+          <div class="pd-f-l">Status <span class="pd-help-inline">— the call result from Zoho</span></div>
+          <div class="pd-chips" id="pd-sts">${sts.statuses.map((s) => `<label class="pd-chip"><input type="checkbox" name="pd-st" value="${esc(s.status)}"${s.status === "New" ? " checked" : ""}>
+            <span>${esc(s.status)} <i>${dashN(s.n)}</i></span></label>`).join("")}</div>
+        </div>
 
-      <div class="pd-row">
-        <label class="modal-field">Total contacts
-          <input id="pd-limit" type="number" min="1" max="${reps.max}" value="300"></label>
-        <label class="modal-field">Seconds between calls
-          <input id="pd-gap" type="number" min="2" max="60" value="6"></label>
+        <div class="pd-f">
+          <div class="pd-f-l">Whose leads</div>
+          <div class="pd-src" role="radiogroup" aria-label="Whose leads">${PD_SOURCES.map(([v, t, h], i) =>
+            `<label class="pd-choice"><input type="radio" name="pd-src" value="${v}"${i ? "" : " checked"}><span><b>${t}</b><small>${h}</small></span></label>`).join("")}</div>
+        </div>
+
+        <div class="pd-f">
+          <div class="pd-f-l">Lead type</div>
+          <div class="pd-chips pd-kinds">${PD_KINDS.map(([v, t]) => `<label class="pd-chip"><input type="checkbox" name="pd-kind" value="${v}" checked><span>${t}</span></label>`).join("")}</div>
+          <label class="pd-check"><input type="checkbox" id="pd-unique" checked>
+            <span><b>Unique numbers only</b> — never called from Karma Connect, and not in Zoho</span></label>
+        </div>
+
+        <div class="pd-f pd-f-3">
+          <label class="modal-field">State
+            <input id="pd-fstate" list="pd-fstate-list" placeholder="Any — e.g. TX, Florida">
+            <span class="pd-help pd-fstate-bad hidden" id="pd-fstate-bad"></span></label>
+          <datalist id="pd-fstate-list">${Object.entries(STATES).map(([k, v]) => `<option value="${esc(v)}">${k}</option>`).join("")}</datalist>
+          <label class="modal-field">City<input id="pd-fcity" maxlength="60" placeholder="Any"></label>
+          <label class="modal-field">Name contains<input id="pd-fq" maxlength="80" placeholder="e.g. Servpro"></label>
+        </div>
+
+        <div class="pd-f">
+          <div class="pd-f-l">Dates <span class="pd-help-inline">— any time unless you set a range</span></div>
+          <div class="pd-dates">
+            <select id="pd-datebasis" aria-label="Which date">
+              <option value="called">Last called</option>
+              <option value="added">Date added</option>
+            </select>
+            <input type="date" id="pd-from" aria-label="From">
+            <span class="dash-mute">to</span>
+            <input type="date" id="pd-to" aria-label="To">
+            <button type="button" class="btn-ghost pd-clear" id="pd-dates-clear" title="Any date">Clear</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="pd-step">
+        <h4 class="pd-step-h"><span>3</span>How many, and a name</h4>
+        <div class="pd-row">
+          <label class="modal-field">Numbers in total
+            <input id="pd-limit" type="number" min="1" max="${reps.max}" value="300">
+            <span class="pd-help">A group shares these out evenly.</span></label>
+          <label class="modal-field">Campaign name
+            <input id="pd-name" maxlength="80" required placeholder="e.g. Water restoration ${today}"></label>
+        </div>
+        <details class="pd-more">
+          <summary>Call settings</summary>
+          <div class="pd-row">
+            <label class="modal-field">Seconds between calls
+              <input id="pd-gap" type="number" min="2" max="60" value="6"></label>
+            <label class="modal-field">Inbound callbacks go to
+              <select id="pd-callback">
+                <option value="">Each rep's own number (default)</option>
+                ${targets.targets.map((t) => `<option value="${esc(t.ext)}">${esc(t.name)} · x${esc(t.ext)} · ${esc(dashPhone(t.number))}</option>`).join("")}
+              </select>
+              ${targets.error ? `<span class="pd-help">${esc(targets.error)}</span>` : ""}</label>
+          </div>
+          <label class="pd-check"><input type="checkbox" id="pd-start">
+            <span><b>Start straight away</b> — otherwise it waits as a draft until you press Start</span></label>
+        </details>
+      </section>
+
+      <div class="pd-preview">
+        <div class="pd-active" id="pd-active"></div>
+        <div id="pd-count" aria-live="polite"></div>
       </div>
-      <label class="modal-field">Inbound callbacks go to
-        <select id="pd-callback">
-          <option value="">Each rep's own number (default)</option>
-          ${targets.targets.map((t) => `<option value="${esc(t.ext)}">${esc(t.name)} · x${esc(t.ext)} · ${esc(dashPhone(t.number))}</option>`).join("")}
-        </select>
-        ${targets.error ? `<span class="pd-help">${esc(targets.error)}</span>` : ""}
-      </label>
-      <div class="pd-count pd-preview" id="pd-count" aria-live="polite"></div>
-      <label class="pd-startnow"><input type="checkbox" id="pd-start"> Start straight away</label>
       <div id="pd-err" class="login-error hidden"></div>
       <div class="modal-actions">
+        <span class="pd-foot" id="pd-foot"></span>
         <button type="button" class="btn-secondary" id="modal-cancel">Cancel</button>
         <button type="submit" class="btn-primary" id="pd-create">Create campaign</button>
       </div>
     </form>`;
   $("modal-cancel").addEventListener("click", closeModal);
-  $("pd-name").focus();
+  $("pd-owner").focus();
+  const form = $("pd-form");
   const toGroup = () => document.querySelector('input[name="pd-to"]:checked')?.value === "group";
   const busy = new Map(reps.reps.filter((r) => r.busy_with).map((r) => [r.email, busyOf(r)]));
   /* the ticked members of the chosen group — editable for this campaign only */
@@ -11409,6 +11458,18 @@ async function openNewCampaign() {
   const who = () => toGroup()
     ? [...document.querySelectorAll('input[name="pd-mem"]:checked')].map((x) => x.value)
     : $("pd-owner").value ? [$("pd-owner").value] : [];
+  /* the State box takes "TX" or "Texas", several with commas; unknown words
+     are said back rather than silently ignored */
+  const stateOf = (t) => {
+    const v = t.trim(); if (!v) return null;
+    if (STATES[v.toUpperCase()]) return v.toUpperCase();
+    return Object.keys(STATES).find((k) => STATES[k].toLowerCase() === v.toLowerCase()) || null;
+  };
+  const states = () => {
+    const ok = [], bad = [];
+    for (const t of $("pd-fstate").value.split(/[,;]/)) { const c = stateOf(t); if (c) { if (!ok.includes(c)) ok.push(c); } else if (t.trim()) bad.push(t.trim()); }
+    return { ok, bad };
+  };
   const spec = () => ({
     owners: who(), group_id: toGroup() ? +$("pd-group").value || undefined : undefined,
     statuses: [...document.querySelectorAll('input[name="pd-st"]:checked')].map((x) => x.value),
@@ -11417,28 +11478,53 @@ async function openNewCampaign() {
     dateBasis: $("pd-datebasis").value, from: $("pd-from").value || undefined, to: $("pd-to").value || undefined,
     source: document.querySelector('input[name="pd-src"]:checked')?.value || "unassigned",
     limit: +$("pd-limit").value,
+    states: states().ok, city: $("pd-fcity").value.trim() || undefined, q: $("pd-fq").value.trim() || undefined,
   });
+  /* the chips: everything narrowing the list, each with an × that clears it */
+  const fmtDay = (d) => new Date(d + "T00:00:00").toLocaleDateString([], { day: "numeric", month: "short" });
+  const paintActive = () => {
+    const s = spec(), tags = [];
+    const tag = (label, clear, strong) => tags.push(`<span class="pd-tag">${strong ? `<b>${esc(strong)}</b> ` : ""}${esc(label)}<button type="button" data-clear="${esc(clear)}" aria-label="Remove ${esc(label)}">×</button></span>`);
+    s.statuses.forEach((st) => tag(st, "st:" + st));
+    if (s.kinds.length && s.kinds.length < PD_KINDS.length) s.kinds.forEach((k) => tag(PD_KINDS.find((x) => x[0] === k)[1], "kind:" + k));
+    if (s.unique) tag("Unique numbers", "unique");
+    s.states.forEach((st) => tag(STATES[st] || st, "state:" + st));
+    if (s.city) tag(s.city, "city", "City");
+    if (s.q) tag(`“${s.q}”`, "q", "Name");
+    if (s.from || s.to) tag(s.from && s.to ? `${fmtDay(s.from)} – ${fmtDay(s.to)}` : s.from ? `since ${fmtDay(s.from)}` : `up to ${fmtDay(s.to)}`, "dates", s.dateBasis === "added" ? "Added" : "Last called");
+    const bad = states().bad, badEl = $("pd-fstate-bad");
+    badEl.textContent = bad.length ? `Not a state: ${bad.join(", ")}` : "";
+    badEl.classList.toggle("hidden", !bad.length);
+    /* rewritten only when it changed: a rebuild under the pointer (a blur-
+       change arriving as a chip is pressed) would swallow the click */
+    const html = tags.length ? tags.join("") : `<span class="pd-tag pd-tag-none">Any lead with a phone number</span>`;
+    if ($("pd-active").innerHTML !== html) $("pd-active").innerHTML = html;
+  };
   /* the live preview: asked of the server, so it counts exactly what
      Create would hand out — status, type, unique, dates, Zoho and all */
   let seq = 0, t = null;
   const preview = () => {
+    paintActive();
     clearTimeout(t);
     t = setTimeout(async () => {
       const my = ++seq, out = $("pd-count"), s = spec();
-      if (!s.owners.length) { out.innerHTML = `<span class="dash-mute">Choose ${toGroup() ? "who in the group calls" : "a person"} to see who gets what.</span>`; return; }
-      if (!s.statuses.length && !s.unique) { out.innerHTML = `<span class="login-error">Tick at least one status.</span>`; return; }
+      /* the footer repeats the count beside Create, for when the preview has scrolled away */
+      const foot = (txt, bad) => { const f = $("pd-foot"); if (f) { f.textContent = txt; f.classList.toggle("bad", !!bad); } };
+      if (!s.owners.length) { out.innerHTML = `<span class="dash-mute">Choose ${toGroup() ? "who in the group calls" : "a rep"} in step 1 to see who gets what.</span>`; foot("Choose who calls first"); return; }
+      if (!s.statuses.length && !s.unique) { out.innerHTML = `<span class="login-error">Tick at least one status, or Unique numbers only.</span>`; foot("Tick a status", true); return; }
       out.classList.add("loading");
       try {
         const p = await api("/api/dialer/campaigns/preview", { method: "POST", body: JSON.stringify(s) });
         if (my !== seq) return;
         out.innerHTML = !p.total
-          ? `<span class="login-error">No numbers match those filters${p.inZoho ? ` (${dashN(p.inZoho)} left out — already in Zoho)` : ""}.</span>`
+          ? `<span class="login-error">No numbers match these filters${p.inZoho ? ` (${dashN(p.inZoho)} left out — already in Zoho)` : ""}.</span>`
           : `<div class="pd-pv-h"><b>${dashN(p.total)}</b> number${p.total === 1 ? "" : "s"} in this campaign
                <span class="dash-mute">of ${dashN(p.available)} that match${p.inZoho ? ` · ${dashN(p.inZoho)} left out — already in Zoho` : ""}</span></div>
              ${p.perRep.length > 1 || s.source !== "assigned" ? `<div class="pd-pv-reps">${p.perRep.map((r) =>
                `<span class="pd-pv-rep"><span class="live-av pd-av">${esc(initials(r.name))}</span>${esc(r.name)} <b>${dashN(r.n)}</b></span>`).join("")}</div>` : ""}
              ${p.busy.length ? `<div class="login-error">Busy with another session: ${p.busy.map(esc).join(", ")} — end it first.</div>` : ""}`;
-      } catch (e) { if (my === seq) out.innerHTML = `<span class="login-error">${esc(e.message)}</span>`; }
+        foot(p.total ? `${dashN(p.total)} number${p.total === 1 ? "" : "s"}${p.perRep.length > 1 ? ` across ${p.perRep.length} reps` : ""}` : "No numbers match", !p.total);
+      } catch (e) { if (my === seq) { out.innerHTML = `<span class="login-error">${esc(e.message)}</span>`; foot("Preview failed", true); } }
       finally { if (my === seq) out.classList.remove("loading"); }
     }, 250);
   };
@@ -11447,23 +11533,73 @@ async function openNewCampaign() {
     $("pd-grp").classList.toggle("hidden", !toGroup());
     if (toGroup()) paintMembers();
   };
-  $("pd-form").addEventListener("change", (e) => {
+  const NOT_FILTERS = new Set(["pd-ai-text", "pd-name", "pd-gap", "pd-callback", "pd-start"]);
+  form.addEventListener("change", (e) => {
+    if (NOT_FILTERS.has(e.target.id)) return;
     if (e.target.name === "pd-to") paintWho();
     if (e.target.id === "pd-group") paintMembers();
     preview();
   });
-  $("pd-form").addEventListener("input", (e) => { if (e.target.type === "number") preview(); });
+  const LIVE = new Set(["pd-fstate", "pd-fcity", "pd-fq"]);
+  form.addEventListener("input", (e) => { if (e.target.type === "number" || LIVE.has(e.target.id)) preview(); });
   $("pd-dates-clear").addEventListener("click", () => { $("pd-from").value = ""; $("pd-to").value = ""; preview(); });
+  $("pd-active").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-clear]");
+    if (!b) return;
+    const [what, val] = b.dataset.clear.split(/:(.*)/s);
+    if (what === "st") form.querySelector(`input[name="pd-st"][value="${CSS.escape(val)}"]`).checked = false;
+    else if (what === "kind") form.querySelector(`input[name="pd-kind"][value="${CSS.escape(val)}"]`).checked = false;
+    else if (what === "unique") $("pd-unique").checked = false;
+    else if (what === "state") $("pd-fstate").value = states().ok.filter((s) => s !== val).map((s) => STATES[s]).join(", ");
+    else if (what === "city") $("pd-fcity").value = "";
+    else if (what === "q") $("pd-fq").value = "";
+    else if (what === "dates") { $("pd-from").value = ""; $("pd-to").value = ""; }
+    preview();
+  });
   const toGroups = (e) => { e.preventDefault(); openRepGroups(reps, openNewCampaign); };
   $("pd-groups-edit")?.addEventListener("click", toGroups);
   $("pd-groups-new")?.addEventListener("click", toGroups);
+
+  /* The AI box: the description becomes a filter spec (validated on the
+     server) that is written into the form — a field the text didn't mention
+     goes back to its default, so the box describes the whole list. The
+     manager still sees the chips and the preview, and still presses Create. */
+  const applyAi = (s) => {
+    form.querySelectorAll('input[name="pd-st"]').forEach((x) => { x.checked = s.statuses.includes(x.value); });
+    const kinds = s.kinds.length ? s.kinds : PD_KINDS.map((k) => k[0]);
+    form.querySelectorAll('input[name="pd-kind"]').forEach((x) => { x.checked = kinds.includes(x.value); });
+    $("pd-unique").checked = s.unique ?? true;
+    $("pd-datebasis").value = s.dateBasis || "called";
+    $("pd-from").value = s.from || ""; $("pd-to").value = s.to || "";
+    form.querySelector(`input[name="pd-src"][value="${s.source || "unassigned"}"]`).checked = true;
+    if (s.limit) $("pd-limit").value = s.limit;
+    $("pd-fstate").value = s.states.map((k) => STATES[k] || k).join(", ");
+    $("pd-fcity").value = s.city || ""; $("pd-fq").value = s.q || "";
+    preview();
+  };
+  const aiGo = async () => {
+    const text = $("pd-ai-text").value.trim(), btn = $("pd-ai-go"), out = $("pd-ai-out");
+    if (!text) { $("pd-ai-text").focus(); return; }
+    btn.disabled = true; btn.textContent = "Reading…";
+    out.className = "pd-ai-out"; out.textContent = "Working out the filters…";
+    try {
+      const r = await api("/api/dialer/campaigns/ai-filter", { method: "POST", body: JSON.stringify({ text }) });
+      applyAi(r.spec);
+      out.innerHTML = `<b>Set to:</b> ${esc(r.summary)}${r.unmapped?.length
+        ? `<span class="pd-ai-miss">Couldn't use: ${r.unmapped.map(esc).join(" · ")} — set those by hand if the form has them.</span>` : ""}`;
+    } catch (e) { out.className = "pd-ai-out bad"; out.textContent = e.message; }
+    btn.disabled = false; btn.textContent = "Fill in filters";
+  };
+  $("pd-ai-go").addEventListener("click", aiGo);
+  $("pd-ai-text").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); aiGo(); } });
+
   paintWho(); preview();
-  $("pd-form").addEventListener("submit", async (e) => {
+  form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const err = $("pd-err"), btn = $("pd-create");
     err.classList.add("hidden");
     const s = spec();
-    if (!s.owners.length) { err.textContent = toGroup() ? "Tick at least one rep in the group." : "Choose who calls."; err.classList.remove("hidden"); return; }
+    if (!s.owners.length) { err.textContent = toGroup() ? "Tick at least one rep in the group." : "Choose who makes the calls (step 1)."; err.classList.remove("hidden"); return; }
     btn.disabled = true; btn.textContent = "Creating…";
     try {
       const out = await api("/api/dialer/campaigns", { method: "POST", body: JSON.stringify({

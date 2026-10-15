@@ -4,7 +4,7 @@
 
 # API
 
-**220 routes**, generated from the source on 2026-10-15.
+**221 routes**, generated from the source on 2026-10-15.
 
 Every path is absolute. That is deliberate: Karma Leads' API paths are the same
 whether it runs standalone or mounted into Connect, which is what let its front
@@ -47,7 +47,7 @@ declared once for the group.
 
 ---
 
-## Karma Leads — 158 routes
+## Karma Leads — 159 routes
 
 ### `/api/activity`
 
@@ -122,20 +122,20 @@ declared once for the group.
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/calltime` | signed in | [leads/server/campaign.js:220](../../leads/server/campaign.js#L220) | Calling hours for a number dialled by hand — a click on a lead's phone, the dial pad, the des… |
+| GET | `/api/calltime` | signed in | [leads/server/campaign.js:225](../../leads/server/campaign.js#L225) | Calling hours for a number dialled by hand — a click on a lead's phone, the dial pad, the des… |
 
 ### `/api/campaign`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/campaign/current` | signed in | [leads/server/campaign.js:231](../../leads/server/campaign.js#L231) |  |
-| POST | `/api/campaign/end` | signed in | [leads/server/campaign.js:366](../../leads/server/campaign.js#L366) |  |
-| GET | `/api/campaign/mine` | signed in | [leads/server/campaign.js:334](../../leads/server/campaign.js#L334) | GET /api/campaign/mine — the power-dialer campaigns given to this person, the open one first: |
-| POST | `/api/campaign/outcome` | signed in | [leads/server/campaign.js:242](../../leads/server/campaign.js#L242) | One press: log the call, set the status, optionally book a follow-back and leave a note, then… |
-| POST | `/api/campaign/pause` | signed in | [leads/server/campaign.js:383](../../leads/server/campaign.js#L383) | A break: whoever is dialling a campaign — the rep it was given to, or a manager working one t… |
-| GET | `/api/campaign/preview` | signed in | [leads/server/campaign.js:155](../../leads/server/campaign.js#L155) | How many are callable, before committing to a session. |
-| POST | `/api/campaign/start` | signed in | [leads/server/campaign.js:167](../../leads/server/campaign.js#L167) |  |
-| GET | `/api/campaign/state` | signed in | [leads/server/campaign.js:356](../../leads/server/campaign.js#L356) |  |
+| GET | `/api/campaign/current` | signed in | [leads/server/campaign.js:236](../../leads/server/campaign.js#L236) |  |
+| POST | `/api/campaign/end` | signed in | [leads/server/campaign.js:371](../../leads/server/campaign.js#L371) |  |
+| GET | `/api/campaign/mine` | signed in | [leads/server/campaign.js:339](../../leads/server/campaign.js#L339) | GET /api/campaign/mine — the power-dialer campaigns given to this person, the open one first: |
+| POST | `/api/campaign/outcome` | signed in | [leads/server/campaign.js:247](../../leads/server/campaign.js#L247) | One press: log the call, set the status, optionally book a follow-back and leave a note, then… |
+| POST | `/api/campaign/pause` | signed in | [leads/server/campaign.js:388](../../leads/server/campaign.js#L388) | A break: whoever is dialling a campaign — the rep it was given to, or a manager working one t… |
+| GET | `/api/campaign/preview` | signed in | [leads/server/campaign.js:160](../../leads/server/campaign.js#L160) | How many are callable, before committing to a session. |
+| POST | `/api/campaign/start` | signed in | [leads/server/campaign.js:172](../../leads/server/campaign.js#L172) |  |
+| GET | `/api/campaign/state` | signed in | [leads/server/campaign.js:361](../../leads/server/campaign.js#L361) |  |
 
 ### `/api/comments`
 
@@ -186,19 +186,20 @@ declared once for the group.
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/dialer/callback-targets` | admin | [leads/server/campaign.js:430](../../leads/server/campaign.js#L430) |  |
-| GET | `/api/dialer/campaigns` | admin | [leads/server/campaign.js:443](../../leads/server/campaign.js#L443) |  |
-| POST | `/api/dialer/campaigns` | admin | [leads/server/campaign.js:667](../../leads/server/campaign.js#L667) |  |
+| GET | `/api/dialer/callback-targets` | admin | [leads/server/campaign.js:435](../../leads/server/campaign.js#L435) |  |
+| GET | `/api/dialer/campaigns` | admin | [leads/server/campaign.js:448](../../leads/server/campaign.js#L448) |  |
+| POST | `/api/dialer/campaigns` | admin | [leads/server/campaign.js:836](../../leads/server/campaign.js#L836) |  |
 | GET | `/api/dialer/campaigns/:id/export` | admin | [leads/server/campaign-upload.js:259](../../leads/server/campaign-upload.js#L259) |  |
-| POST | `/api/dialer/campaigns/:id/state` | admin | [leads/server/campaign.js:829](../../leads/server/campaign.js#L829) | start / pause / resume / end |
-| POST | `/api/dialer/campaigns/:id/unassign` | admin | [leads/server/campaign.js:858](../../leads/server/campaign.js#L858) | Unassign a campaign's leads: |
-| POST | `/api/dialer/campaigns/preview` | admin | [leads/server/campaign.js:643](../../leads/server/campaign.js#L643) | POST /api/dialer/campaigns/preview — what a build would hand out, before anything is changed: |
-| GET | `/api/dialer/campaigns/reps` | admin | [leads/server/campaign.js:485](../../leads/server/campaign.js#L485) | Who can be given a campaign, and how many callable leads each one has — the New campaign form… |
+| POST | `/api/dialer/campaigns/:id/state` | admin | [leads/server/campaign.js:1000](../../leads/server/campaign.js#L1000) | start / pause / resume / end |
+| POST | `/api/dialer/campaigns/:id/unassign` | admin | [leads/server/campaign.js:1029](../../leads/server/campaign.js#L1029) | Unassign a campaign's leads: |
+| POST | `/api/dialer/campaigns/ai-filter` | admin | [leads/server/campaign.js:812](../../leads/server/campaign.js#L812) | POST /api/dialer/campaigns/ai-filter {text} — plain words → the form's filter spec, whitelist… |
+| POST | `/api/dialer/campaigns/preview` | admin | [leads/server/campaign.js:671](../../leads/server/campaign.js#L671) | POST /api/dialer/campaigns/preview — what a build would hand out, before anything is changed: |
+| GET | `/api/dialer/campaigns/reps` | admin | [leads/server/campaign.js:490](../../leads/server/campaign.js#L490) | Who can be given a campaign, and how many callable leads each one has — the New campaign form… |
 | POST | `/api/dialer/campaigns/upload` | admin | [leads/server/campaign-upload.js:181](../../leads/server/campaign-upload.js#L181) |  |
-| GET | `/api/dialer/groups` | admin | [leads/server/campaign.js:777](../../leads/server/campaign.js#L777) |  |
-| POST | `/api/dialer/groups` | admin | [leads/server/campaign.js:780](../../leads/server/campaign.js#L780) |  |
-| PUT | `/api/dialer/groups/:id` | admin | [leads/server/campaign.js:796](../../leads/server/campaign.js#L796) |  |
-| DELETE | `/api/dialer/groups/:id` | admin | [leads/server/campaign.js:821](../../leads/server/campaign.js#L821) |  |
+| GET | `/api/dialer/groups` | admin | [leads/server/campaign.js:948](../../leads/server/campaign.js#L948) |  |
+| POST | `/api/dialer/groups` | admin | [leads/server/campaign.js:951](../../leads/server/campaign.js#L951) |  |
+| PUT | `/api/dialer/groups/:id` | admin | [leads/server/campaign.js:967](../../leads/server/campaign.js#L967) |  |
+| DELETE | `/api/dialer/groups/:id` | admin | [leads/server/campaign.js:992](../../leads/server/campaign.js#L992) |  |
 
 ### `/api/dnc-import`
 
