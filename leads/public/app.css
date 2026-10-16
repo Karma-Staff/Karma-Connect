@@ -1044,6 +1044,12 @@ body.zv-collapsed .zohovoice-container { display: none !important; }
 .seg-back-arrow { font-size: 16px; line-height: 1; }
 .list-filters { display: flex; align-items: center; gap: 8px; }
 #zoho-scan, .zoho-auto { white-space: nowrap; flex: none; }
+/* Recently added: the release button asks twice (the first click says how many) */
+#recent-release { white-space: nowrap; flex: none; }
+#recent-release.armed { color: var(--accent-ink); border-color: var(--accent); }
+/* the longest label in Leads: a little tighter so "Recently added" is not cut off */
+.nav-item[data-tab="recent"] { gap: 8px; padding-right: 8px; }
+.nav-item[data-tab="recent"] .nav-count { font-size: 11px; }
 /* Recent tab only — forgets the activity trail, not the leads themselves */
 #clear-recents { padding: 4px 10px; font-size: 12px; color: var(--ink-3); }
 #clear-recents:hover { color: var(--ink); }

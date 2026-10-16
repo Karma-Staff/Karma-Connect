@@ -15,7 +15,7 @@
 
 const express = require("express");
 const { query, tx } = require("./db");
-const { requireUser, rankOf, RANK } = require("./auth");
+const { requireUser, requireAdmin, rankOf, RANK } = require("./auth");
 const activity = require("./activity");
 const counts = require("./counts");
 // statuses are open-ended now: they come from Zoho call results (zoho-scan.js applyStatus)
@@ -122,6 +122,15 @@ function buildFilters(p, user) {
   if (user && rankOf(user.role) < RANK.admin)
     add("btrim(owner) = ?", String(user.email || "").trim());
   if (["company", "person", "job"].includes(p.kind)) add("kind = ?", p.kind);
+  /* Recently added (migration 025): what a file import just brought in waits
+     under its own tab, out of Companies / People / Job board, until an admin
+     moves it into place (POST /api/recently-added/release). Favorites, DNC
+     and Contacted still show such a lead. */
+  if (p.recent === "true") {
+    add("recent_at IS NOT NULL");
+    if (p.batch) add("recent_batch = ?", String(p.batch).slice(0, 200));
+  } else if (["company", "person", "job"].includes(p.kind) && p.inzoho !== "true"
+      && p.favorite !== "true" && p.removed !== "true") add("recent_at IS NULL");
   /* A company or person already in Zoho has moved on: it is listed under
      Contacted (admins), not in Companies or People, so nobody works it twice.
      Favorites, the DNC tab and Contacted itself still show it. */
@@ -220,6 +229,41 @@ router.get("/api/leads", async (req, res, next) => {
 /* GET /api/lead-statuses — every status leads currently have (New first,
    then by how many), for the status filters and the power dialler. Scoped
    like the list: a member counts only their own leads. */
+/* GET /api/recently-added/batches — each import waiting under Recently
+   added, newest first, with how many leads it holds (a member: their own). */
+router.get("/api/recently-added/batches", requireUser, async (req, res, next) => {
+  try {
+    const mine = rankOf(req.user.role) < RANK.admin;
+    const rows = (await query(
+      `SELECT recent_batch AS batch, count(*)::int AS n, max(recent_at) AS at
+         FROM leads WHERE recent_at IS NOT NULL AND deleted_at IS NULL AND NOT removed
+         ${mine ? "AND btrim(owner) = $1" : ""}
+        GROUP BY recent_batch ORDER BY max(recent_at) DESC`, mine ? [String(req.user.email || "").trim()] : [])).rows;
+    res.json({ batches: rows, total: rows.reduce((a, r) => a + r.n, 0) });
+  } catch (e) { next(e); }
+});
+
+/* POST /api/recently-added/release {batch?} (admin) — move recently added
+   leads into their places: Companies, People or Job board by their kind.
+   Without a batch, every one of them. Nothing else about the lead changes. */
+router.post("/api/recently-added/release", requireAdmin, express.json({ limit: "2kb" }), async (req, res, next) => {
+  try {
+    const batch = req.body?.batch ? String(req.body.batch).slice(0, 200) : null;
+    const r = await query(
+      `UPDATE leads SET recent_at = NULL, recent_batch = NULL
+        WHERE recent_at IS NOT NULL ${batch ? "AND recent_batch = $1" : ""}
+        RETURNING kind`, batch ? [batch] : []);
+    const by = { company: 0, person: 0, job: 0 };
+    for (const x of r.rows) by[x.kind] = (by[x.kind] || 0) + 1;
+    if (r.rowCount)
+      await activity.log({ actor: req.user.email, user_id: req.user.id, action: "note",
+        to_value: `Moved ${r.rowCount} recently added lead${r.rowCount === 1 ? "" : "s"} into place`,
+        meta: { bulk: "recent-release", batch, moved: r.rowCount, ...by } }).catch(() => {});
+    counts.invalidate();
+    res.json({ ok: true, moved: r.rowCount, ...by });
+  } catch (e) { next(e); }
+});
+
 router.get("/api/lead-statuses", requireUser, async (req, res, next) => {
   try {
     const seesAll = rankOf(req.user.role) >= RANK.admin;

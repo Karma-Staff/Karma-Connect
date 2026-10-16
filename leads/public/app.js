@@ -9,6 +9,9 @@ const S = {
   status: "",
   state: "",           // two-letter code, "" = everywhere
   board: "",           // job board source: linkedin | indeed | google, "" = all
+  batch: "",           // Recently added: one import, "" = every import
+  batches: [],         // [{batch, n, at}] waiting under Recently added
+  batchesTotal: 0,
   focus: "",           // armed KPI tile: ready | enrich | unassigned | week
   sort: "recent",
   list: [],
@@ -34,9 +37,9 @@ const TABS = {
   companies: { title: "Companies", kind: "company", pv: "Company", dateField: "Date Added" },
   people:    { title: "People",    kind: "person",  pv: "Name",    dateField: "Date Added" },
   jobs:      { title: "Job board", kind: "job",     pv: "Job Title", dateField: "Posted" },
-  // "Recent" is an activity trail, not a date filter: the last 50 leads this
-  // account actually touched, newest first. Starts empty for a new account.
-  recent:    { title: "Recent activity", activity: true },
+  // what a file import just brought in (leads.recent_at): held here, out of
+  // Companies / People / Job board, until an admin moves them into place
+  recent:    { title: "Recently added", recentAdded: true },
   favorites: { title: "Favorites", favorite: true },
   // admin-only: leads already in the Zoho call list (a Zoho CRM record linked),
   // so nobody calls or is assigned a person already being worked
@@ -388,7 +391,9 @@ async function runCounts() {
   $("count-removed").textContent = c.removed.toLocaleString();
   // companies and people already in Zoho are counted here instead (admins)
   if ($("count-contacted")) $("count-contacted").textContent = c.contacted != null ? c.contacted.toLocaleString() : "";
-  // ("Recent" is the activity trail — its badge comes from S.recents)
+  /* compact (1.3k) so the long "Recently added" label keeps its room */
+  if ($("count-recent")) $("count-recent").textContent = c.recent == null ? ""
+    : c.recent >= 1000 ? (c.recent / 1000).toFixed(c.recent >= 10000 ? 0 : 1).replace(/\.0$/, "") + "k" : String(c.recent);
 
   // the three work queues, each as a count + its share of the live base
   queueTile("ready", c.ready, total);
@@ -431,10 +436,9 @@ async function runCounts() {
    filtered out — no second lookup. */
 const RECENT_MAX = 50;                   // keep in step with MAX in server/recents.js
 
-function recentsBadge() {
-  const el = $("count-recent");
-  if (el) el.textContent = S.recents.length.toLocaleString();
-}
+/* the Recent tab is now Recently added (its badge is /api/counts' recent);
+   the per-account trail is still kept for the server's own ordering */
+function recentsBadge() {}
 
 async function loadRecents() {
   try {
@@ -443,6 +447,18 @@ async function loadRecents() {
   } catch (e) {
     console.warn("[karma] recents unavailable", e);
   }
+}
+
+/* The imports waiting under Recently added, for its filter and button. */
+async function loadBatches() {
+  try {
+    const r = await api("/api/recently-added/batches");
+    S.batches = r.batches || []; S.batchesTotal = r.total || 0;
+    if (S.batch && !S.batches.some((b) => b.batch === S.batch)) S.batch = "";
+    const sel = $("filter-batch");
+    if (sel) sel.innerHTML = `<option value="">Every import (${S.batchesTotal.toLocaleString()})</option>`
+      + S.batches.map((b) => `<option value="${esc(b.batch || "")}"${b.batch === S.batch ? " selected" : ""}>${esc(b.batch || "Import")} (${b.n.toLocaleString()})</option>`).join("");
+  } catch (e) { console.warn("[karma] recently added batches unavailable", e); }
 }
 
 /* Record an open. Fire-and-forget on purpose — nothing the user does should
@@ -514,6 +530,10 @@ function listParams() {
     if (cfg.favorite) p.set("favorite", "true");
     if (cfg.removedTab) p.set("removed", "true");
     if (cfg.contacted) p.set("inzoho", "true");   // already in the Zoho call list
+    if (cfg.recentAdded) {                        // what an import just brought in
+      p.set("recent", "true");
+      if (S.batch) p.set("batch", S.batch);
+    }
     if (S.state) p.set("state", S.state);
   }
   if (S.q) p.set("q", S.q);
@@ -801,8 +821,8 @@ function renderList() {
       </div>
     </div>`;
   }).join("") || `<div class="detail-empty" style="height:200px"><p>${
-    S.tab === "recent" && !S.recents.length
-      ? "Nothing here yet — leads you open or update show up in this list"
+    S.tab === "recent" && !S.batch && !S.q && !S.status && !S.state
+      ? "Nothing waiting — leads a file import brings in show up here first"
       : "No leads match"}</p></div>`;
   el.querySelectorAll(".lead-row").forEach((row) =>
     row.addEventListener("click", () => select(S.list[+row.dataset.i])));
@@ -9251,7 +9271,9 @@ function setTab(tab) {
      lead list (Dashboard, Call logs, Users…) they are someone else's
      numbers taking the top of the screen, so they step aside. */
   $("stats")?.classList.toggle("hidden", !!paneOf(tab));
-  $("clear-recents")?.classList.toggle("hidden", !TABS[tab].activity);
+  $("recent-ctl")?.classList.toggle("hidden", !TABS[tab].recentAdded);
+  $("recent-release")?.classList.toggle("hidden", !TABS[tab].recentAdded || !isAdmin());
+  if (TABS[tab].recentAdded) loadBatches();
   $("zoho-scan")?.classList.toggle("hidden", !TABS[tab].contacted);
   $("zoho-auto")?.classList.toggle("hidden", !TABS[tab].contacted);
   if (TABS[tab].contacted) zohoAutoLoad();
@@ -9377,7 +9399,7 @@ const TOUR_STEPS = [
       '.nav-item[data-tab="jobs"], .nav-item[data-tab="recent"], ' +
       '.nav-item[data-tab="favorites"]', pos: "right", title: "Views",
     body: "Companies, People and Job board are the three kinds of leads. " +
-      "Recent is the last leads you touched. Favorites is where your " +
+      "Recently added holds what an import just brought in. Favorites is where your " +
       "starred leads go." },
   { sel: '.nav-item[data-tab="stats"], .nav-item[data-tab="removed"]',
     pos: "right", title: "Manage (admin)",
@@ -9667,14 +9689,34 @@ function wire() {
     $("user-dropdown").classList.add("hidden");
     setTab("stats");                     // Team activity — the team overview
   });
-  on("clear-recents", "click", async () => {
-    // only forgets the trail — the leads themselves are untouched
-    S.recents = [];
-    recentsBadge();
-    loadList(true);
-    try { await api("/api/recents", { method: "DELETE" }); }
-    catch (e) { console.warn("[karma] could not clear recents", e); }
-    toast("Recent activity cleared");
+  on("filter-batch", "change", (e) => { S.batch = e.target.value; loadList(true); });
+  /* Move to their places: two clicks (the first one says how many), then
+     every recently added lead — or the picked import's — goes to Companies,
+     People or Job board by its kind */
+  on("recent-release", "click", async (e) => {
+    const btn = e.currentTarget;
+    const n = S.batch ? (S.batches.find((b) => b.batch === S.batch)?.n || 0) : S.batchesTotal;
+    if (!n) return toast("Nothing waiting here");
+    if (!btn.dataset.armed) {
+      btn.dataset.armed = "1";
+      btn.textContent = `Click again to move ${n.toLocaleString()}`;
+      btn.classList.add("armed");
+      setTimeout(() => { delete btn.dataset.armed; btn.textContent = "Move to their places"; btn.classList.remove("armed"); }, 4000);
+      return;
+    }
+    delete btn.dataset.armed; btn.textContent = "Move to their places"; btn.classList.remove("armed");
+    btn.disabled = true;
+    try {
+      const out = await api("/api/recently-added/release", { method: "POST", body: JSON.stringify(S.batch ? { batch: S.batch } : {}) });
+      const parts = [["company", "Companies"], ["person", "People"], ["job", "Job board"]]
+        .filter(([k]) => out[k]).map(([k, l]) => `${out[k].toLocaleString()} to ${l}`);
+      toast(out.moved ? `Moved ${out.moved.toLocaleString()} — ${parts.join(", ")}` : "Nothing to move", 6000);
+      S.batch = "";
+      await loadBatches();
+      refreshCounts();
+      loadList(true);
+    } catch (err) { toast("Couldn't move them — " + (err.message || err), 6000); }
+    finally { btn.disabled = false; }
   });
   /* the automatic scan: off, or every 10 / 30 / 60 minutes (zoho-scan.js) */
   on("zoho-auto", "change", async (e) => {
@@ -11390,6 +11432,17 @@ async function openNewCampaign() {
           <label class="modal-field">Name contains<input id="pd-fq" maxlength="80" placeholder="e.g. Servpro"></label>
         </div>
 
+        <div class="pd-f pd-f-3">
+          <label class="modal-field">Recently added
+            <select id="pd-recent" title="Leads an import just brought in (the Recently added tab)">
+              <option value="any">Include them</option>
+              <option value="only">Only recently added</option>
+              <option value="exclude">Leave them out</option>
+            </select></label>
+          <label class="modal-field hidden" id="pd-batch-wrap">Which import
+            <select id="pd-batch"><option value="">Every import</option></select></label>
+        </div>
+
         <div class="pd-f">
           <div class="pd-f-l">Dates <span class="pd-help-inline">— any time unless you set a range</span></div>
           <div class="pd-dates">
@@ -11479,6 +11532,7 @@ async function openNewCampaign() {
     source: document.querySelector('input[name="pd-src"]:checked')?.value || "unassigned",
     limit: +$("pd-limit").value,
     states: states().ok, city: $("pd-fcity").value.trim() || undefined, q: $("pd-fq").value.trim() || undefined,
+    recent: $("pd-recent").value, batch: $("pd-recent").value === "only" ? $("pd-batch").value || undefined : undefined,
   });
   /* the chips: everything narrowing the list, each with an × that clears it */
   const fmtDay = (d) => new Date(d + "T00:00:00").toLocaleDateString([], { day: "numeric", month: "short" });
@@ -11491,6 +11545,9 @@ async function openNewCampaign() {
     s.states.forEach((st) => tag(STATES[st] || st, "state:" + st));
     if (s.city) tag(s.city, "city", "City");
     if (s.q) tag(`“${s.q}”`, "q", "Name");
+    if (s.recent === "only") tag(s.batch || "every import", "recent", "Recently added");
+    if (s.recent === "exclude") tag("left out", "recent", "Recently added");
+    $("pd-batch-wrap").classList.toggle("hidden", s.recent !== "only");
     if (s.from || s.to) tag(s.from && s.to ? `${fmtDay(s.from)} – ${fmtDay(s.to)}` : s.from ? `since ${fmtDay(s.from)}` : `up to ${fmtDay(s.to)}`, "dates", s.dateBasis === "added" ? "Added" : "Last called");
     const bad = states().bad, badEl = $("pd-fstate-bad");
     badEl.textContent = bad.length ? `Not a state: ${bad.join(", ")}` : "";
@@ -11553,6 +11610,7 @@ async function openNewCampaign() {
     else if (what === "state") $("pd-fstate").value = states().ok.filter((s) => s !== val).map((s) => STATES[s]).join(", ");
     else if (what === "city") $("pd-fcity").value = "";
     else if (what === "q") $("pd-fq").value = "";
+    else if (what === "recent") { $("pd-recent").value = "any"; $("pd-batch").value = ""; }
     else if (what === "dates") { $("pd-from").value = ""; $("pd-to").value = ""; }
     preview();
   });
@@ -11575,8 +11633,15 @@ async function openNewCampaign() {
     if (s.limit) $("pd-limit").value = s.limit;
     $("pd-fstate").value = s.states.map((k) => STATES[k] || k).join(", ");
     $("pd-fcity").value = s.city || ""; $("pd-fq").value = s.q || "";
+    $("pd-recent").value = "any"; $("pd-batch").value = "";
     preview();
   };
+  /* the imports waiting under Recently added, for "Which import" */
+  api("/api/recently-added/batches").then((r) => {
+    const sel = $("pd-batch");
+    if (sel) sel.innerHTML = `<option value="">Every import (${dashN(r.total || 0)})</option>`
+      + (r.batches || []).map((b) => `<option value="${esc(b.batch || "")}">${esc(b.batch || "Import")} (${dashN(b.n)})</option>`).join("");
+  }).catch(() => {});
   const aiGo = async () => {
     const text = $("pd-ai-text").value.trim(), btn = $("pd-ai-go"), out = $("pd-ai-out");
     if (!text) { $("pd-ai-text").focus(); return; }

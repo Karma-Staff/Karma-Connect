@@ -579,6 +579,10 @@ function readSpec(b) {
     source: SOURCES.includes(b.source) ? b.source : "assigned",   // as before: the rep's own leads
     limit: Math.max(1, Math.min(MAX_CAMPAIGN, Math.round(+b.limit || MAX_CAMPAIGN))),
     states, city: trimTo(b.city, 60), q: trimTo(b.q, 80),
+    /* Recently added (025): "only" those an import just brought in (one
+       import with batch), "exclude" them, or "any" (default) */
+    recent: ["only", "exclude"].includes(b.recent) ? b.recent : "any",
+    batch: b.recent === "only" && b.batch ? trimTo(b.batch, 200) : "",
   };
 }
 
@@ -598,6 +602,9 @@ function specWhere(spec, args, { owners = null, skipped = false } = {}) {
     OR lower(btrim(l.state)) = ANY(${p(spec.states.map((s) => STATE_NAME[s].toLowerCase()))}))`);
   if (spec.city) w.push(`l.city ILIKE ${p(like(spec.city))}`);
   if (spec.q) w.push(`l.name ILIKE ${p(like(spec.q))}`);
+  if (spec.recent === "only") w.push("l.recent_at IS NOT NULL");
+  if (spec.recent === "exclude") w.push("l.recent_at IS NULL");
+  if (spec.batch) w.push(`l.recent_batch = ${p(spec.batch)}`);
   /* in Zoho → only when its status is one Zoho gave it (not one of Karma
      Connect's own: New, Contacted, Responded, Qualified, Not interested) */
   /* skipped: the opposite — what was left out for being in Zoho, to say back */
@@ -907,6 +914,7 @@ router.post("/api/dialer/campaigns", requireAdmin, express.json({ limit: "8kb" }
           dates: spec.from || spec.to ? { basis: spec.dateBasis, from: spec.from, to: spec.to } : null,
           ...(spec.states.length ? { states: spec.states } : {}),
           ...(spec.city ? { city: spec.city } : {}), ...(spec.q ? { q: spec.q } : {}),
+          ...(spec.recent !== "any" ? { recent: spec.recent } : {}), ...(spec.batch ? { batch: spec.batch } : {}),
           hasPhone: true, callback,
           ...(batch ? { group: { batch, id: group?.id || null, name: group?.name || null, size: reps.length } } : {}),
           ...(b.start ? { started: new Date().toISOString() } : {}) });

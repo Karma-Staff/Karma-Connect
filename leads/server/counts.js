@@ -31,11 +31,13 @@ router.get("/api/counts", requireUser, async (req, res, next) => {
       SELECT
         /* companies and people in Zoho are listed under Contacted instead
            (leads.js buildFilters), so they are counted there */
-        count(*) FILTER (WHERE kind = 'company' AND NOT removed AND (z.lead_id IS NULL OR status = 'New'))::int AS companies,
-        count(*) FILTER (WHERE kind = 'person'  AND NOT removed AND (z.lead_id IS NULL OR status = 'New'))::int AS people,
+        count(*) FILTER (WHERE kind = 'company' AND NOT removed AND recent_at IS NULL AND (z.lead_id IS NULL OR status = 'New'))::int AS companies,
+        count(*) FILTER (WHERE kind = 'person'  AND NOT removed AND recent_at IS NULL AND (z.lead_id IS NULL OR status = 'New'))::int AS people,
         count(*) FILTER (WHERE NOT removed AND z.lead_id IS NOT NULL AND status <> 'New')::int AS contacted,
         count(*) FILTER (WHERE NOT removed)::int AS all_leads,
-        count(*) FILTER (WHERE kind = 'job'     AND NOT removed)::int AS jobs,
+        count(*) FILTER (WHERE kind = 'job'     AND NOT removed AND recent_at IS NULL)::int AS jobs,
+        /* what an import just brought in, held under Recently added (025) */
+        count(*) FILTER (WHERE NOT removed AND recent_at IS NOT NULL)::int AS recent,
         count(*) FILTER (WHERE favorite AND NOT removed)::int          AS favorites,
         count(*) FILTER (WHERE removed)::int                           AS removed,
         count(*) FILTER (WHERE status = 'New' AND NOT removed)::int    AS status_new,

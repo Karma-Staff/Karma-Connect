@@ -252,6 +252,12 @@ async function commitJob(jobId, actor, userId) {
       const banned = new Set((await client.query(
         "SELECT phone_key FROM blocklist")).rows.map((r) => r.phone_key));
 
+      /* a lead a FILE brings in is held under Recently added (025) until an
+         admin moves it into its place; the pipeline's coded records are not */
+      const jobRow = (await client.query(
+        "SELECT filename, category, created_at FROM import_jobs WHERE id = $1", [jobId])).rows[0] || {};
+      const recent = { batch: String(jobRow.filename || jobRow.category || "Import").slice(0, 120) + " · "
+        + new Date(jobRow.created_at || Date.now()).toISOString().slice(0, 10) };
       const kept = { alias: new Map() };
       const c = { inserted: { company: 0, person: 0, job: 0 },
         updated: 0, duplicates: 0, blocked: 0, skipped: 0 };
@@ -317,7 +323,7 @@ async function commitJob(jobId, actor, userId) {
         push(byPhone, id.phone && `file:${id.phone}`);
         push(byEmail, id.email && `file:${id.email}`);
         if (id.city) for (const a of id.set) push(kept.alias, `${a}|${id.city}`);
-        await insertLead(client, D.mintCode(), rec.kind, f, banned, c);
+        await insertLead(client, D.mintCode(), rec.kind, f, banned, c, recent);
       }
 
       const countsJson = JSON.stringify(c);
@@ -339,12 +345,13 @@ async function commitJob(jobId, actor, userId) {
   }
 }
 
-async function insertLead(client, code, kind, f, banned, c) {
+async function insertLead(client, code, kind, f, banned, c, recent = null) {
   const phoneKey = f.phone_key || D.pk(f.phone);
   const isBanned = !!phoneKey && banned.has(phoneKey);
   if (isBanned) c.blocked++;
   const cols = ["lead_code", "kind", "removed", "phone_key"];
   const vals = [code, kind, isBanned, phoneKey];
+  if (recent) { cols.push("recent_at", "recent_batch"); vals.push(new Date(), recent.batch); }
   for (const [k, v] of Object.entries(f)) {
     if (v === null || v === undefined || k === "phone_key") continue;
     cols.push(k);
