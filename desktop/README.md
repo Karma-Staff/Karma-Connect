@@ -25,19 +25,46 @@ ID — the window has no Windows title bar of its own) and **resize it from any
 edge**; it floats over every app. Allow the **microphone** when asked (needed to
 make calls).
 
-## Build an installer (to give it to the sales team)
+## Release it (to the sales team)
+
+Releases are built in CI, not on a laptop:
+
+1. Bump `"version"` in `desktop/package.json` (and run `npm install` so the
+   lockfile agrees). Commit and push.
+2. GitHub → Actions → **Desktop dialer release** → *Run workflow*. It builds
+   from the committed `package-lock.json`, signs (when the signing secrets are
+   set — see the workflow file), and uploads the installer, `latest.yml`, a
+   `SHA256SUMS.txt`, an SBOM and a provenance attestation to a **draft**
+   release tagged `desktop-vX.Y.Z`.
+3. Check the job summary says *signed*, then publish the draft. Installed
+   dialers pick it up within four hours and install it the next time they quit
+   or the PC restarts; new reps download the installer from the release.
+
+Never publish an unsigned build as a normal release. Mark it *pre-release*
+(installed copies ignore those) and share it only with named testers.
+
+### Local test build
 
 ```powershell
-npm run dist          # or: npm run dist:win
+npm run dist          # unsigned, into desktop/dist/
 ```
 
-This produces a Windows installer (`.exe`) under `desktop/dist/`. Send that file
-to each rep; they run it once and get a normal Start-menu app that auto-updates
-their login.
+Build outside OneDrive if it fails with `EPERM … rename` (OneDrive or the
+antivirus is holding the folder): add
+`-c.directories.output=$env:LOCALAPPDATA\kc-dialer-build`.
 
-> Icons: for a branded installer, drop `icon.ico` (Windows) and `icon.icns`
-> (Mac) into `desktop/icons/`. Without them the build still works with a default
-> Electron icon.
+### Hardening (electron-builder.config.cjs)
+
+- **Fuses:** no `ELECTRON_RUN_AS_NODE`, `NODE_OPTIONS` or `--inspect`; only the
+  shipped `app.asar` loads, and its hash is checked; the cookie store (the
+  signed-in session) is encrypted with Windows DPAPI. Check a build with
+  `npx @electron/fuses read --app "<…>\Karma Connect Dialer.exe"`.
+- **Signing:** Microsoft Artifact Signing via `azureSignOptions`, switched on by
+  the `KC_SIGN_*` variables; `forceCodeSigning` then refuses a half-signed
+  build, and the updater only accepts updates signed by the same publisher.
+- **Install notice:** `install-notice.txt` is shown as a page in the installer
+  (microphone, start with Windows, what is stored, connections, updates).
+- **Uninstall** removes the profile folder too (it holds the session).
 
 ## How it works / notes
 
@@ -69,13 +96,32 @@ their login.
   asks "Open Karma Connect Dialer?" — tick *Always allow* and it stops asking.
   If the app is not installed, nothing happens. The link is registered when the
   app first runs.
-- **External links** (`tel:`, `http`) open in the default browser, not inside the
-  dialer window.
-- **Point it elsewhere:** set `KC_DIALER_URL` to override the dialer URL (default
-  is `https://karma-connect-9s2z.onrender.com/leads/?embed=dialer`).
+- **Only Karma Connect in the window:** any other site — a link in a lead, a
+  redirect — opens in the default browser instead (`tel:` and `mailto:` go to
+  Windows). Sign-in is Karma Connect's own page, so it stays inside. A
+  sign-in that the server sends out — RingCentral's *Reconnect* — finishes in
+  the browser, and the dialer reloads when the rep comes back to it (never
+  while a call is ringing or live).
+- **The bubble** is served from the app's own `kc-app://` scheme, not
+  `file://`: with the `grantFileProtocolExtraPrivileges` fuse off, `file://`
+  cannot read inside `app.asar`, and the bubble came up blank.
+- **Right-click the bubble:** *Start with Windows* (on by default, set once on
+  the first run — after that it is the rep's choice), *Check for updates*, the
+  version, and *Quit*.
+- **Updates:** installed copies check GitHub Releases on start and every four
+  hours (`electron-updater`), download in the background and install on quit —
+  never mid-call. Pre-releases and drafts are ignored.
+- **Point it elsewhere (dev only):** `KC_DIALER_URL` overrides the dialer URL for
+  `npm start`. An installed copy ignores it, because the microphone is granted
+  to whatever origin it loads (default
+  `https://karma-connect-9s2z.onrender.com/leads/?embed=dialer`).
 
 ## Files
 | File | What it is |
 |------|------------|
-| `main.js` | the Electron main process — the window, always-on-top, mic permission |
-| `package.json` | Electron + electron-builder, run/build scripts, installer config |
+| `main.js` | the Electron main process — the window, bubble, navigation guard, mic permission, auto-start, updates |
+| `dialer-preload.js`, `bubble-preload.js` | the only bridges the two pages get (four actions; bubble drag) |
+| `electron-builder.config.cjs` | installer, fuses, signing, update feed |
+| `install-notice.txt` | the "what this app does" page shown by the installer |
+| `package.json` / `package-lock.json` | pinned Electron, electron-builder, electron-updater |
+| `../.github/workflows/desktop-release.yml` | the CI release build |

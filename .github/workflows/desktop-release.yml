@@ -1,0 +1,83 @@
+name: Desktop dialer release
+
+# Builds the Windows installer for desktop/ in CI instead of on a laptop:
+# from the committed lockfile, signed when the signing secrets exist, with a
+# SHA-256, an SBOM and a build-provenance attestation, uploaded to a DRAFT
+# GitHub Release. Nothing reaches reps until someone publishes the draft —
+# installed dialers only update from published, non-prerelease releases.
+#
+# Run it: Actions → "Desktop dialer release" → Run workflow (after bumping
+# desktop/package.json "version"). The release is tagged desktop-v<version>.
+#
+# Signing (Microsoft Artifact Signing) needs these repository secrets:
+#   AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET   (the app registration)
+#   KC_SIGN_ENDPOINT, KC_SIGN_ACCOUNT, KC_SIGN_PROFILE, KC_SIGN_PUBLISHER
+# Without them the build is unsigned and the job says so in its summary.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2025   # pinned; move deliberately
+    permissions:
+      contents: write        # create the draft release and upload to it
+      id-token: write        # build-provenance attestation
+      attestations: write
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      # actions pinned to full commit SHAs (tags can be moved)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install (exactly the lockfile)
+        run: npm ci
+
+      - name: Build installer
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          KC_SIGN_ENDPOINT: ${{ secrets.KC_SIGN_ENDPOINT }}
+          KC_SIGN_ACCOUNT: ${{ secrets.KC_SIGN_ACCOUNT }}
+          KC_SIGN_PROFILE: ${{ secrets.KC_SIGN_PROFILE }}
+          KC_SIGN_PUBLISHER: ${{ secrets.KC_SIGN_PUBLISHER }}
+        run: npm run dist:publish
+
+      - name: Verify signature, hash, SBOM
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem dist -Filter "Karma Connect Dialer Setup *.exe" | Select-Object -First 1
+          $sig = Get-AuthenticodeSignature $exe.FullName
+          $hash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLower()
+          "$hash  $($exe.Name)" | Out-File -Encoding ascii dist/SHA256SUMS.txt
+          npm sbom --sbom-format cyclonedx --omit dev | Out-File -Encoding utf8 dist/sbom.cdx.json
+          $signed = if ($sig.Status -eq "Valid") { "signed by $($sig.SignerCertificate.Subject)" } else { "**UNSIGNED** ($($sig.Status)) — do not publish beyond a pilot" }
+          "### $($exe.Name)`n- SHA-256: ``$hash```n- Signature: $signed" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            desktop/dist/Karma Connect Dialer Setup *.exe
+            desktop/dist/latest.yml
+
+      - name: Attach hash and SBOM to the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $v = (Get-Content package.json | ConvertFrom-Json).version
+          gh release upload "desktop-v$v" dist/SHA256SUMS.txt dist/sbom.cdx.json --clobber --repo "$env:GITHUB_REPOSITORY"

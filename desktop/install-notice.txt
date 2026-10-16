@@ -1,0 +1,27 @@
+KARMA CONNECT DIALER - WHAT THIS APP DOES ON YOUR COMPUTER
+
+Karma Connect Dialer is Karma Staff's softphone for RingCentral calling. It
+shows the Karma Connect dialer in a small window that stays on top of your
+other apps and becomes a floating bubble when you minimise it.
+
+Please read before installing:
+
+1. MICROPHONE. The dialer uses your microphone and speakers for calls. Access
+   is given only to Karma Connect (karma-connect-9s2z.onrender.com), and only
+   for audio. The camera is never used.
+
+2. STARTS WITH WINDOWS. The dialer opens when you sign in to Windows so it is
+   ready for calls. To turn this off, right-click the bubble and untick
+   "Start with Windows", or use Task Manager > Startup apps.
+
+3. WHAT IS STORED ON THIS COMPUTER. Your Karma Connect sign-in (encrypted by
+   Windows), the dialer's normal web cache, and where you last left the window
+   and the bubble. Uninstalling removes all of it.
+
+4. CONNECTIONS. The app talks to Karma Connect, to RingCentral for calls, and to
+   GitHub to check for updates. It sends no analytics or tracking data.
+
+5. UPDATES. New versions download in the background and install the next time
+   you quit the dialer or restart your computer. A call is never interrupted.
+
+Questions: contact your Karma Connect administrator.

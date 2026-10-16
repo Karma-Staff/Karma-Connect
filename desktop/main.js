@@ -25,11 +25,35 @@
  *     follows a karmaconnect:// link, which Windows hands to this app.
  */
 
-const { app, BrowserWindow, session, shell, ipcMain, screen } = require("electron");
+const { app, BrowserWindow, Menu, protocol, session, shell, ipcMain, screen } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
 
-const DIALER_URL = process.env.KC_DIALER_URL
+/* The bubble's own page is served from kc-app://, not file://. The
+   grantFileProtocolExtraPrivileges fuse is off (electron-builder.config.cjs),
+   and without it file:// cannot read inside app.asar — the bubble window
+   opened empty and invisible (ERR_FILE_NOT_FOUND). The scheme serves only the
+   files listed here, straight out of the app's own folder. */
+const APP_SCHEME = "kc-app";
+const APP_FILES = {
+  "bubble.html": "text/html; charset=utf-8",
+  "icons/mark-white.png": "image/png",
+};
+protocol.registerSchemesAsPrivileged([{ scheme: APP_SCHEME, privileges: { standard: true, secure: true } }]);
+function serveAppFiles() {
+  protocol.handle(APP_SCHEME, (req) => {
+    const rel = decodeURIComponent(new URL(req.url).pathname).replace(/^\/+/, "");
+    const type = APP_FILES[rel];
+    if (!type) return new Response("not found", { status: 404 });
+    try { return new Response(fs.readFileSync(path.join(__dirname, rel)), { headers: { "content-type": type } }); }
+    catch (e) { return new Response("not found", { status: 404 }); }
+  });
+}
+
+/* KC_DIALER_URL points a DEV run at another server. An installed copy ignores
+   it: the microphone is granted to whatever origin this is, so anyone able to
+   set the rep's environment could otherwise aim it at their own page. */
+const DIALER_URL = (!app.isPackaged && process.env.KC_DIALER_URL)
   || "https://karma-connect-9s2z.onrender.com/leads/?embed=dialer";
 let DIALER_ORIGIN = "";
 try { DIALER_ORIGIN = new URL(DIALER_URL).origin; } catch (e) { /* leave blank */ }
@@ -108,6 +132,25 @@ function forceEmbed(url) {
   } catch (e) { return null; }
 }
 
+/* Only Karma Connect itself is shown in this window — sign-in included, which
+   is Karma Connect's own page (WorkOS is no longer how anyone signs in, and a
+   wildcard for its *.authkit.app tenants would have let any tenant's look-alike
+   page render here, in a window with no address bar). Anything else — a link
+   in a lead, a redirect — opens in the person's browser instead: this window
+   is always on top, holds the microphone, and should never become a general
+   browser. */
+function allowedInWindow(url) {
+  try { return new URL(url).origin === DIALER_ORIGIN; } catch (e) { return false; }
+}
+/* A redirect sent out to the browser is usually a sign-in started here — the
+   RingCentral "Reconnect" button (/api/voice/rc/connect) is one. It finishes
+   in the browser, so when the rep comes back to this window it reloads and
+   picks the new connection up, instead of staying unregistered. */
+let reloadOnFocus = false;
+function openOutside(url) {
+  if (/^https?:|^tel:|^mailto:/i.test(url)) shell.openExternal(url);
+}
+
 function createWindow() {
   const p = loadPos();
   win = new BrowserWindow({
@@ -126,20 +169,45 @@ function createWindow() {
     backgroundColor: SURFACE,
     alwaysOnTop: true,
     webPreferences: {
-      contextIsolation: true, nodeIntegration: false,
+      contextIsolation: true, nodeIntegration: false, sandbox: true,
       preload: path.join(__dirname, "dialer-preload.js"),
+      /* The power dialer keeps calling while this window sits in the bubble
+         (hidden). Chromium slows a hidden page's timers, which stretched the
+         countdown to the next lead; a softphone must not be throttled. */
+      backgroundThrottling: false,
     },
   });
   win.setAlwaysOnTop(true, "screen-saver");
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   win.loadURL(DIALER_URL);
 
-  const keepEmbed = (e, url) => { const f = forceEmbed(url); if (f) { e.preventDefault(); win.loadURL(f); } };
-  win.webContents.on("will-navigate", keepEmbed);
-  win.webContents.on("will-redirect", keepEmbed);
+  const guardNav = (e, url, isRedirect) => {
+    if (!allowedInWindow(url)) {
+      e.preventDefault(); openOutside(url);
+      // only a SERVER redirect (a sign-in flow), never a link the rep clicked
+      if (isRedirect && e.isMainFrame !== false && /^https:/i.test(url)) reloadOnFocus = true;
+      return;
+    }
+    const f = forceEmbed(url);
+    if (f) { e.preventDefault(); win.loadURL(f); }
+  };
+  win.webContents.on("will-navigate", (e, url) => guardNav(e, url, false));
+  win.webContents.on("will-redirect", (e, url) => guardNav(e, url, true));
+  win.on("focus", () => {
+    // never reload under a ringing or live call — it would drop it; try again next focus
+    if (!reloadOnFocus || bubbleState.call) return;
+    reloadOnFocus = false;
+    win.loadURL(DIALER_URL);
+  });
+  /* Backstop: Chromium commits some navigations without asking will-navigate
+     first — about:blank is one (found in the 0.3.0 retest). Whatever lands in
+     the window that is not allowed there is replaced by the dialer again. */
+  win.webContents.on("did-navigate", (_e, url) => {
+    if (!allowedInWindow(url)) win.loadURL(DIALER_URL);
+  });
 
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:|^tel:|^mailto:/i.test(url)) shell.openExternal(url);
+    openOutside(url);
     return { action: "deny" };
   });
 
@@ -208,14 +276,35 @@ function showBubble() {
     alwaysOnTop: true, skipTaskbar: true, hasShadow: false,
     icon: ICON,
     webPreferences: {
-      contextIsolation: true, nodeIntegration: false,
+      contextIsolation: true, nodeIntegration: false, sandbox: true,
       preload: path.join(__dirname, "bubble-preload.js"),
     },
   });
   bubble.setAlwaysOnTop(true, "screen-saver");
   bubble.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  // a local page with nowhere to go
+  bubble.webContents.on("will-navigate", (e) => e.preventDefault());
+  bubble.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   bubble.webContents.on("did-finish-load", pushBubbleState);
-  bubble.loadFile(path.join(__dirname, "bubble.html"));
+  bubble.webContents.on("context-menu", showBubbleMenu);
+  bubble.loadURL(`${APP_SCHEME}://app/bubble.html`);
+}
+
+/* Right-click the bubble: whether the dialer starts with Windows, an update
+   check, and a real Quit (the window's close button only closes the window). */
+function showBubbleMenu() {
+  const packaged = app.isPackaged;
+  Menu.buildFromTemplate([
+    { label: "Open dialer", click: openDialer },
+    { type: "separator" },
+    { label: "Start with Windows", type: "checkbox", enabled: packaged,
+      checked: packaged && autoStartOn(),
+      click: (item) => setAutoStart(item.checked) },
+    { label: "Check for updates", enabled: packaged, click: () => checkForUpdates(true) },
+    { label: `Version ${app.getVersion()}`, enabled: false },
+    { type: "separator" },
+    { label: "Quit Karma Connect Dialer", click: () => app.quit() },
+  ]).popup({ window: bubble });
 }
 
 // cursor offset from the window's corner at press, where the press was, and
@@ -299,15 +388,84 @@ app.on("second-instance", openDialer);
 if (app.isPackaged) app.setAsDefaultProtocolClient(PROTOCOL);
 else app.setAsDefaultProtocolClient(PROTOCOL, process.execPath, [path.resolve(process.argv[1] || ".")]);
 
+/* ---- start with Windows ----
+   On by default, so the dialer is there the moment a rep opens Karma Connect —
+   but set only ONCE, on the first run of an installed copy. After that it is
+   the rep's choice (the bubble's right-click menu, or Task Manager → Startup
+   apps), and a later launch never switches it back on. Only for the
+   INSTALLED app: on a dev `npm start` it would register the Electron binary. */
+const prefsFile = () => path.join(app.getPath("userData"), "desktop-prefs.json");
+function readPrefs() { try { return JSON.parse(fs.readFileSync(prefsFile(), "utf8")) || {}; } catch (e) { return {}; } }
+function writePrefs(p) { try { fs.writeFileSync(prefsFile(), JSON.stringify(p)); } catch (e) { /* fine */ } }
+/* The Run-key value name is pinned to the one 0.1–0.2 wrote. Electron derives
+   the default from the AppUserModelId, which this build now sets — left to the
+   default, an upgraded PC would get a SECOND entry (two launches at login, and
+   unticking the menu item would only remove one of them). */
+const LOGIN_ITEM = { name: "electron.app.Karma Connect Dialer" };
+/* Read from the registry itself. getLoginItemSettings() takes no name on
+   Windows (its openAtLogin answers for the AppUserModelId's entry, not this
+   one), and its launchItems came back EMPTY for a value it had just written —
+   so the menu tick always read "off" and could never switch auto-start off.
+   Task Manager's "Disabled" is an odd first byte under StartupApproved. */
+const RUN_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+const APPROVED_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run";
+function regValue(key) {
+  try {
+    return require("node:child_process").execFileSync("reg", ["query", key, "/v", LOGIN_ITEM.name],
+      { stdio: "pipe", windowsHide: true }).toString();
+  } catch (e) { return null; }
+}
+function autoStartOn() {
+  if (!regValue(RUN_KEY)) return false;
+  const m = /REG_BINARY\s+([0-9A-F]{2})/i.exec(regValue(APPROVED_KEY) || "");
+  return !(m && (parseInt(m[1], 16) & 1));
+}
+function setAutoStart(on) {
+  try { app.setLoginItemSettings({ ...LOGIN_ITEM, openAtLogin: !!on }); } catch (e) { /* not fatal */ }
+  // ticking it back on also lifts a Task Manager "Disabled", or Windows would still skip it
+  if (on) try {
+    require("node:child_process").execFileSync("reg", ["delete", APPROVED_KEY, "/v", LOGIN_ITEM.name, "/f"],
+      { stdio: "pipe", windowsHide: true });
+  } catch (e) { /* no such value — nothing to lift */ }
+  writePrefs({ ...readPrefs(), autoStartChosen: true });
+}
+function autoStartFirstRun() {
+  if (!app.isPackaged || readPrefs().autoStartChosen) return;
+  setAutoStart(true);
+}
+
+/* ---- updates ----
+   Installed copies check GitHub Releases (the `publish` block in package.json)
+   on start and every four hours, download in the background, and install when
+   the app next quits — never mid-call. electron-updater checks the sha512 in
+   latest.yml and, once the build is signed, that the update is signed by the
+   same publisher (verifyUpdateCodeSignature). Pre-releases are ignored. */
+let updater = null;
+function checkForUpdates(byHand) {
+  if (!app.isPackaged) return;
+  try {
+    if (!updater) {
+      updater = require("electron-updater").autoUpdater;
+      updater.logger = null;            // its default logger prints whole stack traces; one line below is enough
+      updater.autoDownload = true;
+      updater.autoInstallOnAppQuit = true;
+      updater.allowPrerelease = false;
+      /* every failure — the check, and the background download (network
+         drop, sha512 or publisher mismatch) — arrives here once; the promise
+         rejections below are only swallowed so none of them can surface as
+         Electron's "JavaScript error in the main process" dialog over the dialer */
+      updater.on("error", (e) => console.warn("[updater]", e && e.message));
+    }
+    (byHand ? updater.checkForUpdatesAndNotify() : updater.checkForUpdates())
+      .then((r) => r && r.downloadPromise && r.downloadPromise.catch(() => {}))
+      .catch(() => {});
+  } catch (e) { console.warn("[updater]", e && e.message); }
+}
+
 app.whenReady().then(() => {
-  /* Open automatically when the person logs into Windows, so the dialer is
-     always running and floating — there the moment they open Karma Connect, no
-     need to launch it by hand. Only for the INSTALLED app (openAtLogin on a
-     dev `npm start` would register the Electron binary, not the real app). */
-  if (app.isPackaged) {
-    try { app.setLoginItemSettings({ openAtLogin: true, openAsHidden: false }); }
-    catch (e) { /* not fatal */ }
-  }
+  app.setAppUserModelId("com.karmastaff.karmaconnect.dialer");
+  serveAppFiles();
+  autoStartFirstRun();
 
   /* The softphone needs the microphone (and to pick the speaker) — granted
      only to the dialer's origin. The check handler is handed a full URL
@@ -327,6 +485,16 @@ app.whenReady().then(() => {
 
   createWindow();
   app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+
+  checkForUpdates(false);
+  setInterval(() => checkForUpdates(false), 4 * 60 * 60 * 1000);
+});
+
+/* Belt and braces for every web contents this app ever creates: nothing may
+   attach a <webview>, and no new window opens inside the app. */
+app.on("web-contents-created", (_e, wc) => {
+  wc.on("will-attach-webview", (e) => e.preventDefault());
+  wc.setWindowOpenHandler(({ url }) => { openOutside(url); return { action: "deny" }; });
 });
 
 app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
