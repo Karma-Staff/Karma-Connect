@@ -1,7 +1,13 @@
 # Karma Connect — LinkedIn agent
 
-A local worker that sends the LinkedIn messages you approved in Karma Connect, and pulls each
-prospect's title / company / company link off their profile while it's there.
+A local worker that does the LinkedIn work you approved in Karma Connect:
+
+- **Connection requests** with the approved note (`invite.cjs`).
+- **Messages** — and a message queued for someone you've invited waits until they accept.
+- **Replies** — it reads your inbox for answers from prospects; AI drafts a reply in the Send
+  Queue, you edit and approve it, and the agent sends it into that conversation (`inbox.cjs`).
+
+It also pulls each prospect's title / company / company link off their profile while it's there.
 
 It runs on **your machine**, not on Render. It needs the browser profile you signed into, and it
 should reach LinkedIn from where you normally work.
@@ -65,17 +71,34 @@ come back `unverified` — fix the selectors in `send.cjs` before running for re
 ## What it does each cycle
 
 1. Asks the server for work (`POST /api/outreach/agent/lease`).
-2. The server checks the caps and hands back at most a few items.
-3. For each: open the profile → scrape → **Message** → type the approved body → **Send**.
+2. The server checks the caps and hands back at most a few items — replies first.
+3. For each:
+   - **invitation**: open the profile → scrape → **Connect** (or More → Connect) → **Add a note** →
+     type the approved note → **Send** → check the profile now says *Pending*.
+   - **message**: open the profile → scrape → **Message** → type the approved body → **Send**.
+   - **reply**: open the conversation → type the approved reply → **Send**.
 4. Reports `sent` / `failed` / `halted` back, then waits 45–180s before the next one.
+5. Every 15 minutes it reads the inbox (`LI_AGENT_INBOX_MIN`), and every hour the
+   new-connections list (`LI_AGENT_ACCEPT_MIN`), and reports replies and accepted invitations.
+
+**Only your prospects leave this machine.** Before reading, the agent asks the server who you
+reached out to (`POST /api/outreach/agent/watch`). Conversations with anyone else are never even
+opened, and only accepted invitations that were pending go back — not your whole network.
+
+**It only ever clicks THIS person's Connect.** A profile page also carries other people's Connect
+buttons ("More profiles for you"). `invite.cjs` uses a control only when its label names the
+prospect, its link carries their handle, or it sits in the top card; otherwise it fails the item
+rather than guess. Already connected → recorded as accepted. Already pending → recorded as sent.
+LinkedIn asking for their email, or the free plan's monthly limit on notes → failed at once,
+with the reason, so you can do that one by hand.
 
 Step 3 *navigates* to the profile's `/messaging/compose/` URL rather than clicking the Message
 link. LinkedIn floats promo banners ("Reactivate Premium: 50% Off") over the profile that
 intercept clicks — a click retries until it times out having done nothing, while a navigation
 can't be intercepted.
 
-The message text always comes from a queue row **a human approved in Karma Connect**. The agent
-never writes or edits message content.
+The text always comes from a queue row **a human approved in Karma Connect**. The agent never
+writes or edits message content — AI reply drafts are written in the app and approved there.
 
 ## Limits
 
@@ -84,9 +107,11 @@ copies doesn't reset anything. Tune with env vars on the server, not here.
 
 | | default | env |
 |---|---|---|
-| Sends per day | 25 | `LI_AGENT_PER_DAY` |
-| Sends per hour | 8 | `LI_AGENT_PER_HOUR` |
-| Gap between sends | 45–180s | `LI_AGENT_MIN_GAP_SEC` / `LI_AGENT_MAX_GAP_SEC` |
+| Messages + replies per day | 25 | `LI_AGENT_PER_DAY` |
+| Messages + replies per hour | 8 | `LI_AGENT_PER_HOUR` |
+| Invitations per day | 15 | `LI_AGENT_INVITES_PER_DAY` |
+| Invitations per week | 80 | `LI_AGENT_INVITES_PER_WEEK` (LinkedIn's own limit is ~100) |
+| Gap between any two actions | 45–180s | `LI_AGENT_MIN_GAP_SEC` / `LI_AGENT_MAX_GAP_SEC` |
 | Sending window | 09:00–17:00 | `LI_AGENT_WINDOW_START` / `LI_AGENT_WINDOW_END` |
 | Weekdays only | yes | `LI_AGENT_WEEKDAYS_ONLY=false` to allow weekends |
 | Batch per lease | 3 | `LI_AGENT_BATCH` |

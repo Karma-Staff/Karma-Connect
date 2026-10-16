@@ -86,3 +86,34 @@ export async function downloadAgent() {
   a.remove();
   URL.revokeObjectURL(url);
 }
+
+// ── LinkedIn replies ────────────────────────────────────────────────
+// Conversations the agent read from LinkedIn — only ones with people you reached out to.
+export async function listInbox() {
+  const d = await api("/api/outreach/inbox");
+  return d.threads || [];
+}
+
+// Keep an AI draft with its thread. `forText` is the message it answers.
+export async function saveThreadDraft(id, body, forText) {
+  const d = await api("/api/outreach/inbox/" + encodeURIComponent(id) + "/draft", { method: "POST", body: { body, forText } });
+  return d.thread;
+}
+
+// You approved the reply: the agent sends it into the LinkedIn thread.
+export async function approveReply(id, body) {
+  const d = await api("/api/outreach/inbox/" + encodeURIComponent(id) + "/reply", { method: "POST", body: { body } });
+  return d.item;
+}
+
+// Done with a conversation without replying (handled=false brings it back).
+export async function setThreadHandled(id, handled = true) {
+  const d = await api("/api/outreach/inbox/" + encodeURIComponent(id) + "/handled", { method: "POST", body: { handled } });
+  return d.thread;
+}
+
+// A message held until the invitation is accepted: send it without waiting.
+export async function sendWithoutWaiting(id) {
+  const d = await api("/api/outreach/queue/" + encodeURIComponent(id) + "/no-wait", { method: "POST" });
+  return d.item;
+}

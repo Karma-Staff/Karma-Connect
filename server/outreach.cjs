@@ -13,6 +13,7 @@
 // which read env at load — this module must be required AFTER the .env loader has run.
 const { dbOn, q, logActivity } = require("./db.cjs");
 const { sendOutreachEmail } = require("./email.cjs");
+const { WAITING_SQL } = require("./linkedin-agent.cjs");
 
 const CHANNELS = ["email", "linkedin"];
 const TICK_MS = Math.max(10000, parseInt(process.env.OUTREACH_TICK_MS || "30000", 10)); // default 30s
@@ -63,27 +64,48 @@ async function enqueue(userId, item = {}) {
   const approved = item.approved !== false && !needsEmail; // default: enqueue already-approved
   const status = approved ? "approved" : "pending";
   const scheduledAt = approved ? (item.scheduledAt ? new Date(item.scheduledAt) : new Date()) : null;
+  // LinkedIn: a connection note is an INVITATION (the agent sends it through Connect, not the
+  // message box). Anything else is a message — and a message to someone whose invitation is
+  // still out waits until they accept, because LinkedIn won't let you message them before.
+  const action = channel === "linkedin" && (item.action === "invite" || item.step === "connection") ? "invite" : "message";
+  if (action === "invite" && body.length > 300) throw new Error("A connection note must be 300 characters or fewer.");
+  const prospectId = String(item.prospectId);
+  let waitAccept = false;
+  if (channel === "linkedin" && action === "message") {
+    const { rows: inv } = await q(
+      `select 1 from outreach_queue where user_id = $1 and prospect_id = $2 and channel = 'linkedin' and action = 'invite'
+         and accepted_at is null and status in ('pending','approved','sending','sent') limit 1`, [userId, prospectId]);
+    waitAccept = inv.length > 0;
+  }
   const { rows } = await q(
     `insert into outreach_queue
        (user_id, prospect_id, lead_label, channel, step, subject, body, to_email, from_email, from_name,
-        linkedin_url, status, scheduled_at, approved_by, approved_at)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+        linkedin_url, status, scheduled_at, approved_by, approved_at, action, wait_accept)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
      returning *`,
-    [userId, String(item.prospectId), clean(item.leadLabel, 200), channel, clean(item.step, 60),
+    [userId, prospectId, clean(item.leadLabel, 200), channel, clean(item.step, 60),
      clean(item.subject, 300), body, clean(item.toEmail, 200), clean(item.fromEmail, 200), clean(item.fromName, 120),
-     clean(item.linkedinUrl, 400), status, scheduledAt, approved ? (item.approvedBy || null) : null, approved ? new Date() : null],
+     clean(item.linkedinUrl, 400), status, scheduledAt, approved ? (item.approvedBy || null) : null, approved ? new Date() : null,
+     action, waitAccept],
   );
-  logActivity(userId, "outreach_queued", { prospectId: String(item.prospectId), label: item.leadLabel, detail: channel });
+  // An invitation queued AFTER messages to the same person: those messages now wait for it.
+  if (action === "invite") {
+    await q(`update outreach_queue set wait_accept = true, updated_at = now()
+              where user_id = $1 and prospect_id = $2 and channel = 'linkedin' and action = 'message'
+                and status in ('pending','approved','failed')`, [userId, prospectId]);
+  }
+  logActivity(userId, "outreach_queued", { prospectId, label: item.leadLabel, detail: action === "invite" ? "linkedin_invite" : channel });
   return rows[0];
 }
 
 async function listQueue(userId, { status = "", channel = "" } = {}) {
   const params = [userId];
-  let where = "user_id = $1";
-  if (status) { params.push(status); where += ` and status = $${params.length}`; }
-  if (channel) { params.push(channel); where += ` and channel = $${params.length}`; }
+  let where = "o.user_id = $1";
+  if (status) { params.push(status); where += ` and o.status = ${params.length}`; }
+  if (channel) { params.push(channel); where += ` and o.channel = ${params.length}`; }
+  // waiting: a LinkedIn message held until the invitation to the same person is accepted.
   const { rows } = await q(
-    `select * from outreach_queue where ${where} order by
+    `select o.*, ${WAITING_SQL("o")} as waiting from outreach_queue o where ${where} order by
        case status when 'approved' then 0 when 'pending' then 1 when 'sent' then 2 else 3 end,
        coalesce(scheduled_at, created_at) desc limit 300`,
     params,

@@ -1,4 +1,6 @@
-// The agent loop. Leases approved LinkedIn messages from Karma Connect, sends them, reports back.
+// The agent loop. Leases approved LinkedIn work from Karma Connect — connection requests,
+// messages and replies — does it, and reports back. Between sends it reads the inbox for
+// replies and the new-connections list for accepted invitations (inbox.cjs).
 //
 //   npm run agent:login   sign in to LinkedIn by hand, once (saves the session)
 //   npm run agent         start the loop
@@ -10,7 +12,15 @@
 // It cannot exceed the sending caps: every batch is granted by the server, which counts sends
 // in the database. Restarting the worker, or running two of them, does not reset anything.
 const { open, isSignedIn, login, PROFILE_DIR } = require("./session.cjs");
-const { sendOne, jitter } = require("./send.cjs");
+const { sendOne, replyOne, jitter } = require("./send.cjs");
+const { inviteOne } = require("./invite.cjs");
+const { readInbox, readAccepted } = require("./inbox.cjs");
+const { captureProfile } = require("./capture.cjs");
+
+// How often to read the inbox and the connections list. Reading is activity too, so it's
+// paced like everything else and only happens inside the sending window.
+const INBOX_EVERY_MIN = Math.max(5, parseInt(process.env.LI_AGENT_INBOX_MIN || "15", 10));
+const ACCEPT_EVERY_MIN = Math.max(15, parseInt(process.env.LI_AGENT_ACCEPT_MIN || "60", 10));
 
 const BASE = (process.env.KC_BASE_URL || "http://localhost:8787").replace(/\/$/, "");
 const EMAIL = process.env.KC_EMAIL || "";
@@ -57,13 +67,15 @@ async function tick(page) {
   }
 
   const { minGapSec = 45, maxGapSec = 180 } = batch.limits || {};
-  log(`leased ${batch.items.length} — ${batch.counts?.day ?? "?"}/${batch.limits?.perDay ?? "?"} sent today`);
+  log(`leased ${batch.items.length} — today: ${batch.counts?.day ?? "?"}/${batch.limits?.perDay ?? "?"} messages, ${batch.counts?.invDay ?? "?"}/${batch.limits?.invitesPerDay ?? "?"} invitations`);
 
   for (const item of batch.items) {
     const who = item.lead_label || item.prospect_id;
+    const doIt = item.action === "invite" ? inviteOne : item.action === "reply" ? replyOne : sendOne;
+    const what = item.action === "invite" ? "invitation" : item.action === "reply" ? "reply" : "message";
     let outcome;
     try {
-      outcome = await sendOne(page, item, { dryRun: DRY_RUN });
+      outcome = await doIt(page, item, { dryRun: DRY_RUN });
     } catch (e) {
       outcome = { result: "failed", error: String(e.message || e).slice(0, 300), scrape: null };
     }
@@ -71,7 +83,8 @@ async function tick(page) {
     try {
       await api("/api/outreach/agent/report/" + encodeURIComponent(item.id), {
         method: "POST",
-        body: { result: outcome.result, error: outcome.error, leaseId, scrape: outcome.scrape },
+        body: { result: outcome.result, error: outcome.error, leaseId, scrape: outcome.scrape,
+          connected: !!outcome.connected, final: !!outcome.final, profileText: outcome.profileText || undefined },
       });
     } catch (e) { log("could not report", who + ":", e.message); }
 
@@ -80,12 +93,64 @@ async function tick(page) {
       log("The agent has switched itself off. Sort it out on LinkedIn, then turn it back on in the Send Queue.");
       return null; // stop the loop entirely
     }
-    log(outcome.result === "sent" ? "sent → " + who : "failed → " + who + ": " + outcome.error);
+    log(outcome.result === "sent" ? what + " sent → " + who + (outcome.connected ? " (already connected)" : "")
+      : outcome.result + " → " + who + " (" + what + "): " + outcome.error);
 
     // Pace between sends, even inside a batch.
     if (item !== batch.items[batch.items.length - 1]) await jitter(minGapSec * 1000, maxGapSec * 1000);
   }
   return minGapSec;
+}
+
+// ── Reading: replies and accepted invitations ───────────────────────
+let lastInbox = 0, lastAccept = 0;
+const memo = new Map(); // thread → preview last read, so unchanged threads aren't reopened
+
+async function chores(page) {
+  const now = new Date();
+  const dueInbox = Date.now() - lastInbox >= INBOX_EVERY_MIN * 60000;
+  const dueAccept = Date.now() - lastAccept >= ACCEPT_EVERY_MIN * 60000;
+  if (!dueInbox && !dueAccept) return true;
+  const w = await api("/api/outreach/agent/watch", { method: "POST", body: { localHour: now.getHours(), localDay: now.getDay() } });
+  if (!w.ok) return true; // off or outside the window — try again later, quietly
+
+  const stop = async (reason) => {
+    await api("/api/outreach/agent/halt", { method: "POST", body: { reason } }).catch(() => {});
+    log("HALTED while reading LinkedIn:", reason);
+    log("The agent has switched itself off. Sort it out on LinkedIn, then turn it back on in the Send Queue.");
+    return false;
+  };
+
+  if (dueAccept) {
+    lastAccept = Date.now();
+    const a = await readAccepted(page, w.pendingInvites);
+    if (a.halt) return stop(a.halt);
+    let toCopy = w.needProfile || [];
+    if (a.accepted.length) {
+      const r = await api("/api/outreach/agent/accepted", { method: "POST", body: { handles: a.accepted } });
+      log(`${r.accepted} invitation${r.accepted === 1 ? "" : "s"} accepted`);
+      toCopy = r.needProfile || toCopy;
+    } else if (w.pendingInvites.length) log(`invitations: none of ${w.pendingInvites.length} pending accepted yet`);
+    // Accepted, with no message queued to follow: copy their profile for Karma Connect to
+    // analyse and draft a first message from. A few per round — each is a page visit.
+    for (const handle of toCopy.slice(0, 5)) {
+      const c = await captureProfile(page, handle);
+      if (c.halt) return stop(c.halt);
+      const r = await api("/api/outreach/agent/profile", { method: "POST", body: { handle, text: c.text } }).catch(() => ({}));
+      log(r.stored ? `copied ${handle}'s profile — a first message will be drafted in the Send Queue` : `couldn't copy ${handle}'s profile (will try again)`);
+      await jitter(20000, 60000);
+    }
+  }
+  if (dueInbox) {
+    lastInbox = Date.now();
+    const r = await readInbox(page, w.people, memo);
+    if (r.halt) return stop(r.halt);
+    if (r.threads.length) {
+      const saved = await api("/api/outreach/agent/inbox", { method: "POST", body: { threads: r.threads } });
+      log(`inbox: ${saved.stored} conversation${saved.stored === 1 ? "" : "s"} updated, ${saved.needReply} waiting for a reply in Karma Connect`);
+    } else log("inbox:", r.note || "nothing new");
+  }
+  return true;
 }
 
 async function main() {
@@ -100,7 +165,7 @@ async function main() {
     await ctx.close();
     process.exit(1);
   }
-  log("LinkedIn session is live." + (DRY_RUN ? "  [DRY RUN — nothing will be sent]" : ""));
+  log("LinkedIn session is live." + (DRY_RUN ? "  [DRY RUN — nothing will be sent; inbox and connections are still read]" : ""));
 
   let stop = false;
   const shutdown = async () => { if (stop) return; stop = true; log("stopping…"); await ctx.close().catch(() => {}); process.exit(0); };
@@ -116,6 +181,9 @@ async function main() {
       wait = 120;
     }
     if (wait === null) break; // halted
+    try {
+      if (!(await chores(page))) break; // halted while reading
+    } catch (e) { log("inbox/connections check failed:", e.message); }
     await new Promise((r) => setTimeout(r, wait * 1000));
   }
   await ctx.close().catch(() => {});

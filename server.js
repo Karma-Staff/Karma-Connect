@@ -1292,6 +1292,127 @@ app.post("/api/outreach/agent/report/:id", requireUser, async (req, res) => {
   } catch (e) { res.status(500).json({ error: { message: "Could not record the result." } }); }
 });
 
+// What the worker should look out for while reading LinkedIn: the people this user reached out
+// to (it reports only THEIR conversations), and the invitations still waiting to be accepted.
+// Body: { localHour, localDay }. Empty lists outside the window or while the agent is off.
+app.post("/api/outreach/agent/watch", requireUser, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const hour = Number.isInteger(b.localHour) ? b.localHour : new Date().getHours();
+    const day = Number.isInteger(b.localDay) ? b.localDay : new Date().getDay();
+    res.json(await liAgent.watch(req.userId, { localHour: hour, localDay: day }));
+  } catch (e) { res.status(500).json({ error: { message: "Could not load the watch list." } }); }
+});
+
+// Conversations the worker read. Body: { threads: [{ threadKey, threadUrl, name, profileUrl,
+// messages: [{ from: 'them'|'me', text }] }] }. Threads matching no prospect are dropped.
+app.post("/api/outreach/agent/inbox", requireUser, async (req, res) => {
+  try {
+    res.json(await liAgent.recordInbox(req.userId, (req.body || {}).threads));
+  } catch (e) { res.status(500).json({ error: { message: "Could not store the conversations." } }); }
+});
+
+// Invitations the worker saw accepted. Body: { handles: ["jane-doe-123", ...] }.
+app.post("/api/outreach/agent/accepted", requireUser, async (req, res) => {
+  try {
+    res.json(await liAgent.markAccepted(req.userId, (req.body || {}).handles));
+  } catch (e) { res.status(500).json({ error: { message: "Could not record the acceptances." } }); }
+});
+
+// The accepted person's whole profile page, copied by the worker. Body: { handle, text }.
+app.post("/api/outreach/agent/profile", requireUser, async (req, res) => {
+  try {
+    res.json(await liAgent.recordProfile(req.userId, req.body || {}));
+  } catch (e) { res.status(500).json({ error: { message: "Could not store the profile." } }); }
+});
+
+// The worker hit a captcha / checkpoint / limit while reading (not sending). Body: { reason }.
+app.post("/api/outreach/agent/halt", requireUser, async (req, res) => {
+  try {
+    await liAgent.halt(req.userId, String((req.body || {}).reason || "LinkedIn asked for a human.").slice(0, 300));
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: { message: "Could not stop the agent." } }); }
+});
+
+// ─────────────────────── LinkedIn replies (Send Queue) ──────────────
+// Conversations with prospects, newest needing a reply first.
+app.get("/api/outreach/inbox", requireUser, async (req, res) => {
+  try {
+    res.json({ threads: await liAgent.listInbox(req.userId) });
+  } catch (e) { res.status(500).json({ error: { message: "Could not load LinkedIn replies." } }); }
+});
+
+// Save the AI's draft with the thread. Body: { body, forText }.
+app.post("/api/outreach/inbox/:id/draft", requireUser, async (req, res) => {
+  try {
+    const t = await liAgent.saveDraft(req.userId, String(req.params.id), req.body || {});
+    if (!t) return res.status(404).json({ error: { message: "Conversation not found." } });
+    res.json({ thread: t });
+  } catch (e) { res.status(500).json({ error: { message: "Could not save the draft." } }); }
+});
+
+// Approve a reply: it goes to the queue and the agent sends it into the thread. Body: { body }.
+app.post("/api/outreach/inbox/:id/reply", requireUser, async (req, res) => {
+  try {
+    const item = await liAgent.queueReply(req.userId, String(req.params.id), { body: (req.body || {}).body, approvedBy: req.email });
+    if (!item) return res.status(404).json({ error: { message: "Conversation not found." } });
+    res.json({ item });
+  } catch (e) { res.status(400).json({ error: { message: (e && e.message) || "Could not queue the reply." } }); }
+});
+
+// Done with a conversation without replying (or { handled: false } to bring it back).
+app.post("/api/outreach/inbox/:id/handled", requireUser, async (req, res) => {
+  try {
+    const t = await liAgent.setHandled(req.userId, String(req.params.id), (req.body || {}).handled !== false);
+    if (!t) return res.status(404).json({ error: { message: "Conversation not found." } });
+    res.json({ thread: t });
+  } catch (e) { res.status(500).json({ error: { message: "Could not update the conversation." } }); }
+});
+
+// ─────────────── First message after an accept (Send Queue) ─────────
+// People who accepted, with the profile the agent copied — the page analyses it and drafts.
+app.get("/api/outreach/followups", requireUser, async (req, res) => {
+  try {
+    res.json({ followups: await liAgent.listFollowups(req.userId) });
+  } catch (e) { res.status(500).json({ error: { message: "Could not load new connections." } }); }
+});
+
+// Save the AI's draft. Body: { body }.
+app.post("/api/outreach/followups/:id/draft", requireUser, async (req, res) => {
+  try {
+    const r = await liAgent.saveFollowupDraft(req.userId, String(req.params.id), req.body || {});
+    if (!r) return res.status(404).json({ error: { message: "Not found." } });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: { message: "Could not save the draft." } }); }
+});
+
+// Approve the first message: it goes to the queue and the agent sends it. Body: { body }.
+app.post("/api/outreach/followups/:id/approve", requireUser, async (req, res) => {
+  try {
+    const item = await liAgent.queueFollowup(req.userId, String(req.params.id), { body: (req.body || {}).body, approvedBy: req.email });
+    if (!item) return res.status(404).json({ error: { message: "Not found." } });
+    res.json({ item });
+  } catch (e) { res.status(400).json({ error: { message: (e && e.message) || "Could not queue the message." } }); }
+});
+
+// No first message for this one.
+app.post("/api/outreach/followups/:id/skip", requireUser, async (req, res) => {
+  try {
+    const r = await liAgent.skipFollowup(req.userId, String(req.params.id));
+    if (!r) return res.status(404).json({ error: { message: "Not found." } });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: { message: "Could not skip it." } }); }
+});
+
+// A message held until an invitation is accepted: send it without waiting.
+app.post("/api/outreach/queue/:id/no-wait", requireUser, async (req, res) => {
+  try {
+    const item = await liAgent.sendWithoutWaiting(req.userId, String(req.params.id));
+    if (!item) return res.status(404).json({ error: { message: "Item not found." } });
+    res.json({ item });
+  } catch (e) { res.status(500).json({ error: { message: "Could not update the item." } }); }
+});
+
 // ─────────────────────────── Anthropic proxy ────────────────────────
 // In dev the proxy is open to localhost (no login needed); in prod it runs behind
 // requireUser, which resolves the shared WorkOS session. The proxy itself can no

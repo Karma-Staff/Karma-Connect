@@ -10,7 +10,7 @@ const path = require("node:path");
 const zlib = require("node:zlib");
 
 const AGENT_DIR = path.join(__dirname, "..", "agent");
-const FILES = ["README.md", "run.cjs", "scrape.cjs", "send.cjs", "session.cjs"];
+const FILES = ["README.md", "run.cjs", "scrape.cjs", "send.cjs", "session.cjs", "invite.cjs", "inbox.cjs", "capture.cjs"];
 const ROOT = "karma-connect-agent"; // everything sits under one folder, so unzipping is tidy
 
 // ── Minimal zip writer (deflate) ──────────────────────────────────────────────
@@ -140,8 +140,10 @@ function setupMd({ baseUrl, email }) {
 
   return `# Run the Karma Connect LinkedIn agent
 
-This agent runs on **your machine**, not on the server. It opens your signed-in browser, sends
-the LinkedIn messages you already approved in Karma Connect, and reports back.
+This agent runs on **your machine**, not on the server. It opens your signed-in browser and does
+the LinkedIn work you already approved in Karma Connect: connection requests with your note,
+messages (a follow-up waits until they accept), and replies. Between sends it reads your inbox
+for replies from prospects, so AI can draft an answer in the Send Queue for you to approve.
 
 Your server: **${baseUrl}**
 
@@ -189,7 +191,9 @@ ${F}bash
 npm run dry-run
 ${F}
 
-This opens each profile, types the message, then clears it and stops. Nothing is sent.
+This opens each profile, presses Connect or Message, types the note or message, then clears it
+and closes the window. Nothing is sent. It still reads your inbox and new connections, which is
+how you check those work too.
 
 ## 5. Run it
 
@@ -203,7 +207,9 @@ strip at the top turns to "Running" once this worker checks in. Closing the wind
 ## Notes
 
 - Approve messages in the app first. The agent only sends what a human approved, and it never
-  writes or edits message content.
+  writes or edits message content. Replies are drafted by AI in the app and still need your OK.
+- It only reports conversations with people you reached out to from Karma Connect. Everything
+  else in your LinkedIn inbox stays on this machine.
 - \`.profile/\` appears after step 3 and holds a **live logged-in LinkedIn session**. Don't copy
   it to another machine, and delete this folder if the machine changes hands.
 - \`README.md\` next to this file is the full reference — selectors, limits, what each cycle does.

@@ -3,7 +3,8 @@ import { SYSTEM } from "./lib/brand.js";
 import { SENDERS, senderOffer } from "./lib/senders.js";
 import { anthropicMsg, callClaude, CLAUDE_FAST_MODEL } from "./lib/claude.js";
 import { safeJSON } from "./lib/json.js";
-import { cleanMessages, stripLinkedInNoise } from "./lib/text.js";
+import { cleanMessages } from "./lib/text.js";
+import { parseProfileText, mergeParsed, fieldsFoundCount } from "./lib/profile.js";
 import { flagUnsupported } from "./lib/verify.js";
 import {
   COMPANY_SYSTEM, companyResearchPrompt, buildContext,
@@ -470,14 +471,17 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
     const label = [prospect.firstName, prospect.lastName].filter(Boolean).join(" ") || prospect.company || "Lead";
     const s = SENDERS.find((x) => x.id === sender) || SENDERS[0];
     try {
-      await queueMessage({
+      const it = await queueMessage({
         prospectId: currentEntryId, leadLabel: label, channel, step,
         subject: subject || "", body,
         toEmail: channel === "email" ? (prospect.email || "") : "",
         linkedinUrl: channel === "linkedin" ? (prospect.linkedinUrl || "") : "",
         fromEmail: s.email, fromName: s.name,
       });
-      showToast(channel === "email" ? "Queued — set recipient & approve in Send Queue" : "Queued to Send Queue");
+      showToast(channel === "email" ? "Queued — set recipient & approve in Send Queue"
+        : it && it.action === "invite" ? "Queued as a connection request"
+        : it && it.wait_accept ? "Queued. It sends once they accept your connection request"
+        : "Queued to Send Queue");
     } catch (e) { showToast((e && e.message) || "Could not queue the message."); }
   }
 
@@ -524,69 +528,11 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
     if (!rawPaste.trim()) return;
     setParsing(true); setParseMsg(""); setParseErr("");
 
-    const systemPrompt = `You are an expert LinkedIn profile parser. You receive raw copy-pasted LinkedIn page text (Ctrl+A, Ctrl+C from a browser). The text contains the real profile mixed with LinkedIn UI noise: nav menus, ads, sidebars, "People also viewed", suggested connections, footer links, button labels, notification counts. Extract ONLY the actual profile data for the main person the page is about.
-
-CRITICAL RULES:
-- Return ONLY a single valid JSON object. No markdown. No code fences. No preamble. No commentary. Start your response with { and end with }.
-- Every string value must be properly JSON-escaped. Escape all double quotes inside values as \\". Escape all newlines as \\n. Never use unescaped control characters inside string values.
-- If a field has no data, use an empty string "". Never omit a field.
-- For long fields like "about" and "experience": include ALL content, do not truncate. Use \\n to separate paragraphs and entries.
-- "experience" should list every role as: TITLE at COMPANY (DATE_RANGE)\\nDescription if any. One entry per line.`;
-
-    const userPrompt = `Extract every profile field from this raw LinkedIn page paste. Return a single JSON object with exactly these keys:
-firstName, lastName, title, company, industry, location, headline, about, experience, education, skills, certifications, recommendations, recentPosts, mutualConnections, companyDesc, news, website, volunteering, languages, extraNotes, fieldsFound (array of field names you found data for), quality (high/medium/low string), qualityNote (one sentence string).
-
-RAW PASTE:
-${stripLinkedInNoise(rawPaste).slice(0, 24000)}`;
-
     try {
-      const txt = await anthropicMsg(systemPrompt, userPrompt, { maxTokens: 6000, model: CLAUDE_FAST_MODEL });
-
-      let d;
-      try {
-        d = safeJSON(txt);
-      } catch (parseErr) {
-        const grab = (key) => { const m = txt.match(new RegExp('"' + key + '"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"')); return m ? m[1].replace(/\\n/g, "\n") : ""; };
-        d = {
-          firstName: grab("firstName"), lastName: grab("lastName"), title: grab("title"),
-          company: grab("company"), industry: grab("industry"), location: grab("location"),
-          headline: grab("headline"), about: grab("about"), experience: grab("experience"),
-          education: grab("education"), skills: grab("skills"), certifications: grab("certifications"),
-          recommendations: grab("recommendations"), recentPosts: grab("recentPosts"),
-          mutualConnections: grab("mutualConnections"), companyDesc: grab("companyDesc"),
-          news: grab("news"), website: grab("website"), volunteering: grab("volunteering"),
-          languages: grab("languages"), extraNotes: grab("extraNotes"),
-          fieldsFound: [], quality: "low", qualityNote: "Partial extraction due to response format issue.",
-        };
-        const anyFound = Object.values(d).some((v) => typeof v === "string" && v.trim().length > 0);
-        if (!anyFound) throw new Error("Could not extract any profile data. Make sure you selected all text on the LinkedIn page (Ctrl+A then Ctrl+C) and try again.");
-      }
-
-      if (!d || typeof d !== "object") throw new Error("Unexpected response format. Try again.");
-      const safeStr = (v) => (typeof v === "string" ? v.replace(/\\n/g, "\n").trim() : "");
-
-      setProspect((p) => {
-        const next = { ...p };
-        ["firstName","lastName","title","company","industry","location","headline","about","experience","website","companyDesc","news"]
-          .forEach((k) => { if (safeStr(d[k])) next[k] = safeStr(d[k]); });
-        const extras = [];
-        if (safeStr(d.education)) extras.push("Education: " + safeStr(d.education));
-        if (safeStr(d.skills)) extras.push("Skills: " + safeStr(d.skills));
-        if (safeStr(d.certifications)) extras.push("Certifications: " + safeStr(d.certifications));
-        if (safeStr(d.volunteering)) extras.push("Volunteering: " + safeStr(d.volunteering));
-        if (safeStr(d.languages)) extras.push("Languages: " + safeStr(d.languages));
-        if (safeStr(d.extraNotes)) extras.push("Other: " + safeStr(d.extraNotes));
-        if (extras.length) next.research = (next.research ? next.research + "\n\n" : "") + "From LinkedIn paste:\n" + extras.join("\n");
-        const noteBlocks = [];
-        if (safeStr(d.recommendations)) noteBlocks.push("Recommendations:\n" + safeStr(d.recommendations));
-        if (safeStr(d.recentPosts)) noteBlocks.push("Recent posts / activity:\n" + safeStr(d.recentPosts));
-        if (noteBlocks.length) next.notes = (next.notes ? next.notes + "\n\n" : "") + noteBlocks.join("\n\n");
-        if (safeStr(d.mutualConnections)) next.mutual = (next.mutual ? next.mutual + " | " : "") + safeStr(d.mutualConnections);
-        return next;
-      });
-
-      const found = Array.isArray(d.fieldsFound) ? d.fieldsFound.length : Object.values(d).filter((v) => typeof v === "string" && v.trim()).length;
-      setParseMsg(`Profile parsed (${d.quality || "medium"} quality). ${found} fields extracted. ${d.qualityNote || ""} Review the fields below and fill in anything the AI missed.`);
+      // The parser is shared with the LinkedIn agent's accepted-connection flow (lib/profile.js).
+      const d = await parseProfileText(rawPaste);
+      setProspect((p) => mergeParsed(p, d));
+      setParseMsg(`Profile parsed (${d.quality || "medium"} quality). ${fieldsFoundCount(d)} fields extracted. ${d.qualityNote || ""} Review the fields below and fill in anything the AI missed.`);
       setRawPaste("");
     } catch (e) {
       setParseErr((e && e.message) || "Parse failed. Try Ctrl+A on the LinkedIn profile page, Ctrl+C, then paste here again.");

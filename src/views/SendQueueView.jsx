@@ -1,7 +1,13 @@
 // The outreach Send Queue. Approved EMAIL items are auto-sent by the server agent; LINKEDIN
-// items wait here for the human one-click hand-off (open LinkedIn + copy, you send, mark sent).
-import { useState, useEffect } from "react";
-import { listQueue, approveQueued, sendQueuedNow, markQueuedSent, skipQueued, agentStatus, setAgentEnabled, downloadAgent } from "../lib/outreach.js";
+// items — connection requests, messages, replies — are sent by the local LinkedIn agent, or by
+// hand here (open LinkedIn + copy, you send, mark sent). LinkedIn replies from prospects show
+// at the top with an AI draft that a person edits and approves before anything is sent.
+import { useState, useEffect, useRef } from "react";
+import { listQueue, approveQueued, sendQueuedNow, markQueuedSent, skipQueued, agentStatus, setAgentEnabled, downloadAgent,
+  listInbox, saveThreadDraft, approveReply, setThreadHandled, sendWithoutWaiting } from "../lib/outreach.js";
+import { draftReply } from "../lib/replies.js";
+import { listFollowups, prepareFollowup, saveFollowupDraft, approveFollowup, skipFollowup } from "../lib/followups.js";
+import { SENDERS } from "../lib/senders.js";
 
 const fmt = (t) => (t ? new Date(t).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "");
 const STATUS_META = {
@@ -22,14 +28,32 @@ function ChannelChip({ channel }) {
   );
 }
 
+// Where a LinkedIn item is done by hand: an invitation from the profile, a reply in its thread,
+// a message in the composer.
+function linkedinUrlFor(it) {
+  const profile = String(it.linkedin_url || "").trim();
+  const search = "https://www.linkedin.com/search/results/people/?keywords=" + encodeURIComponent(it.lead_label || "");
+  if (it.action === "reply") return it.thread_url || profile || search;
+  if (it.action === "invite") return profile || search;
+  const m = profile.match(/linkedin\.com\/in\/([^/?#]+)/i);
+  return m ? "https://www.linkedin.com/messaging/compose/?recipient=" + encodeURIComponent(m[1]) : (profile || search);
+}
+
 function QueueItem({ item, onChange, showToast }) {
   const [busy, setBusy] = useState(false);
   const [to, setTo] = useState(item.to_email || "");
   const [err, setErr] = useState("");
   const meta = STATUS_META[item.status] || { label: item.status, color: "var(--faint)" };
   const isEmail = item.channel === "email";
-  // LinkedIn never auto-sends, so an approved LinkedIn item is "Ready to send" (waiting on you).
-  const statusLabel = item.status === "approved" && !isEmail ? "Ready to send" : meta.label;
+  const action = item.action || "message";
+  const isInvite = !isEmail && action === "invite";
+  // An approved LinkedIn item is "Ready to send"; one held for an invitation says so; a sent
+  // invitation says whether it was accepted.
+  const statusLabel = item.status === "approved" && !isEmail
+    ? (item.waiting ? "Waits for accept" : "Ready to send")
+    : item.status === "sent" && isInvite ? (item.invite_state === "accepted" ? "Accepted" : "Invite sent") : meta.label;
+  const statusColor = item.status === "approved" && item.waiting ? "#E7B74B" : meta.color;
+  const stepLabel = isInvite ? "Connection request" : action === "reply" ? "Reply" : String(item.step || "").replace(/_/g, " ");
 
   async function run(fn, okMsg) {
     setBusy(true); setErr("");
@@ -42,20 +66,13 @@ function QueueItem({ item, onChange, showToast }) {
   function copyMsg() {
     try { navigator.clipboard.writeText(msgText()); showToast("Message copied — paste it into the LinkedIn chat"); } catch (e) {}
   }
-  // Pull the public handle out of a profile URL (…/in/<handle>) so we can deep-link to the chat.
-  const handleFromUrl = (u) => { const m = String(u || "").match(/linkedin\.com\/in\/([^/?#]+)/i); return m ? m[1] : ""; };
-  // Open LinkedIn's message composer for this person in a NEW TAB (the app stays put so you can
-  // keep prospecting), and copy the message so you paste it straight into the chat. Falls back to
-  // the profile, then a name search, if we don't have a usable link. The item stays here (Ready to
+  // Open the right LinkedIn page for this item in a NEW TAB (the app stays put so you can keep
+  // prospecting) — the composer, their profile for an invitation, or the thread for a reply —
+  // and copy the text so you paste it straight in. Falls back to a name search with no link. The item stays here (Ready to
   // send) until you press Send on LinkedIn and click "Mark sent".
   function openChat() {
     copyMsg();
-    const handle = handleFromUrl(item.linkedin_url);
-    const profile = (item.linkedin_url || "").trim();
-    const url = handle
-      ? "https://www.linkedin.com/messaging/compose/?recipient=" + encodeURIComponent(handle)
-      : (profile || "https://www.linkedin.com/search/results/people/?keywords=" + encodeURIComponent(item.lead_label || ""));
-    window.open(url, "_blank", "noopener");
+    window.open(linkedinUrlFor(item), "_blank", "noopener");
   }
   // Reliable fallback: just open the profile page (its "Message" button always works).
   function openProfile() {
@@ -69,9 +86,9 @@ function QueueItem({ item, onChange, showToast }) {
     <div className="mcard" style={{ gap: 11 }}>
       <div className="mctop">
         <ChannelChip channel={item.channel} />
-        {item.step && <span className="chip idx" style={{ textTransform: "capitalize" }}>{String(item.step).replace(/_/g, " ")}</span>}
+        {stepLabel && <span className="chip idx" style={{ textTransform: "capitalize" }}>{stepLabel}</span>}
         <span style={{ fontWeight: 700, fontSize: 13.5, color: "var(--text)" }}>{item.lead_label || "Untitled lead"}</span>
-        <span className="chip" style={{ marginLeft: "auto", background: "transparent", borderColor: meta.color + "66", color: meta.color }}>{statusLabel}</span>
+        <span className="chip" style={{ marginLeft: "auto", background: "transparent", borderColor: statusColor + "66", color: statusColor }}>{statusLabel}</span>
       </div>
 
       {item.subject && <div className="msubj"><span className="msubj-l">Subject</span>{item.subject}</div>}
@@ -82,7 +99,11 @@ function QueueItem({ item, onChange, showToast }) {
           never be auto-repeated, but a human needs to check the thread. Don't hide this. */}
       {item.status === "sent" && item.error && <div className="err">{item.error}</div>}
       {item.status === "approved" && isEmail && <div className="hint" style={{ color: "var(--muted)" }}>Auto-sends {item.scheduled_at ? fmt(item.scheduled_at) : "shortly"} → {item.to_email}</div>}
-      {item.status === "approved" && !isEmail && <div className="hint" style={{ color: "var(--muted)" }}>Opens the chat in a new tab and copies this message — paste it in and press Send when you're ready. Keep working here meanwhile; it stays in the queue until you mark it sent.</div>}
+      {item.status === "approved" && !isEmail && item.waiting && <div className="hint" style={{ color: "var(--muted)" }}>Sends automatically once {item.lead_label || "they"} accepts your connection request. LinkedIn won't let you message them before that.</div>}
+      {item.status === "approved" && !isEmail && !item.waiting && <div className="hint" style={{ color: "var(--muted)" }}>{isInvite
+        ? "The agent sends this as a connection request with this note. By hand: open their profile, press Connect, Add a note, paste, Send, then mark it sent."
+        : "The agent sends this when it's running. By hand: open the chat (it copies the message), paste it in and press Send, then mark it sent."}</div>}
+      {item.status === "sent" && isInvite && item.invite_state !== "accepted" && <div className="hint" style={{ color: "var(--muted)" }}>Waiting for them to accept. The agent checks your new connections about once an hour.</div>}
       {item.status === "failed" && <div className="err">{item.error || "Send failed."}</div>}
       {err && <div className="err">{err}</div>}
 
@@ -114,8 +135,9 @@ function QueueItem({ item, onChange, showToast }) {
         {item.status === "approved" && !isEmail && (
           <>
             <button className="btn ghost sm" disabled={busy} onClick={copyMsg}>Copy</button>
-            <button className="btn ghost sm" disabled={busy} onClick={openProfile}>Profile</button>
-            <button className="btn ai sm" disabled={busy} onClick={openChat} style={{ marginLeft: "auto" }}>Open chat &amp; copy</button>
+            {!isInvite && <button className="btn ghost sm" disabled={busy} onClick={openProfile}>Profile</button>}
+            {item.waiting && <button className="btn ghost sm" disabled={busy} onClick={() => run(() => sendWithoutWaiting(item.id).then((x) => ({ ...item, ...x, waiting: false })), "It will send without waiting")}>Send without waiting</button>}
+            <button className="btn ai sm" disabled={busy} onClick={openChat} style={{ marginLeft: "auto" }}>{isInvite ? "Open profile & copy" : action === "reply" ? "Open conversation & copy" : "Open chat & copy"}</button>
             <button className="btn primary sm" disabled={busy} onClick={() => run(() => markQueuedSent(item.id), "Marked sent")}>Mark sent</button>
             <button className="iconbtn" disabled={busy} onClick={() => run(() => skipQueued(item.id).then(() => ({ ...item, status: "skipped" })), "Skipped")}>Skip</button>
           </>
@@ -133,12 +155,205 @@ function QueueItem({ item, onChange, showToast }) {
   );
 }
 
+// One LinkedIn conversation that needs an answer. The AI drafts a reply as soon as the card
+// appears (once per new message from them — the draft is saved with the thread, so it isn't
+// paid for again); the person edits it and approves. Nothing is sent before that.
+function ThreadCard({ thread, sender, onChanged, showToast }) {
+  const fresh = thread.draft && thread.draft_for === thread.last_text ? thread.draft : "";
+  const [text, setText] = useState(fresh);
+  const [drafting, setDrafting] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const asked = useRef("");
+  const open = thread.needs_reply && !thread.reply_queued;
+
+  async function draft() {
+    asked.current = thread.last_text;
+    setDrafting(true); setErr("");
+    try {
+      const d = await draftReply(thread, sender);
+      setText(d);
+      saveThreadDraft(thread.id, d, thread.last_text).catch(() => {});
+    } catch (e) { setErr((e && e.message) || "Couldn't draft a reply."); }
+    setDrafting(false);
+  }
+  // A new message from them: start again from a new draft.
+  useEffect(() => {
+    if (!open) return;
+    const saved = thread.draft && thread.draft_for === thread.last_text;
+    if (saved) { if (asked.current !== thread.last_text) { setText(thread.draft); asked.current = thread.last_text; } return; }
+    if (asked.current !== thread.last_text) draft();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [thread.last_text, open]);
+
+  async function run(fn, ok) {
+    setBusy(true); setErr("");
+    try { await fn(); if (ok) showToast(ok); onChanged(); }
+    catch (e) { setErr((e && e.message) || "Something went wrong."); }
+    setBusy(false);
+  }
+  const msgs = (thread.messages || []).slice(-4);
+  return (
+    <div className="mcard" style={{ gap: 10 }}>
+      <div className="mctop">
+        <span className="chip" style={{ background: "rgba(74,134,200,.16)", borderColor: "rgba(74,134,200,.34)", color: "var(--ice)" }}>LinkedIn</span>
+        <span style={{ fontWeight: 700, fontSize: 13.5, color: "var(--text)" }}>{thread.name || thread.lead_label}</span>
+        <span className="chip" style={{ marginLeft: "auto", background: "transparent",
+          borderColor: (open ? "#E7B74B" : "#52d39e") + "66", color: open ? "#E7B74B" : "#52d39e" }}>
+          {thread.reply_queued ? "Reply queued" : open ? "Needs a reply" : "Answered"}
+        </span>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 220, overflow: "auto" }}>
+        {msgs.map((m, i) => (
+          <div key={i} style={{ alignSelf: m.from === "me" ? "flex-end" : "flex-start", maxWidth: "88%", padding: "7px 11px", borderRadius: 12,
+            fontSize: 13, lineHeight: 1.5, whiteSpace: "pre-wrap",
+            background: m.from === "me" ? "rgba(74,134,200,.18)" : "rgba(255,255,255,.06)", color: "var(--text)" }}>
+            {m.text}
+          </div>
+        ))}
+      </div>
+      {open && (
+        <>
+          <textarea value={text} onChange={(e) => setText(e.target.value)} rows={4} disabled={drafting}
+            placeholder={drafting ? "Drafting a reply…" : "Your reply"}
+            style={{ width: "100%", padding: "9px 11px", fontSize: 13, borderRadius: 9, resize: "vertical", boxSizing: "border-box" }} />
+          {err && <div className="err">{err}</div>}
+          <div className="mact" style={{ flexWrap: "wrap" }}>
+            <button className="btn ghost sm" disabled={busy || drafting} onClick={draft}>{drafting ? "Drafting…" : text ? "Redraft" : "Draft with AI"}</button>
+            {thread.thread_url && <button className="btn ghost sm" onClick={() => window.open(thread.thread_url, "_blank", "noopener")}>Open on LinkedIn</button>}
+            <button className="btn primary sm" style={{ marginLeft: "auto" }} disabled={busy || drafting || !text.trim()}
+              onClick={() => run(() => approveReply(thread.id, text), "Approved. The agent sends it into the conversation")}>Approve &amp; send</button>
+            <button className="iconbtn" disabled={busy} onClick={() => run(() => setThreadHandled(thread.id, true), "Marked done")}>Done</button>
+          </div>
+        </>
+      )}
+      {!open && !thread.reply_queued && (
+        <div className="mact"><button className="iconbtn" style={{ marginLeft: "auto" }} disabled={busy}
+          onClick={() => run(() => setThreadHandled(thread.id, false))}>Reply anyway</button></div>
+      )}
+    </div>
+  );
+}
+
+// One person who accepted a connection request. The agent copied their profile; this card
+// reads it, analyses them, saves both to the lead and drafts a first message — once, the
+// draft is kept with the invitation — then a person edits it and approves. Nothing is sent
+// before that.
+function FollowupCard({ f, sender, onChanged, showToast }) {
+  const [text, setText] = useState(f.followup_draft || "");
+  const [step, setStep] = useState("");
+  const [persona, setPersona] = useState((f.p_data && f.p_data.analysis && f.p_data.analysis.persona) || "");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const started = useRef(false);
+  const ready = f.followup_state !== "needs_profile";
+
+  async function prepare() {
+    started.current = true;
+    setErr(""); setStep("Starting…");
+    try {
+      const r = await prepareFollowup(f, sender, setStep);
+      setText(r.message);
+      if (r.analysis && r.analysis.persona) setPersona(r.analysis.persona);
+      await saveFollowupDraft(f.id, r.message).catch(() => {});
+    } catch (e) { setErr((e && e.message) || "Couldn't draft a message."); }
+    setStep("");
+  }
+  useEffect(() => {
+    if (ready && !f.followup_draft && !started.current) prepare();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
+
+  async function run(fn, ok) {
+    setBusy(true); setErr("");
+    try { await fn(); if (ok) showToast(ok); onChanged(); }
+    catch (e) { setErr((e && e.message) || "Something went wrong."); }
+    setBusy(false);
+  }
+  const name = f.lead_label || f.p_label || "Your new connection";
+  return (
+    <div className="mcard" style={{ gap: 10 }}>
+      <div className="mctop">
+        <span className="chip" style={{ background: "rgba(74,134,200,.16)", borderColor: "rgba(74,134,200,.34)", color: "var(--ice)" }}>LinkedIn</span>
+        <span className="chip idx">First message</span>
+        <span style={{ fontWeight: 700, fontSize: 13.5, color: "var(--text)" }}>{name}</span>
+        <span className="chip" style={{ marginLeft: "auto", background: "transparent", borderColor: "#52d39e66", color: "#52d39e" }}>Accepted</span>
+      </div>
+      {f.p_sub && <div className="hint" style={{ color: "var(--muted)", margin: 0 }}>{f.p_sub}</div>}
+      {persona && <div className="hint" style={{ color: "var(--muted)", margin: 0 }}><span><b>Analysis:</b> {persona}</span></div>}
+      {!ready && <div className="hint" style={{ color: "var(--muted)" }}>They accepted. The agent copies their profile on its next round (about hourly), then a first message is drafted here.</div>}
+      {ready && (
+        <>
+          <textarea value={text} onChange={(e) => setText(e.target.value)} rows={4} disabled={!!step}
+            placeholder={step || "Your first message"}
+            style={{ width: "100%", padding: "9px 11px", fontSize: 13, borderRadius: 9, resize: "vertical", boxSizing: "border-box" }} />
+          {step && <div className="hint" style={{ color: "var(--muted)", margin: 0 }}>{step}</div>}
+        </>
+      )}
+      {err && <div className="err">{err}</div>}
+      <div className="mact" style={{ flexWrap: "wrap" }}>
+        {ready && <button className="btn ghost sm" disabled={busy || !!step} onClick={prepare}>{step ? "Working…" : text ? "Redraft" : "Draft with AI"}</button>}
+        {f.linkedin_url && <button className="btn ghost sm" onClick={() => window.open(f.linkedin_url, "_blank", "noopener")}>Profile</button>}
+        {ready && <button className="btn primary sm" style={{ marginLeft: "auto" }} disabled={busy || !!step || !text.trim()}
+          onClick={() => run(() => approveFollowup(f.id, text), "Approved. The agent sends it to " + name)}>Approve &amp; send</button>}
+        <button className="iconbtn" style={ready ? undefined : { marginLeft: "auto" }} disabled={busy} onClick={() => run(() => skipFollowup(f.id), "Skipped")}>Skip</button>
+      </div>
+    </div>
+  );
+}
+
+function FollowupsPanel({ followups, sender, onChanged, showToast }) {
+  if (!followups || !followups.length) return null;
+  return (
+    <div style={{ marginBottom: 22 }}>
+      <div className="sect-title" style={{ marginBottom: 10 }}>New connections <span style={{ color: "var(--faint)", fontWeight: 600 }}>· {followups.length} to welcome</span></div>
+      <div className="grid2">{followups.map((f) => <FollowupCard key={f.id} f={f} sender={sender} onChanged={onChanged} showToast={showToast} />)}</div>
+    </div>
+  );
+}
+
+// Who the AI writes as, for replies and first messages. Remembered on this browser.
+const SENDER_KEY = "kc_reply_sender";
+function SenderPick({ senderId, onPick }) {
+  return (
+    <label style={{ fontSize: 12.5, color: "var(--muted)", display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap", flexShrink: 0 }}>
+      AI writes as
+      <select value={senderId} onChange={(e) => onPick(e.target.value)} style={{ padding: "5px 8px", fontSize: 12.5, borderRadius: 8 }}>
+        {SENDERS.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+      </select>
+    </label>
+  );
+}
+
+function RepliesPanel({ threads, sender, onChanged, showToast }) {
+  const [showAll, setShowAll] = useState(false);
+  if (!threads || !threads.length) return null;
+  const needs = threads.filter((t) => t.needs_reply && !t.reply_queued);
+  const rest = threads.filter((t) => !(t.needs_reply && !t.reply_queued));
+  return (
+    <div style={{ marginBottom: 22 }}>
+      <div className="toprow" style={{ marginBottom: 10, flexWrap: "wrap", gap: 10 }}>
+        <div className="sect-title" style={{ margin: 0 }}>LinkedIn replies <span style={{ color: "var(--faint)", fontWeight: 600 }}>· {needs.length} to answer</span></div>
+      </div>
+      {needs.length > 0
+        ? <div className="grid2">{needs.map((t) => <ThreadCard key={t.id} thread={t} sender={sender} onChanged={onChanged} showToast={showToast} />)}</div>
+        : <div className="hint" style={{ color: "var(--muted)" }}>No replies waiting. The agent checks your LinkedIn inbox about every 15 minutes while it's running.</div>}
+      {rest.length > 0 && (
+        <div style={{ marginTop: 10 }}>
+          <button className="iconbtn" onClick={() => setShowAll(!showAll)}>{showAll ? "Hide" : "Show"} {rest.length} answered conversation{rest.length === 1 ? "" : "s"}</button>
+          {showAll && <div className="grid2" style={{ marginTop: 10 }}>{rest.map((t) => <ThreadCard key={t.id} thread={t} sender={sender} onChanged={onChanged} showToast={showToast} />)}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Status strip for the LinkedIn agent: whether it's on, how much of today's cap it has used,
 // and why it stopped if it stopped. The Stop button is the kill switch — the next time the
 // worker asks for work it gets nothing back.
 function AgentStrip({ status, onToggle, busy, onDownload, downloading }) {
   if (!status) return null;
-  const { enabled, haltReason, lastSeenAt, counts = {}, limits = {}, ready = 0, inflight = 0 } = status;
+  const { enabled, haltReason, lastSeenAt, counts = {}, limits = {}, ready = 0, inflight = 0, waiting = 0, needReply = 0, firstMessages = 0 } = status;
   // "Live" means the worker has actually checked in recently — enabled with no worker running
   // is a common and confusing state, so name it.
   const seenAgo = lastSeenAt ? (Date.now() - new Date(lastSeenAt).getTime()) / 1000 : Infinity;
@@ -153,8 +368,11 @@ function AgentStrip({ status, onToggle, busy, onDownload, downloading }) {
           LinkedIn agent · {label}
         </span>
         <span style={{ color: "var(--muted)", fontSize: 12.5 }}>
-          {counts.day ?? 0}/{limits.perDay ?? "?"} sent today · {counts.hour ?? 0}/{limits.perHour ?? "?"} this hour
-          {ready ? " · " + ready + " ready" : ""}{inflight ? " · " + inflight + " in flight" : ""}
+          {counts.day ?? 0}/{limits.perDay ?? "?"} messages · {counts.invDay ?? 0}/{limits.invitesPerDay ?? "?"} invitations today
+          {" "}({counts.invWeek ?? 0}/{limits.invitesPerWeek ?? "?"} this week)
+          {ready ? " · " + ready + " ready" : ""}{waiting ? " · " + waiting + " waiting for accept" : ""}{inflight ? " · " + inflight + " in flight" : ""}
+          {needReply ? " · " + needReply + (needReply === 1 ? " reply" : " replies") + " to answer" : ""}
+          {firstMessages ? " · " + firstMessages + " new connection" + (firstMessages === 1 ? "" : "s") + " to welcome" : ""}
         </span>
         <button className="btn sm ghost" disabled={downloading} onClick={onDownload}
           style={{ marginLeft: "auto" }} title="Download the agent to run on this machine">
@@ -172,7 +390,7 @@ function AgentStrip({ status, onToggle, busy, onDownload, downloading }) {
       )}
       {enabled && !live && !haltReason && (
         <div className="hint" style={{ marginTop: 10, color: "var(--muted)" }}>
-          Waiting for the local worker. On the machine with the signed-in Chrome profile, run <code>npm run agent</code>.
+          Waiting for the local worker. On the machine with the signed-in LinkedIn browser profile, run <code>npm run agent</code>.
           {" "}Don’t have it yet? <b>Download agent</b> above — the zip has a SETUP.md with your details filled in.
         </div>
       )}
@@ -188,12 +406,19 @@ export function SendQueueView({ showToast }) {
   const [agent, setAgent] = useState(null);     // LinkedIn agent status, null until first load
   const [agentBusy, setAgentBusy] = useState(false);
   const [agentDl, setAgentDl] = useState(false);   // agent zip download in flight
+  const [threads, setThreads] = useState([]);      // LinkedIn conversations with prospects
+  const [followups, setFollowups] = useState([]);  // accepted connections waiting for a first message
+  const [senderId, setSenderId] = useState(() => { try { return localStorage.getItem(SENDER_KEY) || SENDERS[0].id; } catch (e) { return SENDERS[0].id; } });
+  const sender = SENDERS.find((x) => x.id === senderId) || SENDERS[0];
+  const pickSender = (id) => { setSenderId(id); try { localStorage.setItem(SENDER_KEY, id); } catch (e) {} };
 
   function load() {
     listQueue().then(({ items, sendingOn }) => { setItems(items); setSendingOn(sendingOn); })
       .catch((e) => setErr((e && e.message) || "Could not load the queue."));
     // The agent strip is best-effort: an older server without the agent endpoints just hides it.
     agentStatus().then(setAgent).catch(() => setAgent(null));
+    listInbox().then(setThreads).catch(() => {});
+    listFollowups().then(setFollowups).catch(() => {});
   }
   useEffect(() => { load(); /* refresh periodically so auto-sent items flip to Sent */
     const t = setInterval(load, 15000); return () => clearInterval(t);
@@ -204,7 +429,7 @@ export function SendQueueView({ showToast }) {
     setAgentBusy(true);
     try {
       setAgent(await setAgentEnabled(next));
-      showToast(next ? "Agent on — it sends the ready LinkedIn messages" : "Agent stopped");
+      showToast(next ? "Agent on. It sends the ready LinkedIn invitations and messages" : "Agent stopped");
     } catch (e) { setErr((e && e.message) || "Could not change the agent."); }
     setAgentBusy(false);
   }
@@ -225,7 +450,7 @@ export function SendQueueView({ showToast }) {
   }
 
   const list = items || [];
-  const readyLinked = list.filter((it) => it.status === "approved" && it.channel === "linkedin");
+  const readyLinked = list.filter((it) => it.status === "approved" && it.channel === "linkedin" && !it.waiting);
 
   // ── Blitz mode: walk through every Ready LinkedIn item, opening its chat + copying as you go.
   // This is the fastest the human-send model can go — paste + Send + "Sent & next", repeat.
@@ -233,10 +458,7 @@ export function SendQueueView({ showToast }) {
     if (!it) return;
     const text = (it.subject ? "Subject: " + it.subject + "\n\n" : "") + it.body;
     try { navigator.clipboard.writeText(text); } catch (e) {}
-    const m = String(it.linkedin_url || "").match(/linkedin\.com\/in\/([^/?#]+)/i);
-    const url = m ? "https://www.linkedin.com/messaging/compose/?recipient=" + encodeURIComponent(m[1])
-      : (it.linkedin_url || "https://www.linkedin.com/search/results/people/?keywords=" + encodeURIComponent(it.lead_label || ""));
-    window.open(url, "_blank", "noopener");
+    window.open(linkedinUrlFor(it), "_blank", "noopener");
   }
   function startSession() {
     if (!readyLinked.length) return;
@@ -266,12 +488,18 @@ export function SendQueueView({ showToast }) {
 
   return (
     <div>
-      <div className="head"><div className="eyebrow">Outreach</div><h2>Send queue</h2><p>Approve a message and the agent sends it — email goes out automatically, and LinkedIn too once the agent is running. No agent? Blitz mode still walks you through them by hand.</p></div>
+      <div className="head"><div className="eyebrow">Outreach</div><h2>Send queue</h2><p>Approve a message and it goes out. Email sends automatically. On LinkedIn the agent sends your connection requests; when someone accepts, it copies their profile so Karma Connect can analyse them and draft a first message; and it brings their replies here with an AI draft. You approve every message. No agent? Blitz mode walks you through them by hand.</p></div>
 
       {!sendingOn && <div className="hint" style={{ marginBottom: 14 }}>Email auto-send is off on this server (no email provider configured). Items will queue but won't send until it's set up.</div>}
       {err && <div className="err">{err}</div>}
 
       <AgentStrip status={agent} onToggle={toggleAgent} busy={agentBusy} onDownload={getAgent} downloading={agentDl} />
+
+      {(threads.length > 0 || followups.length > 0) && (
+        <div className="toprow" style={{ marginBottom: 10, justifyContent: "flex-end" }}><SenderPick senderId={sender.id} onPick={pickSender} /></div>
+      )}
+      <FollowupsPanel followups={followups} sender={sender} onChanged={load} showToast={showToast} />
+      <RepliesPanel threads={threads} sender={sender} onChanged={load} showToast={showToast} />
 
       {/* Blitz launcher: rip through all Ready LinkedIn items, one paste-and-send at a time. */}
       {!session && readyLinked.length > 0 && (

@@ -158,7 +158,25 @@ async function sendOne(page, item, { dryRun = false } = {}) {
   }
   await jitter(1200, 2600);
 
-  halt = await haltReason(page);
+  return typeAndSend(page, item.body, { dryRun, scrape });
+}
+
+// Answer a LinkedIn conversation: open the thread, type the approved reply, send it. The reply
+// was drafted by AI in Karma Connect and approved by a person there — this only delivers it.
+async function replyOne(page, item, { dryRun = false } = {}) {
+  const url = String(item.thread_url || "").trim();
+  if (!/^https:\/\/www\.linkedin\.com\/messaging\/thread\//i.test(url)) {
+    return { result: "failed", error: "No LinkedIn conversation link on this reply.", scrape: null, final: true };
+  }
+  await page.goto(url, { waitUntil: "domcontentloaded" });
+  await jitter(1800, 3500);
+  return typeAndSend(page, item.body, { dryRun, scrape: null });
+}
+
+// The composer is open (a new message or an existing thread): type `body`, press Send, and
+// confirm it landed. Shared by sendOne and replyOne.
+async function typeAndSend(page, body, { dryRun = false, scrape = null } = {}) {
+  let halt = await haltReason(page);
   if (halt) return { result: "halted", error: halt, scrape };
 
   const box = await firstVisible(page, COMPOSER_BOX, 9000);
@@ -167,7 +185,7 @@ async function sendOne(page, item, { dryRun = false } = {}) {
   // Start from empty. LinkedIn restores drafts, so a previous crashed or retried attempt can
   // leave the message already sitting there — typing on top of it would send it twice over.
   await clearComposer(box);
-  await typeBody(box, item.body);
+  await typeBody(box, body);
   await jitter(700, 1800);
 
   // Re-check right before sending: a challenge can appear while we were typing. The draft is
@@ -205,7 +223,7 @@ async function sendOne(page, item, { dryRun = false } = {}) {
   if (halt) return { result: "halted", error: halt, scrape };
 
   // Never report 'sent' on the strength of a click alone.
-  const confirmed = await confirmSent(page, box, item.body);
+  const confirmed = await confirmSent(page, box, body);
   if (confirmed === "sent") return { result: "sent", error: null, scrape };
   if (confirmed === "not-sent") {
     await clearComposer(box); // it goes back for a retry, which types it fresh
@@ -218,4 +236,4 @@ async function sendOne(page, item, { dryRun = false } = {}) {
   };
 }
 
-module.exports = { sendOne, jitter };
+module.exports = { sendOne, replyOne, jitter, firstVisible, typeBody };

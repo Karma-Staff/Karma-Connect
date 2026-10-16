@@ -38,10 +38,10 @@ describe("escapeHtml", () => {
 // The LinkedIn agent's two pure guards. Everything the agent is allowed to do funnels through
 // decide(), so these are the tests that matter most — a wrong `true` here is a message the
 // agent sends when it shouldn't have.
-const { decide, inWindow, LIMITS } = require("./linkedin-agent.cjs");
+const { decide, inWindow, LIMITS, handleOf, nameKey } = require("./linkedin-agent.cjs");
 
 const on = { enabled: true };
-const fresh = { day: 0, hour: 0, lastSent: null };
+const fresh = { day: 0, hour: 0, invDay: 0, invWeek: 0, lastSent: null };
 const WEEKDAY_10AM = { localHour: 10, localDay: 2 };
 
 describe("linkedin-agent.inWindow", () => {
@@ -84,14 +84,37 @@ describe("linkedin-agent.decide", () => {
     expect(decide({ state: on, counts: fresh, localHour: 3, localDay: 2 }).ok).toBe(false);
   });
 
-  it("refuses at the daily cap and at the hourly cap", () => {
-    expect(decide({ state: on, counts: { ...fresh, day: LIMITS.perDay }, ...WEEKDAY_10AM }).ok).toBe(false);
-    expect(decide({ state: on, counts: { ...fresh, hour: LIMITS.perHour }, ...WEEKDAY_10AM }).ok).toBe(false);
+  it("stops messages at the daily cap and at the hourly cap", () => {
+    expect(decide({ state: on, counts: { ...fresh, day: LIMITS.perDay }, ...WEEKDAY_10AM }).msg).toBe(0);
+    expect(decide({ state: on, counts: { ...fresh, hour: LIMITS.perHour }, ...WEEKDAY_10AM }).msg).toBe(0);
   });
 
-  it("never hands out more than the headroom left under either cap", () => {
+  it("never hands out more messages than the headroom left under either cap", () => {
     const d = decide({ state: on, counts: { ...fresh, hour: LIMITS.perHour - 1 }, ...WEEKDAY_10AM });
-    expect(d.allowed).toBe(1);
+    expect(d.msg).toBe(1);
+  });
+
+  it("keeps invitations on their own budget", () => {
+    const msgsDone = decide({ state: on, counts: { ...fresh, day: LIMITS.perDay }, ...WEEKDAY_10AM });
+    expect(msgsDone.ok).toBe(true);
+    expect(msgsDone.inv).toBeGreaterThan(0);
+    const invDone = decide({ state: on, counts: { ...fresh, invDay: LIMITS.invitesPerDay }, ...WEEKDAY_10AM });
+    expect(invDone.inv).toBe(0);
+    expect(invDone.msg).toBeGreaterThan(0);
+    expect(decide({ state: on, counts: { ...fresh, invWeek: LIMITS.invitesPerWeek }, ...WEEKDAY_10AM }).inv).toBe(0);
+  });
+
+  it("refuses, saying why, when both budgets are spent", () => {
+    const d = decide({ state: on, counts: { ...fresh, day: LIMITS.perDay, invDay: LIMITS.invitesPerDay }, ...WEEKDAY_10AM });
+    expect(d.ok).toBe(false);
+    expect(d.allowed).toBe(0);
+    expect(d.reason).toMatch(/message cap/);
+    expect(d.reason).toMatch(/invitation cap/);
+  });
+
+  it("never hands out more than one batch in total", () => {
+    const d = decide({ state: on, counts: fresh, ...WEEKDAY_10AM });
+    expect(d.allowed).toBeLessThanOrEqual(LIMITS.batch);
   });
 
   it("holds off until the minimum gap since the last send has passed", () => {
@@ -106,6 +129,17 @@ describe("linkedin-agent.decide", () => {
   });
 });
 
+describe("linkedin-agent matching", () => {
+  it("reads the same profile from any spelling of its URL", () => {
+    expect(handleOf("https://www.linkedin.com/in/Jane-Doe-12/?miniProfileUrn=x")).toBe("jane-doe-12");
+    expect(handleOf("linkedin.com/in/jos%C3%A9-r")).toBe("josé-r");
+    expect(handleOf("https://www.linkedin.com/company/acme/")).toBe("");
+  });
+  it("reduces names to letters", () => {
+    expect(nameKey("  Jane O'Neil, CR ")).toBe("jane oneil cr");
+  });
+});
+
 describe("agent-bundle.buildAgentZip", () => {
   const zip = buildAgentZip({ baseUrl: "https://example.test", email: "someone@example.test" });
 
@@ -117,7 +151,7 @@ describe("agent-bundle.buildAgentZip", () => {
     const count = zip.readUInt16LE(eocd + 10);
     const size = zip.readUInt32LE(eocd + 12);
     const offset = zip.readUInt32LE(eocd + 16);
-    expect(count).toBe(7);
+    expect(count).toBe(10);
     expect(offset + size).toBe(eocd);                    // directory ends where the EOCD starts
     expect(zip.readUInt32LE(offset)).toBe(0x02014b50);   // and starts on a central-dir header
     expect(zip.readUInt32LE(0)).toBe(0x04034b50);        // file begins with a local header
@@ -132,6 +166,9 @@ describe("agent-bundle.buildAgentZip", () => {
       p += 30 + nameLen + zip.readUInt16LE(p + 28) + zip.readUInt32LE(p + 18);
     }
     expect(names).toContain("karma-connect-agent/send.cjs");
+    expect(names).toContain("karma-connect-agent/invite.cjs");
+    expect(names).toContain("karma-connect-agent/inbox.cjs");
+    expect(names).toContain("karma-connect-agent/capture.cjs");
     expect(names).toContain("karma-connect-agent/SETUP.md");
     expect(names).toContain("karma-connect-agent/package.json");
   });
