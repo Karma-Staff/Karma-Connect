@@ -11414,6 +11414,8 @@ async function openNewCampaign() {
           <label class="modal-field">Campaign name
             <input id="pd-name" maxlength="80" required placeholder="e.g. Water restoration ${today}"></label>
         </div>
+        <label class="pd-check"><input type="checkbox" id="pd-start" checked>
+          <span><b>Start straight away</b> — the reps can dial as soon as it is made. Untick to keep it as a draft until you press ▶ Start in the campaign list.</span></label>
         <details class="pd-more">
           <summary>Call settings</summary>
           <div class="pd-row">
@@ -11426,8 +11428,6 @@ async function openNewCampaign() {
               </select>
               ${targets.error ? `<span class="pd-help">${esc(targets.error)}</span>` : ""}</label>
           </div>
-          <label class="pd-check"><input type="checkbox" id="pd-start">
-            <span><b>Start straight away</b> — otherwise it waits as a draft until you press Start</span></label>
         </details>
       </section>
 
