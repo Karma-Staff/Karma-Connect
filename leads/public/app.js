@@ -11568,7 +11568,9 @@ async function openNewCampaign() {
       /* the footer repeats the count beside Create, for when the preview has scrolled away */
       const foot = (txt, bad) => { const f = $("pd-foot"); if (f) { f.textContent = txt; f.classList.toggle("bad", !!bad); } };
       if (!s.owners.length) { out.innerHTML = `<span class="dash-mute">Choose ${toGroup() ? "who in the group calls" : "a rep"} in step 1 to see who gets what.</span>`; foot("Choose who calls first"); return; }
-      if (!s.statuses.length && !s.unique) { out.innerHTML = `<span class="login-error">Tick at least one status, or Unique numbers only.</span>`; foot("Tick a status", true); return; }
+      /* something has to narrow the list — a status, unique numbers, or one
+         recently added import set (a fresh list has nothing else to pick by) */
+      if (!s.statuses.length && !s.unique && s.recent !== "only") { out.innerHTML = `<span class="login-error">Tick at least one status, Unique numbers only, or Recently added: Only recently added.</span>`; foot("Tick a status", true); return; }
       out.classList.add("loading");
       try {
         const p = await api("/api/dialer/campaigns/preview", { method: "POST", body: JSON.stringify(s) });
