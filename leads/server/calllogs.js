@@ -123,7 +123,7 @@ function ownRow(o, phones) {
 }
 
 async function buildRows(req) {
-  const uid = req.user.id;
+  const uid = await dash.readerFor(req.user.id);   // theirs, or a connected admin's (rc-dashboard.js)
   const tz = dash.safeTz(String(req.query.tz || ""));
   const today = (() => { const w = dash.wall(Date.now(), tz); return `${w.year}-${w.month}-${w.day}`; })();
   let to = isYmd(req.query.to) ? req.query.to : today;
@@ -330,10 +330,10 @@ router.get("/api/voice/rc/recording/:id", requireAdmin, async (req, res, next) =
   try {
     const id = String(req.params.id);
     if (!/^\d{1,24}$/.test(id)) return res.status(400).json({ error: "bad recording id" });
-    const tok = await rc.accessFor(req.user.id);
-    const headers = { Authorization: "Bearer " + tok.access_token };
-    if (req.headers.range) headers.Range = req.headers.range;
-    const r = await fetch(`${rc.SERVER.replace("platform.", "media.")}/restapi/v1.0/account/~/recording/${id}/content`, { headers });
+    /* Their own RingCentral login first, then a connected admin's: an admin without a
+       RingCentral seat can still listen (recordingFetch, below). */
+    const r = await recordingFetch(id, req.headers.range, req.user.id);
+    if (!r) return res.status(428).json({ error: "Nobody has connected RingCentral yet — an admin needs to connect it once (Settings → RingCentral)." });
     if (!r.ok && r.status !== 206) {
       const msg = r.status === 404 ? "That recording no longer exists in RingCentral."
         : r.status === 403 ? "RingCentral refused: the app or your role may lack call-recording access." : `RingCentral ${r.status}`;
@@ -378,14 +378,15 @@ const APP_URL = String(process.env.APP_URL || "").replace(/\/+$/, "");
 const recordingLink = (id) => id && APP_URL ? `${APP_URL}/api/voice/rec/${id}/${recSig(id)}.mp3` : null;
 
 let recUser = null;                          // the last login that could read a recording
-async function recordingFetch(id, range) {
+// preferUid: try this person's own login first (the admin listening), then as above.
+async function recordingFetch(id, range, preferUid = 0) {
   const ids = (await query(
     `SELECT v.user_id FROM voice_identities v
        JOIN app_users u ON u.id = v.user_id
        LEFT JOIN organization_memberships m ON m.user_id = u.id
       WHERE v.provider = 'ringcentral' AND NOT u.disabled
-      ORDER BY (v.user_id = $1) DESC, (m.role IN ('owner','admin')) DESC, v.last_used_at DESC NULLS LAST`,
-    [recUser || 0])).rows.map((r) => r.user_id);
+      ORDER BY (v.user_id = $2) DESC, (v.user_id = $1) DESC, (m.role IN ('owner','admin')) DESC, v.last_used_at DESC NULLS LAST`,
+    [recUser || 0, preferUid || 0])).rows.map((r) => r.user_id);
   let last = null;
   for (const uid of ids) {
     try {

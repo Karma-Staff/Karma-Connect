@@ -1326,6 +1326,38 @@ app.post("/api/outreach/agent/profile", requireUser, async (req, res) => {
   } catch (e) { res.status(500).json({ error: { message: "Could not store the profile." } }); }
 });
 
+// "Copy it with the agent" (the Deep LinkedIn paste panel). Body: { url, prospectId } → { id }.
+app.post("/api/outreach/agent/copy-request", requireUser, async (req, res) => {
+  try {
+    res.json(await liAgent.requestCopy(req.userId, req.body || {}));
+  } catch (e) { res.status(400).json({ error: { message: (e && e.message) || "Could not ask the agent." } }); }
+});
+
+// The page polls this until the agent has copied the profile: { status, text, error, agentOn }.
+app.get("/api/outreach/agent/copy-request/:id", requireUser, async (req, res) => {
+  try {
+    const r = await liAgent.getCopy(req.userId, String(req.params.id));
+    if (!r) return res.status(404).json({ error: { message: "Not found." } });
+    res.json(r);
+  } catch (e) { res.status(500).json({ error: { message: "Could not check the copy." } }); }
+});
+
+// The worker: profiles someone asked it to copy → { items: [{ id, handle }] }.
+app.post("/api/outreach/agent/copies", requireUser, async (req, res) => {
+  try {
+    res.json(await liAgent.leaseCopies(req.userId));
+  } catch (e) { res.status(500).json({ error: { message: "Could not load copy requests." } }); }
+});
+
+// The worker: one copied profile. Body: { text } or { error } or { halt }.
+app.post("/api/outreach/agent/copies/:id", requireUser, async (req, res) => {
+  try {
+    const r = await liAgent.finishCopy(req.userId, String(req.params.id), req.body || {});
+    if (!r) return res.status(404).json({ error: { message: "Not found." } });
+    res.json(r);
+  } catch (e) { res.status(500).json({ error: { message: "Could not store the copy." } }); }
+});
+
 // The worker hit a captcha / checkpoint / limit while reading (not sending). Body: { reason }.
 app.post("/api/outreach/agent/halt", requireUser, async (req, res) => {
   try {

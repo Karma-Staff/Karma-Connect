@@ -153,6 +153,25 @@ async function chores(page) {
   return true;
 }
 
+// ── Copy on request ─────────────────────────────────────────────────
+// Someone pressed "Copy it with the agent" in Karma Connect: open the profile, copy the page,
+// send it back. Checked every 15 seconds while idle, so the page fills in quickly.
+async function copies(page) {
+  const r = await api("/api/outreach/agent/copies", { method: "POST" }).catch(() => ({ items: [] }));
+  for (const it of r.items || []) {
+    const c = await captureProfile(page, it.handle).catch((e) => ({ text: "", halt: "", error: e.message }));
+    await api("/api/outreach/agent/copies/" + encodeURIComponent(it.id), { method: "POST", body: { text: c.text, halt: c.halt || undefined, error: c.error } }).catch(() => {});
+    if (c.halt) {
+      log("HALTED while copying a profile:", c.halt);
+      log("The agent has switched itself off. Sort it out on LinkedIn, then turn it back on in the Send Queue.");
+      return false;
+    }
+    log(c.text ? `copied ${it.handle}'s profile into Karma Connect` : `couldn't copy ${it.handle}'s profile`);
+    await jitter(4000, 9000);
+  }
+  return true;
+}
+
 async function main() {
   if (process.argv.includes("--login")) { await login(); return; }
 
@@ -184,7 +203,14 @@ async function main() {
     try {
       if (!(await chores(page))) break; // halted while reading
     } catch (e) { log("inbox/connections check failed:", e.message); }
-    await new Promise((r) => setTimeout(r, wait * 1000));
+    // Wait out the gap in short slices, answering copy requests as they come in.
+    const until = Date.now() + wait * 1000;
+    let halted = false;
+    while (!stop && Date.now() < until) {
+      if (!(await copies(page))) { halted = true; break; }
+      await new Promise((r) => setTimeout(r, Math.min(15000, Math.max(0, until - Date.now()))));
+    }
+    if (halted) break;
   }
   await ctx.close().catch(() => {});
 }

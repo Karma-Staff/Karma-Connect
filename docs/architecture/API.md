@@ -4,7 +4,7 @@
 
 # API
 
-**238 routes**, generated from the source on 2026-10-16.
+**242 routes**, generated from the source on 2026-10-16.
 
 Every path is absolute. That is deliberate: Karma Leads' API paths are the same
 whether it runs standalone or mounted into Connect, which is what let its front
@@ -361,7 +361,7 @@ declared once for the group.
 | GET | `/api/voice/rc/calllog` | admin | [leads/server/calllogs.js:260](../../leads/server/calllogs.js#L260) |  |
 | GET | `/api/voice/rc/connect` | signed in | [leads/server/ringcentral.js:128](../../leads/server/ringcentral.js#L128) |  |
 | DELETE | `/api/voice/rc/connect` | signed in | [leads/server/ringcentral.js:313](../../leads/server/ringcentral.js#L313) |  |
-| GET | `/api/voice/rc/dashboard` | admin | [leads/server/rc-dashboard.js:295](../../leads/server/rc-dashboard.js#L295) |  |
+| GET | `/api/voice/rc/dashboard` | admin | [leads/server/rc-dashboard.js:311](../../leads/server/rc-dashboard.js#L311) |  |
 | GET | `/api/voice/rc/extensions` | signed in | [leads/server/ringcentral.js:378](../../leads/server/ringcentral.js#L378) | GET /api/voice/rc/extensions — who a rep can transfer a live call to. |
 | GET | `/api/voice/rc/me` | signed in | [leads/server/ringcentral.js:346](../../leads/server/ringcentral.js#L346) | GET /api/voice/rc/me — what this rep's own seat is, for the dialler header. |
 | GET | `/api/voice/rc/recording/:id` | admin | [leads/server/calllogs.js:329](../../leads/server/calllogs.js#L329) |  |
@@ -369,7 +369,7 @@ declared once for the group.
 | GET | `/api/voice/rc/status` | signed in | [leads/server/ringcentral.js:257](../../leads/server/ringcentral.js#L257) |  |
 | GET | `/api/voice/rc/team` | admin | [leads/server/ringcentral.js:323](../../leads/server/ringcentral.js#L323) | Who on the team has a working phone. |
 | GET | `/api/voice/rc/users` | admin | [leads/server/users-dir.js:197](../../leads/server/users-dir.js#L197) |  |
-| GET | `/api/voice/rec/:id/:sig.mp3` | — | [leads/server/calllogs.js:430](../../leads/server/calllogs.js#L430) |  |
+| GET | `/api/voice/rec/:id/:sig.mp3` | — | [leads/server/calllogs.js:431](../../leads/server/calllogs.js#L431) |  |
 | POST | `/api/voice/token` | signed in | [leads/server/voice.js:199](../../leads/server/voice.js#L199) | The SDK's oAuthCallBack fetches this. |
 | GET | `/api/voice/vmdrop` | signed in | [leads/server/vm-drop.js:29](../../leads/server/vm-drop.js#L29) |  |
 | PUT | `/api/voice/vmdrop` | signed in | [leads/server/vm-drop.js:50](../../leads/server/vm-drop.js#L50) |  |
@@ -378,7 +378,7 @@ declared once for the group.
 
 ---
 
-## Karma Connect — 76 routes
+## Karma Connect — 80 routes
 
 ### `/api/admin`
 
@@ -442,7 +442,7 @@ declared once for the group.
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| POST | `/api/claude` | signed in | [server.js:1421](../../server.js#L1421) | ─────────────────────────── Anthropic proxy ──────────────────────── In dev the proxy is open… |
+| POST | `/api/claude` | signed in | [server.js:1453](../../server.js#L1453) | ─────────────────────────── Anthropic proxy ──────────────────────── In dev the proxy is open… |
 
 ### `/api/coach`
 
@@ -475,7 +475,7 @@ declared once for the group.
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/health` | — | [server.js:1439](../../server.js#L1439) | Health check for Render. |
+| GET | `/api/health` | — | [server.js:1471](../../server.js#L1471) | Health check for Render. |
 
 ### `/api/history`
 
@@ -498,27 +498,31 @@ declared once for the group.
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
 | POST | `/api/outreach/agent/accepted` | signed in | [server.js:1316](../../server.js#L1316) | Invitations the worker saw accepted. |
+| POST | `/api/outreach/agent/copies` | signed in | [server.js:1346](../../server.js#L1346) | The worker: profiles someone asked it to copy → { items: [{ id, handle }] }. |
+| POST | `/api/outreach/agent/copies/:id` | signed in | [server.js:1353](../../server.js#L1353) | The worker: one copied profile. Body: { text } or { error } or { halt }. |
+| POST | `/api/outreach/agent/copy-request` | signed in | [server.js:1330](../../server.js#L1330) | "Copy it with the agent" (the Deep LinkedIn paste panel). |
+| GET | `/api/outreach/agent/copy-request/:id` | signed in | [server.js:1337](../../server.js#L1337) | The page polls this until the agent has copied the profile: |
 | GET | `/api/outreach/agent/download` | signed in | [server.js:1245](../../server.js#L1245) | The agent's source, zipped, so a recruiter can run it without GitHub access or a clone. |
 | POST | `/api/outreach/agent/enable` | signed in | [server.js:1259](../../server.js#L1259) | The kill switch. |
-| POST | `/api/outreach/agent/halt` | signed in | [server.js:1330](../../server.js#L1330) | The worker hit a captcha / checkpoint / limit while reading (not sending). |
+| POST | `/api/outreach/agent/halt` | signed in | [server.js:1362](../../server.js#L1362) | The worker hit a captcha / checkpoint / limit while reading (not sending). |
 | POST | `/api/outreach/agent/inbox` | signed in | [server.js:1309](../../server.js#L1309) | Conversations the worker read. |
 | POST | `/api/outreach/agent/lease` | signed in | [server.js:1269](../../server.js#L1269) | Hand the worker its next batch. |
 | POST | `/api/outreach/agent/profile` | signed in | [server.js:1323](../../server.js#L1323) | The accepted person's whole profile page, copied by the worker. |
 | POST | `/api/outreach/agent/report/:id` | signed in | [server.js:1283](../../server.js#L1283) | Report one leased item back. |
 | GET | `/api/outreach/agent/status` | signed in | [server.js:1236](../../server.js#L1236) | Agent state for the Send Queue strip: |
 | POST | `/api/outreach/agent/watch` | signed in | [server.js:1298](../../server.js#L1298) | What the worker should look out for while reading LinkedIn: |
-| GET | `/api/outreach/followups` | signed in | [server.js:1374](../../server.js#L1374) | ─────────────── First message after an accept (Send Queue) ───────── People who accepted, wit… |
-| POST | `/api/outreach/followups/:id/approve` | signed in | [server.js:1390](../../server.js#L1390) | Approve the first message: |
-| POST | `/api/outreach/followups/:id/draft` | signed in | [server.js:1381](../../server.js#L1381) | Save the AI's draft. |
-| POST | `/api/outreach/followups/:id/skip` | signed in | [server.js:1399](../../server.js#L1399) | No first message for this one. |
-| GET | `/api/outreach/inbox` | signed in | [server.js:1339](../../server.js#L1339) | ─────────────────────── LinkedIn replies (Send Queue) ────────────── Conversations with prosp… |
-| POST | `/api/outreach/inbox/:id/draft` | signed in | [server.js:1346](../../server.js#L1346) | Save the AI's draft with the thread. |
-| POST | `/api/outreach/inbox/:id/handled` | signed in | [server.js:1364](../../server.js#L1364) | Done with a conversation without replying (or { handled: |
-| POST | `/api/outreach/inbox/:id/reply` | signed in | [server.js:1355](../../server.js#L1355) | Approve a reply: |
+| GET | `/api/outreach/followups` | signed in | [server.js:1406](../../server.js#L1406) | ─────────────── First message after an accept (Send Queue) ───────── People who accepted, wit… |
+| POST | `/api/outreach/followups/:id/approve` | signed in | [server.js:1422](../../server.js#L1422) | Approve the first message: |
+| POST | `/api/outreach/followups/:id/draft` | signed in | [server.js:1413](../../server.js#L1413) | Save the AI's draft. |
+| POST | `/api/outreach/followups/:id/skip` | signed in | [server.js:1431](../../server.js#L1431) | No first message for this one. |
+| GET | `/api/outreach/inbox` | signed in | [server.js:1371](../../server.js#L1371) | ─────────────────────── LinkedIn replies (Send Queue) ────────────── Conversations with prosp… |
+| POST | `/api/outreach/inbox/:id/draft` | signed in | [server.js:1378](../../server.js#L1378) | Save the AI's draft with the thread. |
+| POST | `/api/outreach/inbox/:id/handled` | signed in | [server.js:1396](../../server.js#L1396) | Done with a conversation without replying (or { handled: |
+| POST | `/api/outreach/inbox/:id/reply` | signed in | [server.js:1387](../../server.js#L1387) | Approve a reply: |
 | GET | `/api/outreach/queue` | signed in | [server.js:1181](../../server.js#L1181) | List this user's queue (optional ?status= and ?channel= filters). |
 | POST | `/api/outreach/queue` | signed in | [server.js:1172](../../server.js#L1172) | ───────────────────────── Outreach send queue ────────────────────── Queue a generated messag… |
 | POST | `/api/outreach/queue/:id/approve` | signed in | [server.js:1189](../../server.js#L1189) | Approve a pending item (schedules it; email then auto-sends on the next tick). |
-| POST | `/api/outreach/queue/:id/no-wait` | signed in | [server.js:1408](../../server.js#L1408) | A message held until an invitation is accepted: |
+| POST | `/api/outreach/queue/:id/no-wait` | signed in | [server.js:1440](../../server.js#L1440) | A message held until an invitation is accepted: |
 | POST | `/api/outreach/queue/:id/send-now` | signed in | [server.js:1202](../../server.js#L1202) | Send an approved email item immediately (don't wait for the tick). |
 | POST | `/api/outreach/queue/:id/sent` | signed in | [server.js:1212](../../server.js#L1212) | Mark a LinkedIn item sent after the human one-click hand-off. |
 | POST | `/api/outreach/queue/:id/skip` | signed in | [server.js:1221](../../server.js#L1221) | Skip / cancel a queued item. |

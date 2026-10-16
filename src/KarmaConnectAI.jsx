@@ -28,7 +28,7 @@ import { BoardView } from "./views/BoardView.jsx";
 import { RemindersView } from "./views/RemindersView.jsx";
 import { CoachView } from "./views/CoachView.jsx";
 import { SendQueueView } from "./views/SendQueueView.jsx";
-import { queueMessage } from "./lib/outreach.js";
+import { queueMessage, copyProfileWithAgent } from "./lib/outreach.js";
 import { listHistory, writeHistory, deleteHistory, setLeadStatus, countHistory, HISTORY_PAGE_SIZE } from "./lib/history.js";
 import { setReminder, listReminders } from "./lib/reminders.js";
 import { logMessageSend } from "./lib/analytics.js";
@@ -136,6 +136,7 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
   const [parsing, setParsing] = useState(false);
   const [parseMsg, setParseMsg] = useState("");
   const [parseErr, setParseErr] = useState("");
+  const [agentCopy, setAgentCopy] = useState(""); // "Copy it with the agent" progress line; "" when idle
   const [analysis, setAnalysis] = useState(saved.analysis || null);
   const [results, setResults] = useState({ ...EMPTY_RESULTS, ...(saved.results || {}) });
   const [loading, setLoading] = useState({});
@@ -524,13 +525,14 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
     setEnriching(false);
   }
 
-  async function parsePaste() {
-    if (!rawPaste.trim()) return;
+  async function parsePaste(text) {
+    const raw = typeof text === "string" ? text : rawPaste;
+    if (!raw.trim()) return;
     setParsing(true); setParseMsg(""); setParseErr("");
 
     try {
       // The parser is shared with the LinkedIn agent's accepted-connection flow (lib/profile.js).
-      const d = await parseProfileText(rawPaste);
+      const d = await parseProfileText(raw);
       setProspect((p) => mergeParsed(p, d));
       setParseMsg(`Profile parsed (${d.quality || "medium"} quality). ${fieldsFoundCount(d)} fields extracted. ${d.qualityNote || ""} Review the fields below and fill in anything the AI missed.`);
       setRawPaste("");
@@ -538,6 +540,24 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
       setParseErr((e && e.message) || "Parse failed. Try Ctrl+A on the LinkedIn profile page, Ctrl+C, then paste here again.");
     }
     setParsing(false);
+  }
+
+  // The same as Ctrl+A / Ctrl+C / paste, done by the LinkedIn agent: it opens the profile on the
+  // computer it runs on, copies the page, and the text lands in the box and is parsed.
+  async function copyWithAgent() {
+    const url = (prospect.linkedinUrl || "").trim();
+    if (!/linkedin\.com\/in\//i.test(url)) { setParseErr("Add their LinkedIn profile link first (linkedin.com/in/…)."); return; }
+    setParseErr(""); setParseMsg(""); setAgentCopy("Asking the agent…");
+    try {
+      const text = await copyProfileWithAgent(url, currentEntryId, (s, st) =>
+        setAgentCopy(st === "copying" ? "The agent is on their profile, copying it…" : `Waiting for the agent to pick it up… ${s}s`));
+      setAgentCopy("");
+      setRawPaste(text);
+      await parsePaste(text);
+    } catch (e) {
+      setAgentCopy("");
+      setParseErr((e && e.message) || "The agent couldn't copy that profile.");
+    }
   }
 
   // Zero-token duplicate guard: before spending AI credits, warn if this person is already saved.
@@ -1068,8 +1088,14 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
                 <div className="panel step" style={{ borderColor: "rgba(255,207,0,.22)", background: "rgba(255,207,0,.03)" }}>
                   <div className="stepbadge"><span className="sn">2</span><span><span className="stt">LinkedIn Intelligence</span><span className="stsub">The most complete way to import a profile</span></span></div>
                   <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 14, lineHeight: 1.65 }}>
-                    Open the LinkedIn profile in your browser while logged in. Press <b style={{ color: "var(--text)" }}>Ctrl+A</b> (select all) then <b style={{ color: "var(--text)" }}>Ctrl+C</b> (copy). Paste everything below. The AI will extract every field including full About, all Experience entries, Education, Skills, Certifications, recent posts, recommendations, and mutual connections.
+                    Let the LinkedIn agent copy their profile for you, or open it yourself, press <b style={{ color: "var(--text)" }}>Ctrl+A</b> (select all) then <b style={{ color: "var(--text)" }}>Ctrl+C</b> (copy) and paste below. The AI will extract every field including full About, all Experience entries, Education, Skills, Certifications, recent posts, recommendations, and mutual connections.
                   </div>
+                  <div className="toprow" style={{ marginTop: 0, marginBottom: 14, gap: 8, flexWrap: "wrap" }}>
+                    <input value={prospect.linkedinUrl} onChange={(e) => set("linkedinUrl", e.target.value)} placeholder="https://www.linkedin.com/in/their-handle"
+                      style={{ flex: "1 1 260px", minWidth: 0, padding: "9px 12px", fontSize: 13, borderRadius: 9 }} />
+                    <button className="btn ai" onClick={copyWithAgent} disabled={!!agentCopy || parsing}>{agentCopy ? "Agent working…" : "Copy it with the agent"}</button>
+                  </div>
+                  {agentCopy && <div className="hint" style={{ marginTop: -6, marginBottom: 12 }}>{agentCopy} The agent must be running on your computer (Send Queue → Start agent, then <code>npm run agent</code>).</div>}
                   <div className="f full" style={{ marginBottom: 14 }}>
                     <label>Raw LinkedIn page paste — Ctrl+A on the profile page, Ctrl+C, paste here</label>
                     <textarea
@@ -1085,7 +1111,7 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
                     </div>
                   )}
                   <div className="toprow" style={{ marginTop: 0 }}>
-                    <button className="btn primary" onClick={parsePaste} disabled={parsing || !rawPaste.trim()}>
+                    <button className="btn primary" onClick={() => parsePaste()} disabled={parsing || !rawPaste.trim()}>
                       {parsing ? "Parsing profile…" : "Parse & fill all fields ↓"}
                     </button>
                     <span style={{ color: "var(--muted)", fontSize: 12.5 }}>Overwrites all fields with what it finds — most complete data source available.</span>

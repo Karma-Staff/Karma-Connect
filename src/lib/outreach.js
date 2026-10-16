@@ -87,6 +87,23 @@ export async function downloadAgent() {
   URL.revokeObjectURL(url);
 }
 
+// ── Copy a profile with the agent ───────────────────────────────────
+// Ask the LinkedIn agent (running on someone's computer) to open a profile and copy the page,
+// then wait for it. onWait(seconds) is called while waiting. Resolves with the page text;
+// rejects with the reason when the agent can't (not running, LinkedIn pushed back…).
+export async function copyProfileWithAgent(url, prospectId, onWait = () => {}) {
+  const { id } = await api("/api/outreach/agent/copy-request", { method: "POST", body: { url, prospectId } });
+  const started = Date.now();
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 3000));
+    const r = await api("/api/outreach/agent/copy-request/" + encodeURIComponent(id));
+    if (r.status === "done") return r.text || "";
+    if (r.status === "failed") throw new Error(r.error || "The agent couldn't copy that profile.");
+    if (!r.agentOn) throw new Error("The LinkedIn agent is off. Turn it on in Send Queue (Start agent) and make sure it's running on your computer.");
+    onWait(Math.round((Date.now() - started) / 1000), r.status);
+  }
+}
+
 // ── LinkedIn replies ────────────────────────────────────────────────
 // Conversations the agent read from LinkedIn — only ones with people you reached out to.
 export async function listInbox() {

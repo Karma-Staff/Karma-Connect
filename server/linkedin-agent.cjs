@@ -49,6 +49,7 @@ const LIMITS = {
   windowStart: num(process.env.LI_AGENT_WINDOW_START, 9),  // local hour, inclusive
   windowEnd:   num(process.env.LI_AGENT_WINDOW_END, 17),   // local hour, exclusive
   weekdaysOnly: String(process.env.LI_AGENT_WEEKDAYS_ONLY || "true") !== "false",
+  copiesPerDay: num(process.env.LI_AGENT_COPIES_PER_DAY, 60), // profile pages copied on request, per rolling 24h
 };
 const ACTIONS = ["invite", "message", "reply"];
 const NOTE_MAX = 300; // LinkedIn's limit on an invitation note
@@ -128,6 +129,20 @@ async function ensureAgentSchema() {
       updated_at   timestamptz not null default now(),
       unique (user_id, thread_key))`);
     await q("create index if not exists linkedin_inbox_user_idx on linkedin_inbox (user_id, needs_reply, last_at desc)");
+    // "Copy it with the agent": someone in Karma Connect asked for a profile page, the worker
+    // fetches it. status: pending → copying → done | failed.
+    await q(`create table if not exists linkedin_copy (
+      id          uuid primary key default gen_random_uuid(),
+      user_id     uuid not null references users (id) on delete cascade,
+      url         text not null,
+      prospect_id text,
+      status      text not null default 'pending',
+      text        text,
+      error       text,
+      created_at  timestamptz not null default now(),
+      started_at  timestamptz,
+      done_at     timestamptz)`);
+    await q("create index if not exists linkedin_copy_user_idx on linkedin_copy (user_id, status, created_at)");
   } catch (e) { console.error("ensureAgentSchema:", e.message); }
 }
 
@@ -647,6 +662,71 @@ async function sendWithoutWaiting(userId, id) {
   return rows[0] || null;
 }
 
+// ── Copy a profile on request ───────────────────────────────────────
+// The Deep LinkedIn paste panel's "Copy it with the agent": instead of a person opening the
+// profile and pressing Ctrl+A, Ctrl+C, the worker opens it and sends the page text back. The
+// worker picks requests up within about 15 seconds while it's running. A person asked for this
+// one profile right now, so it isn't held to the sending window — but it is capped per day,
+// and it needs the agent switched on.
+const COPY_WAIT_MIN = 10; // a request nobody picks up in this long fails, saying why
+
+async function requestCopy(userId, { url, prospectId } = {}) {
+  const h = handleOf(url);
+  if (!h) throw new Error("Add their LinkedIn profile link first (linkedin.com/in/…).");
+  const clean = "https://www.linkedin.com/in/" + encodeURIComponent(h) + "/";
+  const { rows: open } = await q(
+    "select id from linkedin_copy where user_id = $1 and url = $2 and status in ('pending','copying') limit 1", [userId, clean]);
+  if (open[0]) return { id: open[0].id };
+  const { rows } = await q(
+    "insert into linkedin_copy (user_id, url, prospect_id) values ($1,$2,$3) returning id",
+    [userId, clean, prospectId ? String(prospectId).slice(0, 200) : null]);
+  return { id: rows[0].id };
+}
+
+async function getCopy(userId, id) {
+  await q(
+    `update linkedin_copy set status = 'failed', done_at = now(),
+       error = 'The agent didn''t pick this up. Is it running on your computer? (Send Queue → Start agent, then npm run agent.)'
+     where user_id = $1 and status = 'pending' and created_at < now() - ($2 || ' minutes')::interval`, [userId, String(COPY_WAIT_MIN)]);
+  const { rows } = await q("select id, url, status, text, error from linkedin_copy where id = $1 and user_id = $2", [id, userId]);
+  const r = rows[0];
+  if (!r) return null;
+  const state = await getState(userId);
+  return { ...r, agentOn: !!state.enabled, agentSeen: state.last_seen_at };
+}
+
+// The worker asks for copy requests. Ones it took but never answered go back after 5 minutes.
+async function leaseCopies(userId) {
+  if (!dbOn) return { items: [] };
+  const state = await getState(userId);
+  if (!state.enabled) return { items: [], reason: state.halt_reason || "The agent is off." };
+  await q("update linkedin_copy set status = 'pending', started_at = null where user_id = $1 and status = 'copying' and started_at < now() - interval '5 minutes'", [userId]);
+  const { rows: c } = await q("select count(*) as n from linkedin_copy where user_id = $1 and status = 'done' and done_at > now() - interval '24 hours'", [userId]);
+  if (Number(c[0].n) >= LIMITS.copiesPerDay) {
+    await q(`update linkedin_copy set status = 'failed', done_at = now(), error = $2 where user_id = $1 and status = 'pending'`,
+      [userId, `Daily limit of ${LIMITS.copiesPerDay} profile copies reached — paste this one by hand, or try tomorrow.`]);
+    return { items: [], reason: "Daily copy limit reached." };
+  }
+  const { rows } = await q(
+    `update linkedin_copy set status = 'copying', started_at = now()
+       where id in (select id from linkedin_copy where user_id = $1 and status = 'pending' order by created_at limit 2 for update skip locked)
+     returning id, url`, [userId]);
+  await q("update linkedin_agent set last_seen_at = now(), updated_at = now() where user_id = $1", [userId]);
+  return { items: rows.map((r) => ({ id: r.id, handle: handleOf(r.url) })) };
+}
+
+async function finishCopy(userId, id, { text, error, halt: haltMsg } = {}) {
+  const t = String(text || "").trim().slice(0, 60000);
+  if (haltMsg) await halt(userId, String(haltMsg).slice(0, 300));
+  const ok = !haltMsg && t.length >= 200;
+  const { rows } = await q(
+    `update linkedin_copy set status = $3, text = $4, error = $5, done_at = now()
+      where id = $1 and user_id = $2 and status in ('pending','copying') returning id, status`,
+    [id, userId, ok ? "done" : "failed", ok ? t : null,
+     ok ? null : String(haltMsg || error || "Couldn't read their profile page.").slice(0, 300)]);
+  return rows[0] || null;
+}
+
 // What the Send Queue UI shows in its agent strip.
 async function status(userId) {
   if (!dbOn) return { enabled: false, limits: LIMITS, counts: { day: 0, hour: 0, invDay: 0, invWeek: 0 }, queued: 0 };
@@ -682,5 +762,6 @@ module.exports = {
   lease, report, reclaimStale, sentCounts, decide, inWindow, LIMITS,
   watch, markAccepted, recordInbox, listInbox, setHandled, saveDraft, queueReply, sendWithoutWaiting,
   recordProfile, listFollowups, saveFollowupDraft, queueFollowup, skipFollowup, needProfile,
+  requestCopy, getCopy, leaseCopies, finishCopy,
   handleOf, nameKey, WAITING_SQL, ACTIONS, NOTE_MAX,
 };

@@ -290,12 +290,28 @@ function shape(calls, ctx) {
   };
 }
 
+/* Whose RingCentral login reads the company's calls for this admin. Their own when they have
+   connected one; otherwise a connected owner's or admin's. Everything here is behind
+   requireAdmin, so the viewer is already cleared to see every call and recording — an admin
+   who reviews calls but never makes them shouldn't need a RingCentral seat for that. */
+async function readerFor(userId) {
+  const { rows } = await query(
+    `SELECT v.user_id FROM voice_identities v
+       JOIN app_users u ON u.id = v.user_id
+       LEFT JOIN organization_memberships m ON m.user_id = u.id
+      WHERE v.provider = 'ringcentral' AND NOT u.disabled
+        AND (v.user_id = $1 OR m.role IN ('owner','admin'))
+      ORDER BY (v.user_id = $1) DESC, (m.role = 'owner') DESC, v.last_used_at DESC NULLS LAST
+      LIMIT 1`, [userId]);
+  return rows[0] ? rows[0].user_id : userId;   // nobody connected: their own, which asks them to connect
+}
+
 /* ---------------- the route ---------------- */
 
 router.get("/api/voice/rc/dashboard", requireAdmin, async (req, res, next) => {
   if (!rc.ENABLED) return res.status(503).json({ error: "RingCentral is not configured on this server" });
-  const uid = req.user.id;
   try {
+    const uid = await readerFor(req.user.id);
     const tz = safeTz(String(req.query.tz || ""));
     const today = (() => { const w = wall(Date.now(), tz); return `${w.year}-${w.month}-${w.day}`; })();
     let to = isYmd(req.query.to) ? req.query.to : today;
@@ -427,6 +443,6 @@ async function allowedAgents() {
 const agentAllowed = (allow, ext, id) =>
   allow.empty || (ext && allow.exts.has(ext)) || (id != null && allow.ids.has(String(id)));
 
-module.exports = { router, rcGet, cached, extensions, companyNumbers, fetchDay, safeTz, wall, localMidnight, addDays,
+module.exports = { router, readerFor, rcGet, cached, extensions, companyNumbers, fetchDay, safeTz, wall, localMidnight, addDays,
   allowedAgents, agentAllowed,
   _test: { localMidnight, addDays, shape, wall } };
