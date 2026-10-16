@@ -28,7 +28,7 @@ const calltime = require("./calltime");
    too, marked filters.source = 'upload'. They serve and record from their own
    table; current/outcome below hand off to this when they see one. */
 const upload = require("./campaign-upload");
-const { zohoKindSql, inZohoSql } = require("./zoho-scan");
+const { zohoKindSql, inZohoSql, contactedSql } = require("./zoho-scan");
 /* the state filter takes "TX" or "Texas" — the data holds both (CLAUDE.md) */
 const { STATE_NAME } = require("./leads");
 /* the AI filter box on the New campaign form — the same proxy and model the
@@ -42,10 +42,12 @@ const router = express.Router();
    would make the progress bar a lie. */
 const MAX_SESSION = 250;
 const OPEN_STATUSES = ["New", "Contacted", "Responded"];
-/* A lead already in Zoho CRM — a Zoho Lead, or a number in Zoho's call
-   history (zoho-scan.js labels both) — is being worked there, so no campaign
-   or call session includes it. The Contacted tab is where they are worked. */
-const NOT_IN_ZOHO = (alias) => `NOT ${inZohoSql(alias)}`;
+/* A lead WORKED in Zoho — a Zoho record (Lead, Contact, Account) with a
+   status beyond New — is listed under Contacted and left out of campaigns
+   and call sessions. A Zoho record still at New has never had a Zoho call
+   result: it is listed in Companies / People and called like any other lead
+   (contactedSql in zoho-scan.js is the one rule for both). */
+const NOT_WORKED = (alias) => `NOT ${contactedSql(alias)}`;
 const IN_ZOHO = (alias) => inZohoSql(alias);
 
 const me = (req) => String(req.user.email || "").trim();
@@ -67,9 +69,10 @@ async function leadCard(id, actor) {
     query(`SELECT at, actor, to_value FROM activity_log
             WHERE lead_id = $1 AND action = 'call'
             ORDER BY at DESC LIMIT 1`, [id]),
-    /* registered in Zoho since the campaign was built (the 10-minute scan):
-       the rep's screen warns before it rings */
-    query(`SELECT ${zohoKindSql("l")} AS kind FROM leads l WHERE l.id = $1`, [id]),
+    /* worked in Zoho since the campaign was built (the scan saw a call
+       result): the rep's screen warns before it rings. A Zoho record still
+       at New is called without a warning. */
+    query(`SELECT CASE WHEN ${contactedSql("l")} THEN ${zohoKindSql("l")} END AS kind FROM leads l WHERE l.id = $1`, [id]),
   ]);
   return {
     lead,
@@ -164,7 +167,7 @@ router.get("/api/campaign/preview", requireUser, async (req, res, next) => {
       `SELECT count(*)::int n FROM leads
         WHERE btrim(owner) = $1 AND deleted_at IS NULL AND NOT removed
           AND nullif(btrim(phone), '') IS NOT NULL
-          AND status = ANY($2) AND ${NOT_IN_ZOHO("leads")}`, [owner, OPEN_STATUSES])).rows[0].n;
+          AND status = ANY($2) AND ${NOT_WORKED("leads")}`, [owner, OPEN_STATUSES])).rows[0].n;
     res.json({ owner, callable: n, max: MAX_SESSION });
   } catch (e) { next(e); }
 });
@@ -186,7 +189,7 @@ router.post("/api/campaign/start", requireUser, express.json({ limit: "4kb" }),
            LEFT JOIN recents r ON r.lead_id = l.id AND r.user_id = $3
           WHERE btrim(l.owner) = $1 AND l.deleted_at IS NULL AND NOT l.removed
             AND nullif(btrim(l.phone), '') IS NOT NULL
-            AND l.status = ANY($2) AND ${NOT_IN_ZOHO("l")}
+            AND l.status = ANY($2) AND ${NOT_WORKED("l")}
           ORDER BY r.touched_at ASC NULLS FIRST, l.date_added DESC NULLS LAST, l.id
           LIMIT ${MAX_SESSION}`,
         [owner, OPEN_STATUSES, req.user.id])).rows;
@@ -598,13 +601,18 @@ function specWhere(spec, args, { owners = null, skipped = false } = {}) {
   /* in Zoho → only when its status is one Zoho gave it (not one of Karma
      Connect's own: New, Contacted, Responded, Qualified, Not interested) */
   /* skipped: the opposite — what was left out for being in Zoho, to say back */
-  if (skipped) { w.push(`${IN_ZOHO("l")} AND l.status = ANY(${p(STATUSES)})`); return w.join("\n   AND "); }
-  w.push(`(${NOT_IN_ZOHO("l")} OR l.status <> ALL(${p(STATUSES)}))`);
-  if (spec.unique) w.push(`${NOT_IN_ZOHO("l")}
-    AND NOT EXISTS (SELECT 1 FROM activity_log a WHERE a.action = 'call' AND a.lead_id = l.id)
+  /* worked in Zoho under one of Karma Connect's own statuses (Contacted,
+     Qualified…) — left out; a Zoho Call Result comes in by picking it */
+  if (skipped) { w.push(`${IN_ZOHO("l")} AND l.status <> 'New' AND l.status = ANY(${p(STATUSES)})`); return w.join("\n   AND "); }
+  w.push(`(NOT ${IN_ZOHO("l")} OR l.status = 'New' OR l.status <> ALL(${p(STATUSES)}))`);
+  /* unique: nobody has ever rung this number — no Karma Connect call to the
+     lead or the number, and no call to it in Zoho's call history. A Zoho
+     Lead that nobody has called yet is still unique. */
+  if (spec.unique) w.push(`NOT EXISTS (SELECT 1 FROM activity_log a WHERE a.action = 'call' AND a.lead_id = l.id)
     AND (l.phone_key IS NULL OR (
           NOT EXISTS (SELECT 1 FROM activity_log a WHERE a.action = 'call' AND ${PHONE10_NUM} = l.phone_key)
-      AND NOT EXISTS (SELECT 1 FROM zoho_records z WHERE z.phone_key = l.phone_key OR z.phone2_key = l.phone_key)))`);
+      AND NOT EXISTS (SELECT 1 FROM zoho_records z WHERE z.module = 'Calls'
+                        AND (z.phone_key = l.phone_key OR z.phone2_key = l.phone_key))))`);
   if (spec.from || spec.to) {
     const tz = p(TZ);
     const day = spec.dateBasis === "added" ? "l.date_added"

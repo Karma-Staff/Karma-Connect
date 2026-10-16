@@ -11378,7 +11378,7 @@ async function openNewCampaign() {
           <div class="pd-f-l">Lead type</div>
           <div class="pd-chips pd-kinds">${PD_KINDS.map(([v, t]) => `<label class="pd-chip"><input type="checkbox" name="pd-kind" value="${v}" checked><span>${t}</span></label>`).join("")}</div>
           <label class="pd-check"><input type="checkbox" id="pd-unique" checked>
-            <span><b>Unique numbers only</b> — never called from Karma Connect, and not in Zoho</span></label>
+            <span><b>Unique numbers only</b> — never called before, from Karma Connect or in Zoho</span></label>
         </div>
 
         <div class="pd-f pd-f-3">

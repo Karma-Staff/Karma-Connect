@@ -431,4 +431,27 @@ router.get("/api/crm/zoho/scan", requireAdmin, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+/* POST /api/crm/zoho/match {phones?: [], emails?: []} — which of these are
+   already in Zoho CRM, before a list is imported. Reads the local index only
+   (zoho_records); no call is made to Zoho. Answers each phone/email that
+   matched with the Zoho modules it is in (Leads, Contacts, Accounts, Calls). */
+router.post("/api/crm/zoho/match", requireAdmin, express.json({ limit: "1mb" }), async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const phones = [...new Set((Array.isArray(b.phones) ? b.phones : []).slice(0, 25000).map((p) => pk(String(p || ""))).filter(Boolean))];
+    const emails = [...new Set((Array.isArray(b.emails) ? b.emails : []).slice(0, 25000)
+      .map((e) => String(e || "").trim().toLowerCase()).filter((e) => e.includes("@") && e.length <= 200))];
+    const rows = (await query(
+      `SELECT k, array_agg(DISTINCT module ORDER BY module) AS modules FROM (
+         SELECT phone_key AS k, module FROM zoho_records WHERE phone_key = ANY($1)
+         UNION ALL SELECT phone2_key, module FROM zoho_records WHERE phone2_key = ANY($1)
+         UNION ALL SELECT email, module FROM zoho_records WHERE email = ANY($2)) x
+       GROUP BY k`, [phones, emails])).rows;
+    const n = (await query(`SELECT module, count(*)::int n FROM zoho_records GROUP BY module`)).rows;
+    res.json({ checked: { phones: phones.length, emails: emails.length },
+      indexed: Object.fromEntries(n.map((r) => [r.module, r.n])),
+      matches: Object.fromEntries(rows.map((r) => [r.k, r.modules])) });
+  } catch (e) { next(e); }
+});
+
 module.exports = { router, startSweeper, run, kindsOfPhones, zohoKindSql, inZohoSql, contactedSql, _test: { recordOf, flag, resolveCalls, changed, dueTick, config, applyStatus } };
