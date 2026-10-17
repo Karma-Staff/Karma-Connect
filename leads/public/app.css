@@ -2161,7 +2161,7 @@ label.check input[type="checkbox"] { width: auto; margin: 0; accent-color: var(-
 @keyframes dash-rot { to { transform: rotate(360deg); } }
 
 /* tiles */
-.dash-tiles { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; margin-bottom: 16px; }
+.dash-tiles { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px; margin-bottom: 16px; }
 @media (max-width: 1280px) { .dash-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 760px) { .dash-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .dash-tile { position: relative; display: flex; flex-direction: column; gap: 6px; min-width: 0;
@@ -2177,6 +2177,7 @@ label.check input[type="checkbox"] { width: auto; margin: 0; accent-color: var(-
 .dash-tile.out .dash-tile-ic { background: color-mix(in srgb, var(--cat-1) 16%, transparent); color: var(--cat-1); }
 .dash-tile.miss .dash-tile-ic { background: color-mix(in srgb, var(--cat-8) 16%, transparent); color: var(--cat-8); }
 .dash-tile.all .dash-tile-ic { background: color-mix(in srgb, var(--gold) 16%, transparent); color: var(--gold); }
+.dash-tile.rate .dash-tile-ic { background: color-mix(in srgb, var(--good) 16%, transparent); color: var(--good); }
 .dash-tile.agents .dash-tile-ic { background: var(--accent-soft); color: var(--accent-ink); }
 .dash-tile-v { font-size: 30px; font-weight: 700; line-height: 1.05; letter-spacing: -.02em; color: var(--ink); }
 .dash-tile-v small { margin-left: 6px; font-size: 12px; font-weight: 600; letter-spacing: 0; color: var(--ink-3); }
@@ -2267,7 +2268,7 @@ label.check input[type="checkbox"] { width: auto; margin: 0; accent-color: var(-
 /* bar rows (agents, numbers) */
 .dash-rows { display: flex; flex-direction: column; }
 .dash-row, .dash-rowh { display: grid; align-items: center; gap: 12px; padding: 6px 8px; border-radius: 8px; }
-.dash-agents .dash-row, .dash-agents .dash-rowh { grid-template-columns: minmax(130px, 1.1fr) 2fr 56px 76px 76px; }
+.dash-agents .dash-row, .dash-agents .dash-rowh { grid-template-columns: minmax(130px, 1.1fr) 2fr 56px 76px 52px 76px; }
 .dash-nums .dash-row { grid-template-columns: minmax(118px, auto) 1fr 48px; }
 .dash-rowh { padding-top: 0; font-size: 11px; font-weight: 600; text-transform: uppercase;
   letter-spacing: .05em; color: var(--ink-3); }

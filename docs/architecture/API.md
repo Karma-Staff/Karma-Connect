@@ -361,7 +361,7 @@ declared once for the group.
 | GET | `/api/voice/rc/calllog` | admin | [leads/server/calllogs.js:260](../../leads/server/calllogs.js#L260) |  |
 | GET | `/api/voice/rc/connect` | signed in | [leads/server/ringcentral.js:128](../../leads/server/ringcentral.js#L128) |  |
 | DELETE | `/api/voice/rc/connect` | signed in | [leads/server/ringcentral.js:313](../../leads/server/ringcentral.js#L313) |  |
-| GET | `/api/voice/rc/dashboard` | admin | [leads/server/rc-dashboard.js:311](../../leads/server/rc-dashboard.js#L311) |  |
+| GET | `/api/voice/rc/dashboard` | admin | [leads/server/rc-dashboard.js:313](../../leads/server/rc-dashboard.js#L313) |  |
 | GET | `/api/voice/rc/extensions` | signed in | [leads/server/ringcentral.js:378](../../leads/server/ringcentral.js#L378) | GET /api/voice/rc/extensions — who a rep can transfer a live call to. |
 | GET | `/api/voice/rc/me` | signed in | [leads/server/ringcentral.js:346](../../leads/server/ringcentral.js#L346) | GET /api/voice/rc/me — what this rep's own seat is, for the dialler header. |
 | GET | `/api/voice/rc/recording/:id` | admin | [leads/server/calllogs.js:329](../../leads/server/calllogs.js#L329) |  |

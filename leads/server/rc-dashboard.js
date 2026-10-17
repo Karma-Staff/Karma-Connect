@@ -248,10 +248,12 @@ function shape(calls, ctx) {
     const a = agentOf(c);
     if (a) {
       if (!agents.has(a.id)) agents.set(a.id, { id: a.id, name: a.name, ext: a.ext || "",
-        ...blank(), connected: 0, talkSecs: 0 });
+        ...blank(), connected: 0, outConnected: 0, talkSecs: 0 });
       const row = agents.get(a.id);
       tally(row, c);
       if (CONNECTED.has(c.res)) { row.connected++; row.talkSecs += c.dur; }
+      // outgoing calls that were picked up: this agent's connection rate is outConnected / outgoing
+      if (c.dir !== "Inbound" && CONNECTED.has(c.res)) row.outConnected++;
     }
 
     const ours = c.dir === "Outbound" ? c.fromNum : c.toNum;

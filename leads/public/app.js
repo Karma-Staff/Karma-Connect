@@ -8480,7 +8480,7 @@ function renderCallReport(d) {
         ${hist.map((h) => `
           <button class="hist-col${h.date === d.date ? " on" : ""}${h.today ? " is-today" : ""}"
                   data-date="${h.date}"
-                  title="${esc(h.date)} — ${h.calls} call${h.calls === 1 ? "" : "s"}, ${h.connected} connected${h.today ? " (today, still counting)" : ""}">
+                  title="${esc(h.date)} — ${h.calls} call${h.calls === 1 ? "" : "s"}, ${h.connected} connected${h.calls ? ` (${Math.round((h.connected / h.calls) * 100)}%)` : ""}${h.today ? ", today, still counting" : ""}">
             <span class="hist-bar" style="height:${Math.max(2, Math.round((h.calls / hPeak) * 100))}%">
               <span class="hist-fill" style="height:${h.calls ? Math.round((h.connected / h.calls) * 100) : 0}%"></span>
             </span>
@@ -8498,8 +8498,9 @@ function renderCallReport(d) {
     <div class="kpi-strip">
       ${kpiTile(d.isToday ? "Calls today" : "Calls", t.calls.toLocaleString(),
         t.callers === 1 ? "by 1 person" : `by ${t.callers} people`)}
-      ${kpiTile("Connected", t.connected.toLocaleString(),
-        t.calls ? `${Math.round((t.connected / t.calls) * 100)}% of calls` : "none yet")}
+      ${kpiTile("Connected", t.connected.toLocaleString(), t.calls ? "calls picked up" : "none yet")}
+      ${kpiTile("Connection rate", t.calls ? `${Math.round((t.connected / t.calls) * 100)}%` : "—",
+        t.calls ? `${t.connected.toLocaleString()} of ${t.calls.toLocaleString()} calls` : "no calls yet")}
       ${kpiTile("Talk time", fmtDuration(t.seconds),
         t.seconds ? "total" : "not reported by the hand-off dialler")}
       ${kpiTile("Working now", String(t.activeNow),
@@ -8542,6 +8543,7 @@ function renderCallReport(d) {
       <table class="asg-table">
         <thead><tr>
           <th>Person</th><th class="n">Calls</th><th class="n">Connected</th>
+          <th class="n" title="Calls that were picked up">Connection rate</th>
           <th class="n">Talk time</th><th class="n">Assigned</th><th>Share of calls</th>
         </tr></thead>
         <tbody>
@@ -8558,6 +8560,7 @@ function renderCallReport(d) {
               <td class="n"><b>${p.calls.toLocaleString()}</b></td>
               <td class="n">${p.connected.toLocaleString()}${
                 p.placed ? ` <span class="asg-tag" title="Handed to Zoho's dialler — the result never came back">+${p.placed} unknown</span>` : ""}</td>
+              <td class="n">${p.calls ? `<b>${Math.round((p.connected / p.calls) * 100)}%</b>` : "—"}</td>
               <td class="n">${fmtDuration(p.seconds)}</td>
               <td class="n">${p.assigned.toLocaleString()}</td>
               <td class="asg-bar-cell">
@@ -10155,7 +10158,10 @@ const DASH_IC = {
   miss: "M16 3l5 5M21 3l-5 5M5 4h3.5l1.7 4.3-2.1 1.3a9.5 9.5 0 0 0 4.3 4.3l1.3-2.1 4.3 1.7V17a2 2 0 0 1-2 2A14 14 0 0 1 3 6a2 2 0 0 1 2-2z",
   all: "M5 4h3.5l1.7 4.3-2.1 1.3a9.5 9.5 0 0 0 4.3 4.3l1.3-2.1 4.3 1.7V17a2 2 0 0 1-2 2A14 14 0 0 1 3 6a2 2 0 0 1 2-2z",
   people: "M16 20v-1.5a3.5 3.5 0 0 0-3.5-3.5h-5A3.5 3.5 0 0 0 4 18.5V20M10 11.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM20 20v-1.5a3.5 3.5 0 0 0-2.6-3.4M15.5 4.6a3.5 3.5 0 0 1 0 6.8",
+  rate: "M4 17a8 8 0 1 1 16 0M12 17l4.5-5M7 17h.01M17 17h.01",
 };
+/* Connection rate: the share of outgoing calls that were picked up. */
+const dashRate = (connected, calls) => calls ? Math.round((connected / calls) * 100) + "%" : "—";
 const dashIc = (d) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`;
 
 function dashTiles(d) {
@@ -10186,6 +10192,10 @@ function dashTiles(d) {
     tile("out", DASH_IC.out, "Outgoing", dashN(k.outgoing.calls), "calls",
       `<span><b>${dashDur(k.outgoing.secs)}</b> talk</span><span><b>${dashPct(k.connectRate)}</b> connected</span>`,
       meter(share(k.outgoing.calls), "var(--cat-1)", `${share(k.outgoing.calls)}% of all calls`)),
+    tile("rate", DASH_IC.rate, "Connection rate", k.connectRate == null ? "—" : String(Math.round(k.connectRate * 100)),
+      k.connectRate == null ? "" : "%",
+      `<span><b>${dashN(k.outgoing.connected)}</b> of ${dashN(k.outgoing.calls)} outgoing picked up</span>`,
+      meter(k.connectRate == null ? 0 : Math.round(k.connectRate * 100), "var(--good)", "Outgoing calls that connected")),
     tile("miss", DASH_IC.miss, "Missed", dashN(k.missed.calls), "calls",
       `<span>inbound calls nobody picked up</span>`,
       meter(share(k.missed.calls), "var(--cat-8)", `${share(k.missed.calls)}% of all calls`)),
@@ -10407,18 +10417,18 @@ function dashAgents(d, W, table) {
   const seen = new Set(rows.map((r) => r.id));
   for (const a of d.agents?.list || [])
     if (!seen.has(a.id)) rows.push({ id: a.id, name: a.name, ext: a.ext, incoming: 0, outgoing: 0,
-      missed: 0, connected: 0, talkSecs: 0, live: a });
+      missed: 0, connected: 0, outConnected: 0, talkSecs: 0, live: a });
   if (!rows.length) return dashNone("No agents yet");
   const status = (a) => !a ? ["", "Unknown"] : a.onCall ? ["oncall", "On a call"]
     : a.status === "Offline" ? ["off", "Offline"] : ["avail", a.status === "Busy" ? "Busy" : "Available"];
-  if (table) return dashTable(["Agent", "Status", "Incoming", "Outgoing", "Missed", "Connected", "Talk time"],
+  if (table) return dashTable(["Agent", "Status", "Incoming", "Outgoing", "Missed", "Connected", "Connection rate", "Talk time"],
     rows.map((r) => [esc(r.name) + (r.ext ? ` <span class="dash-mute">x${esc(r.ext)}</span>` : ""), esc(status(r.live)[1]),
-      dashN(r.incoming), dashN(r.outgoing), dashN(r.missed), dashN(r.connected), dashDur(r.talkSecs)]));
+      dashN(r.incoming), dashN(r.outgoing), dashN(r.missed), dashN(r.connected), dashRate(r.outConnected, r.outgoing), dashDur(r.talkSecs)]));
 
   const max = Math.max(...rows.map(dashTotal), 1);
   const bars = dashBars(rows, max);
   return `${dashLegend()}<div class="dash-rows dash-agents">
-    <div class="dash-rowh"><span>Agent</span><span></span><span class="n">Calls</span><span class="n">Connected</span><span class="n">Talk</span></div>
+    <div class="dash-rowh"><span>Agent</span><span></span><span class="n">Calls</span><span class="n">Connected</span><span class="n" title="Outgoing calls that were picked up">Rate</span><span class="n">Talk</span></div>
     ${rows.map((r, i) => {
       const [cls, label] = status(r.live);
       const tip = dashTip(`<div class="dash-tip-h">${esc(r.name)}${r.ext ? " · x" + esc(r.ext) : ""}</div>${dashTipRows(r)}
@@ -10428,6 +10438,7 @@ function dashAgents(d, W, table) {
         <span class="dash-track">${bars[i].html}</span>
         <span class="n"><b>${dashN(bars[i].tot)}</b></span>
         <span class="n">${dashN(r.connected)}</span>
+        <span class="n" title="${dashN(r.outConnected)} of ${dashN(r.outgoing)} outgoing picked up"><b>${dashRate(r.outConnected, r.outgoing)}</b></span>
         <span class="n">${dashDur(r.talkSecs)}</span>
       </div>`;
     }).join("")}</div>`;
