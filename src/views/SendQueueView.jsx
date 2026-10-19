@@ -3,7 +3,7 @@
 // hand here (open LinkedIn + copy, you send, mark sent). LinkedIn replies from prospects show
 // at the top with an AI draft that a person edits and approves before anything is sent.
 import { useState, useEffect, useRef } from "react";
-import { listQueue, approveQueued, sendQueuedNow, markQueuedSent, skipQueued, agentStatus, setAgentEnabled, downloadAgent,
+import { listQueue, approveQueued, sendQueuedNow, markQueuedSent, skipQueued, agentStatus, setAgentEnabled,
   listInbox, saveThreadDraft, approveReply, setThreadHandled, sendWithoutWaiting } from "../lib/outreach.js";
 import { draftReply } from "../lib/replies.js";
 import { listFollowups, prepareFollowup, saveFollowupDraft, approveFollowup, skipFollowup } from "../lib/followups.js";
@@ -349,17 +349,19 @@ function RepliesPanel({ threads, sender, onChanged, showToast }) {
 }
 
 // Status strip for the LinkedIn agent: whether it's on, how much of today's cap it has used,
-// and why it stopped if it stopped. The Stop button is the kill switch — the next time the
-// worker asks for work it gets nothing back.
-function AgentStrip({ status, onToggle, busy, onDownload, downloading }) {
+// and why it stopped if it stopped. Pause is the kill switch — the next time the worker checks
+// in it closes its browser. Everything else (PCs, dry run, limits, the log) is on the LinkedIn
+// agent page.
+function AgentStrip({ status, onToggle, busy, onOpenAgent }) {
   if (!status) return null;
-  const { enabled, haltReason, lastSeenAt, counts = {}, limits = {}, ready = 0, inflight = 0, waiting = 0, needReply = 0, firstMessages = 0 } = status;
-  // "Live" means the worker has actually checked in recently — enabled with no worker running
-  // is a common and confusing state, so name it.
+  const { enabled, haltReason, lastSeenAt, dryRun, worker, counts = {}, limits = {}, ready = 0, inflight = 0, waiting = 0, needReply = 0, firstMessages = 0 } = status;
+  // "Live" means the worker has actually checked in recently (it does every 15 seconds) —
+  // switched on with no PC answering is a common and confusing state, so name it.
   const seenAgo = lastSeenAt ? (Date.now() - new Date(lastSeenAt).getTime()) / 1000 : Infinity;
-  const live = enabled && seenAgo < 600;
-  const tone = haltReason ? "#e24a4a" : live ? "#52d39e" : enabled ? "#E7B74B" : "var(--faint)";
-  const label = haltReason ? "Stopped" : live ? "Running" : enabled ? "On · worker not connected" : "Off";
+  const online = seenAgo < 90 && !!worker;
+  const live = enabled && online;
+  const tone = haltReason ? "#e24a4a" : live ? (dryRun ? "#7C5CFF" : "#52d39e") : enabled ? "#E7B74B" : "var(--faint)";
+  const label = haltReason ? "Stopped" : live ? (dryRun ? "Running · dry run" : "Running") : enabled ? "On · PC offline" : "Paused";
 
   return (
     <div className="panel" style={{ marginBottom: 16, borderColor: tone + "44" }}>
@@ -374,38 +376,33 @@ function AgentStrip({ status, onToggle, busy, onDownload, downloading }) {
           {needReply ? " · " + needReply + (needReply === 1 ? " reply" : " replies") + " to answer" : ""}
           {firstMessages ? " · " + firstMessages + " new connection" + (firstMessages === 1 ? "" : "s") + " to welcome" : ""}
         </span>
-        <button className="btn sm ghost" disabled={downloading} onClick={onDownload}
-          style={{ marginLeft: "auto" }} title="Download the agent to run on this machine">
-          {downloading ? "…" : "Download agent"}
-        </button>
+        <button className="btn sm ghost" onClick={onOpenAgent} style={{ marginLeft: "auto" }}>Agent controls →</button>
         <button className={"btn sm " + (enabled ? "ghost" : "primary")} disabled={busy}
           onClick={() => onToggle(!enabled)}>
-          {busy ? "…" : enabled ? "Stop agent" : haltReason ? "Clear & restart" : "Start agent"}
+          {busy ? "…" : enabled ? "Pause" : haltReason ? "Clear & start" : "Start"}
         </button>
       </div>
       {haltReason && (
         <div className="err" style={{ marginTop: 10 }}>
-          {haltReason} — the agent stopped itself. Check LinkedIn in your browser, then restart it here.
+          {haltReason} The agent stopped itself. Check LinkedIn on that PC, then start it again.
         </div>
       )}
-      {enabled && !live && !haltReason && (
+      {enabled && !online && !haltReason && (
         <div className="hint" style={{ marginTop: 10, color: "var(--muted)" }}>
-          Waiting for the local worker. On the machine with the signed-in LinkedIn browser profile, run <code>npm run agent</code>.
-          {" "}Don’t have it yet? <b>Download agent</b> above — the zip has a SETUP.md with your details filled in.
+          No PC is answering. Make sure the agent's PC is on, or connect one in <b>Agent controls</b>.
         </div>
       )}
     </div>
   );
 }
 
-export function SendQueueView({ showToast }) {
+export function SendQueueView({ showToast, onOpenAgent }) {
   const [items, setItems] = useState(null);
   const [sendingOn, setSendingOn] = useState(true);
   const [err, setErr] = useState("");
   const [session, setSession] = useState(null); // blitz mode: { order: [ids], idx }
   const [agent, setAgent] = useState(null);     // LinkedIn agent status, null until first load
   const [agentBusy, setAgentBusy] = useState(false);
-  const [agentDl, setAgentDl] = useState(false);   // agent zip download in flight
   const [threads, setThreads] = useState([]);      // LinkedIn conversations with prospects
   const [followups, setFollowups] = useState([]);  // accepted connections waiting for a first message
   const [senderId, setSenderId] = useState(() => { try { return localStorage.getItem(SENDER_KEY) || SENDERS[0].id; } catch (e) { return SENDERS[0].id; } });
@@ -429,19 +426,9 @@ export function SendQueueView({ showToast }) {
     setAgentBusy(true);
     try {
       setAgent(await setAgentEnabled(next));
-      showToast(next ? "Agent on. It sends the ready LinkedIn invitations and messages" : "Agent stopped");
+      showToast(next ? "Agent on. It sends the ready LinkedIn invitations and messages" : "Agent paused");
     } catch (e) { setErr((e && e.message) || "Could not change the agent."); }
     setAgentBusy(false);
-  }
-
-  // Pulls the agent's own source down as a zip, so the machine that runs it doesn't need a clone.
-  async function getAgent() {
-    setAgentDl(true);
-    try {
-      await downloadAgent();
-      showToast("Agent downloaded — unzip it, then open SETUP.md");
-    } catch (e) { setErr((e && e.message) || "Could not download the agent."); }
-    setAgentDl(false);
   }
 
   function patch(next) {
@@ -493,7 +480,7 @@ export function SendQueueView({ showToast }) {
       {!sendingOn && <div className="hint" style={{ marginBottom: 14 }}>Email auto-send is off on this server (no email provider configured). Items will queue but won't send until it's set up.</div>}
       {err && <div className="err">{err}</div>}
 
-      <AgentStrip status={agent} onToggle={toggleAgent} busy={agentBusy} onDownload={getAgent} downloading={agentDl} />
+      <AgentStrip status={agent} onToggle={toggleAgent} busy={agentBusy} onOpenAgent={onOpenAgent} />
 
       {(threads.length > 0 || followups.length > 0) && (
         <div className="toprow" style={{ marginBottom: 10, justifyContent: "flex-end" }}><SenderPick senderId={sender.id} onPick={pickSender} /></div>

@@ -1228,9 +1228,28 @@ app.post("/api/outreach/queue/:id/skip", requireUser, async (req, res) => {
 
 
 // ─────────────────────── LinkedIn agent (worker API) ────────────────
-// The local worker in agent/ authenticates as the user (same signin + Bearer token as the
-// browser app) and drives these four endpoints. Every sending cap is enforced server-side in
-// linkedin-agent.cjs — the worker cannot raise its own limits by restarting or running twice.
+// The local worker in agent/ signs in with the device token it got when its PC was paired
+// (LinkedIn agent → Connect a PC); a signed-in browser session works too, for testing. Every
+// sending cap is enforced server-side in linkedin-agent.cjs — the worker cannot raise its own
+// limits by restarting or running twice.
+//
+// The device token is accepted ONLY by the routes below that use requireAgent. It can't read
+// leads, history or anything else in Karma Connect.
+async function requireAgent(req, res, next) {
+  const m = String(req.headers.authorization || "").match(/^Bearer\s+(kca_[A-Za-z0-9_-]+)$/);
+  if (!m) return requireUser(req, res, next);
+  try {
+    const found = await liAgent.deviceForToken(m[1]);
+    if (!found) return res.status(401).json({ error: { message: "This PC isn't connected any more. Connect it again from the LinkedIn agent page.", unpaired: true } });
+    if (!emailAllowed(found.user.email)) return res.status(403).json({ error: { message: "This account is not allowed to use Karma Connect." } });
+    req.userId = found.user.id;
+    req.email = found.user.email;
+    req.user = found.user;
+    req.agentDevice = found.device;
+    next();
+  } catch (e) { res.status(503).json({ error: { message: "Sign-in is temporarily unavailable." } }); }
+}
+const pairLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, message: "Too many attempts. Please wait a few minutes and try again.", keyFn: (req) => "agentpair:" + req.ip });
 
 // Agent state for the Send Queue strip: on/off, caps, how many sent today, what's waiting.
 app.get("/api/outreach/agent/status", requireUser, async (req, res) => {
@@ -1266,7 +1285,7 @@ app.post("/api/outreach/agent/enable", requireUser, async (req, res) => {
 // Hand the worker its next batch. The worker sends its OWN local hour/day — the recruiter's
 // working window is what matters, and this server may be in another timezone.
 // Body: { leaseId, localHour, localDay }. Always 200: an empty batch with a reason is normal.
-app.post("/api/outreach/agent/lease", requireUser, async (req, res) => {
+app.post("/api/outreach/agent/lease", requireAgent, async (req, res) => {
   try {
     const b = req.body || {};
     const hour = Number.isInteger(b.localHour) ? b.localHour : new Date().getHours();
@@ -1280,7 +1299,7 @@ app.post("/api/outreach/agent/lease", requireUser, async (req, res) => {
 //   'halted'     LinkedIn wants a human           'unverified'  clicked Send, could not confirm
 // 'halted' and 'unverified' both stop the agent; 'unverified' also marks the row sent, so an
 // ambiguous send is never automatically repeated.
-app.post("/api/outreach/agent/report/:id", requireUser, async (req, res) => {
+app.post("/api/outreach/agent/report/:id", requireAgent, async (req, res) => {
   try {
     const b = req.body || {};
     if (!["sent", "failed", "halted", "unverified"].includes(String(b.result))) {
@@ -1295,7 +1314,7 @@ app.post("/api/outreach/agent/report/:id", requireUser, async (req, res) => {
 // What the worker should look out for while reading LinkedIn: the people this user reached out
 // to (it reports only THEIR conversations), and the invitations still waiting to be accepted.
 // Body: { localHour, localDay }. Empty lists outside the window or while the agent is off.
-app.post("/api/outreach/agent/watch", requireUser, async (req, res) => {
+app.post("/api/outreach/agent/watch", requireAgent, async (req, res) => {
   try {
     const b = req.body || {};
     const hour = Number.isInteger(b.localHour) ? b.localHour : new Date().getHours();
@@ -1306,21 +1325,21 @@ app.post("/api/outreach/agent/watch", requireUser, async (req, res) => {
 
 // Conversations the worker read. Body: { threads: [{ threadKey, threadUrl, name, profileUrl,
 // messages: [{ from: 'them'|'me', text }] }] }. Threads matching no prospect are dropped.
-app.post("/api/outreach/agent/inbox", requireUser, async (req, res) => {
+app.post("/api/outreach/agent/inbox", requireAgent, async (req, res) => {
   try {
     res.json(await liAgent.recordInbox(req.userId, (req.body || {}).threads));
   } catch (e) { res.status(500).json({ error: { message: "Could not store the conversations." } }); }
 });
 
 // Invitations the worker saw accepted. Body: { handles: ["jane-doe-123", ...] }.
-app.post("/api/outreach/agent/accepted", requireUser, async (req, res) => {
+app.post("/api/outreach/agent/accepted", requireAgent, async (req, res) => {
   try {
     res.json(await liAgent.markAccepted(req.userId, (req.body || {}).handles));
   } catch (e) { res.status(500).json({ error: { message: "Could not record the acceptances." } }); }
 });
 
 // The accepted person's whole profile page, copied by the worker. Body: { handle, text }.
-app.post("/api/outreach/agent/profile", requireUser, async (req, res) => {
+app.post("/api/outreach/agent/profile", requireAgent, async (req, res) => {
   try {
     res.json(await liAgent.recordProfile(req.userId, req.body || {}));
   } catch (e) { res.status(500).json({ error: { message: "Could not store the profile." } }); }
@@ -1343,14 +1362,14 @@ app.get("/api/outreach/agent/copy-request/:id", requireUser, async (req, res) =>
 });
 
 // The worker: profiles someone asked it to copy → { items: [{ id, handle }] }.
-app.post("/api/outreach/agent/copies", requireUser, async (req, res) => {
+app.post("/api/outreach/agent/copies", requireAgent, async (req, res) => {
   try {
     res.json(await liAgent.leaseCopies(req.userId));
   } catch (e) { res.status(500).json({ error: { message: "Could not load copy requests." } }); }
 });
 
 // The worker: one copied profile. Body: { text } or { error } or { halt }.
-app.post("/api/outreach/agent/copies/:id", requireUser, async (req, res) => {
+app.post("/api/outreach/agent/copies/:id", requireAgent, async (req, res) => {
   try {
     const r = await liAgent.finishCopy(req.userId, String(req.params.id), req.body || {});
     if (!r) return res.status(404).json({ error: { message: "Not found." } });
@@ -1359,11 +1378,72 @@ app.post("/api/outreach/agent/copies/:id", requireUser, async (req, res) => {
 });
 
 // The worker hit a captcha / checkpoint / limit while reading (not sending). Body: { reason }.
-app.post("/api/outreach/agent/halt", requireUser, async (req, res) => {
+app.post("/api/outreach/agent/halt", requireAgent, async (req, res) => {
   try {
     await liAgent.halt(req.userId, String((req.body || {}).reason || "LinkedIn asked for a human.").slice(0, 300));
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: { message: "Could not stop the agent." } }); }
+});
+
+// The worker checks in about every 15 seconds. Body: { worker: { version, host, browser, state,
+// activity, linkedin: { name, handle }, lastInboxAt, lastAcceptAt, startedAt }, events: [{ at,
+// level, text }] } → { enabled, dryRun, haltReason, limits, command }.
+app.post("/api/outreach/agent/heartbeat", requireAgent, async (req, res) => {
+  try {
+    const b = req.body || {};
+    res.json(await liAgent.heartbeat(req.userId, { worker: b.worker, events: b.events, device: req.agentDevice }));
+  } catch (e) { res.status(500).json({ error: { message: "Could not record the check-in." } }); }
+});
+
+// A PC trades the code shown on the LinkedIn agent page for its device token. No sign-in: the
+// code is the proof. Body: { code, name } → { token, email, name }.
+app.post("/api/outreach/agent/pair/claim", pairLimiter, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const r = await liAgent.claimPairCode({ code: b.code, name: b.name });
+    if (!r) return res.status(400).json({ error: { message: "That code is wrong or has expired. Make a new one on the LinkedIn agent page." } });
+    res.json({ token: r.token, email: r.email, name: r.name });
+  } catch (e) { res.status(500).json({ error: { message: "Could not connect this PC." } }); }
+});
+
+// ─────────────── LinkedIn agent (controls, in Karma Connect) ────────
+// Settings and dry run. Body: { settings?: {...}, dryRun?: boolean } → status.
+app.put("/api/outreach/agent/settings", requireUser, async (req, res) => {
+  try {
+    const b = req.body || {};
+    res.json(await liAgent.saveSettings(req.userId, { settings: b.settings, dryRun: b.dryRun }));
+  } catch (e) { res.status(500).json({ error: { message: "Could not save the settings." } }); }
+});
+
+// Ask the worker to do something on its next check-in. Body: { command } — one of
+// check_inbox, check_accepts, linkedin_login → status.
+app.post("/api/outreach/agent/command", requireUser, async (req, res) => {
+  try {
+    res.json(await liAgent.setCommand(req.userId, String((req.body || {}).command || "")));
+  } catch (e) { res.status(400).json({ error: { message: (e && e.message) || "Could not send the command." } }); }
+});
+
+// A one-time code for connecting a PC (valid 15 minutes) → { code, expiresAt }.
+app.post("/api/outreach/agent/pair", requireUser, async (req, res) => {
+  try {
+    res.json(await liAgent.createPairCode(req.userId));
+  } catch (e) { res.status(500).json({ error: { message: "Could not make a code." } }); }
+});
+
+// Disconnect a paired PC: its token stops working at once.
+app.post("/api/outreach/agent/devices/:id/revoke", requireUser, async (req, res) => {
+  try {
+    const d = await liAgent.revokeDevice(req.userId, String(req.params.id));
+    if (!d) return res.status(404).json({ error: { message: "PC not found." } });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: { message: "Could not disconnect the PC." } }); }
+});
+
+// The activity log, newest first → { events: [{ id, at, level, text }] }.
+app.get("/api/outreach/agent/events", requireUser, async (req, res) => {
+  try {
+    res.json({ events: await liAgent.listEvents(req.userId, req.query.limit) });
+  } catch (e) { res.status(500).json({ error: { message: "Could not load the activity log." } }); }
 });
 
 // ─────────────────────── LinkedIn replies (Send Queue) ──────────────

@@ -179,3 +179,55 @@ describe("agent-bundle.buildAgentZip", () => {
     expect(zip.toString("latin1")).not.toContain(".profile");
   });
 });
+
+// Each user sets their own limits on the LinkedIn agent page. Whatever they type, the agent
+// must stay inside BOUNDS — these ceilings are what keep the LinkedIn account safe.
+const { cleanSettings, limitsFor, BOUNDS } = require("./linkedin-agent.cjs");
+
+describe("linkedin-agent settings", () => {
+  it("no setting goes past its ceiling or below its floor", () => {
+    const L = limitsFor({ settings: { perDay: 9999, perHour: -5, invitesPerWeek: 9999, minGapSec: 1, copiesPerDay: 0 } });
+    expect(L.perDay).toBe(BOUNDS.perDay[1]);
+    expect(L.perHour).toBe(BOUNDS.perHour[0]);
+    expect(L.invitesPerWeek).toBe(BOUNDS.invitesPerWeek[1]);
+    expect(L.minGapSec).toBe(BOUNDS.minGapSec[0]);
+    expect(L.copiesPerDay).toBe(BOUNDS.copiesPerDay[0]);
+  });
+
+  it("keeps the limits consistent with each other", () => {
+    const L = limitsFor({ settings: { perDay: 5, perHour: 12, invitesPerDay: 25, invitesPerWeek: 10, minGapSec: 300, maxGapSec: 60, windowStart: 18, windowEnd: 9 } });
+    expect(L.perHour).toBe(5);
+    expect(L.invitesPerDay).toBe(10);
+    expect(L.maxGapSec).toBe(300);
+    expect(L.windowEnd).toBeGreaterThan(L.windowStart);
+  });
+
+  it("drops unknown keys and junk values", () => {
+    expect(cleanSettings({ perDay: "abc", batch: 50, leaseMin: 1, weekdaysOnly: "no", windowStart: 0 })).toEqual({ windowStart: 0 });
+  });
+
+  it("no settings means the defaults", () => {
+    expect(limitsFor({ settings: {} }).perDay).toBe(LIMITS.perDay);
+    expect(limitsFor(null).invitesPerDay).toBe(LIMITS.invitesPerDay);
+  });
+
+  it("a user's own window decides", () => {
+    const L = limitsFor({ settings: { windowStart: 0, windowEnd: 24, weekdaysOnly: false } });
+    expect(inWindow(3, 0, L)).toBe(true);
+    expect(inWindow(3, 0)).toBe(false);
+  });
+});
+
+describe("agent download", () => {
+  // agent/.kc-agent.json is this PC's key to Karma Connect; it must never ship in the zip.
+  it("never includes the device key, lock or log", () => {
+    const z = buildAgentZip({ baseUrl: "https://example.test" });
+    const names = [];
+    for (let i = z.indexOf("PK\x01\x02", 0, "latin1"); i >= 0; i = z.indexOf("PK\x01\x02", i + 4, "latin1")) {
+      const n = z.readUInt16LE(i + 28);
+      names.push(z.slice(i + 46, i + 46 + n).toString("utf8"));
+    }
+    expect(names.length).toBeGreaterThan(5);
+    expect(names.some((n) => /kc-agent|\.agent\.lock|agent\.log/.test(n))).toBe(false);
+  });
+});

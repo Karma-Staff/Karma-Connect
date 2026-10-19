@@ -12,6 +12,9 @@ export default defineConfig({
   server: {
     port: 3000,
     open: true,
+    // The LinkedIn agent's browser profile locks its own cache files while Edge is open, and
+    // watching them crashed the dev server (EBUSY). Nothing in agent/ is client code anyway.
+    watch: { ignored: ['**/agent/**'] },
     proxy: {
       '/api': { target: API_TARGET, changeOrigin: true },
       // Karma Leads is served by Express from leads/public (no build step), so in

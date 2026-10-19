@@ -54,9 +54,11 @@ async function open() {
   const order = want === "chromium" ? [null] : [want, "msedge", "chrome", null];
 
   let ctx = null;
+  let used = "";
   for (const channel of order) {
     try {
       ctx = await chromium.launchPersistentContext(PROFILE_DIR, channel ? { ...opts, channel } : opts);
+      used = channel || "chromium";
       console.log("Browser: " + (channel || "bundled Chromium"));
       break;
     } catch (e) {
@@ -67,7 +69,23 @@ async function open() {
   ctx.setDefaultTimeout(NAV_TIMEOUT);
   ctx.setDefaultNavigationTimeout(NAV_TIMEOUT);
   const page = ctx.pages()[0] || (await ctx.newPage());
-  return { ctx, page };
+  return { ctx, page, browser: used };
+}
+
+// Which LinkedIn account this profile is signed in to: /in/me/ redirects to your own profile.
+// Shown in Karma Connect so nobody sends from the wrong account by accident.
+async function whoAmI(page) {
+  await page.goto("https://www.linkedin.com/in/me/", { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(2500);
+  if (LOGGED_OUT_RE.test(page.url())) return null;
+  const m = page.url().match(/linkedin\.com\/in\/([^/?#]+)/i);
+  let handle = "";
+  try { handle = m ? decodeURIComponent(m[1]) : ""; } catch (e) { handle = m ? m[1] : ""; }
+  // The tab title is "(3) Jane Doe | LinkedIn" — steadier than any heading selector.
+  const title = await page.title().catch(() => "");
+  let name = title.replace(/^\(\d+\+?\)\s*/, "").split(" | ")[0].trim();
+  if (!name || /^linkedin$/i.test(name)) name = await page.locator("h1").first().innerText({ timeout: 4000 }).then((t) => t.trim()).catch(() => "");
+  return { handle: handle === "me" ? "" : handle, name: name.slice(0, 120) };
 }
 
 // Is this profile signed in? Navigates to the feed and looks at where it landed.
@@ -133,4 +151,4 @@ async function haltReason(page) {
   return "";
 }
 
-module.exports = { open, isSignedIn, login, haltReason, PROFILE_DIR, HEADLESS };
+module.exports = { open, isSignedIn, login, haltReason, whoAmI, PROFILE_DIR, HEADLESS };

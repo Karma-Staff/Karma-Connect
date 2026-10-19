@@ -68,6 +68,34 @@ export async function setAgentEnabled(enabled) {
   return d.status;
 }
 
+// Your own limits and hours ({ perDay, perHour, invitesPerDay, invitesPerWeek, minGapSec,
+// maxGapSec, windowStart, windowEnd, weekdaysOnly, copiesPerDay, inboxEveryMin, acceptEveryMin })
+// and/or dry run. The server keeps each inside its safe range. Resolves with the new status.
+export async function saveAgentSettings({ settings, dryRun } = {}) {
+  return api("/api/outreach/agent/settings", { method: "PUT", body: { settings, dryRun } });
+}
+
+// Ask the agent's PC to do something on its next check-in (about 15 seconds):
+// "check_inbox", "check_accepts" or "linkedin_login". Resolves with the new status.
+export async function agentCommand(command) {
+  return api("/api/outreach/agent/command", { method: "POST", body: { command } });
+}
+
+// A one-time code for connecting a PC → { code, expiresAt }.
+export async function agentPairCode() {
+  return api("/api/outreach/agent/pair", { method: "POST" });
+}
+
+export async function revokeAgentDevice(id) {
+  return api("/api/outreach/agent/devices/" + encodeURIComponent(id) + "/revoke", { method: "POST" });
+}
+
+// The activity log, newest first: [{ id, at, level, text }].
+export async function agentEvents(limit = 150) {
+  const d = await api("/api/outreach/agent/events?limit=" + limit);
+  return d.events || [];
+}
+
 // Download the agent as a zip. The endpoint needs the Bearer token, so a plain <a download>
 // can't fetch it — we pull the blob here and click a temporary link at it instead.
 export async function downloadAgent() {
@@ -99,7 +127,7 @@ export async function copyProfileWithAgent(url, prospectId, onWait = () => {}) {
     const r = await api("/api/outreach/agent/copy-request/" + encodeURIComponent(id));
     if (r.status === "done") return r.text || "";
     if (r.status === "failed") throw new Error(r.error || "The agent couldn't copy that profile.");
-    if (!r.agentOn) throw new Error("The LinkedIn agent is off. Turn it on in Send Queue (Start agent) and make sure it's running on your computer.");
+    if (!r.agentOn) throw new Error("The LinkedIn agent is off. Press Start on the LinkedIn agent page, and make sure its PC is on.");
     onWait(Math.round((Date.now() - started) / 1000), r.status);
   }
 }

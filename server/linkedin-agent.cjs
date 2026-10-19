@@ -31,11 +31,13 @@
 //
 // Nothing here talks to LinkedIn — it only decides what the worker is allowed to do next.
 // Requires db.cjs, which reads env at load: require this AFTER the .env loader has run.
+const crypto = require("node:crypto");
 const { dbOn, q, logActivity } = require("./db.cjs");
 
 // ── Caps ────────────────────────────────────────────────────────────
 // Conservative on purpose. These protect the user's account, not our throughput; raising them
-// raises their ban risk, so they're env-tunable but default low.
+// raises their ban risk, so they're env-tunable but default low. Each user can change their own
+// in Karma Connect (LinkedIn agent → Settings), but never past BOUNDS.
 const num = (v, d) => { const n = parseInt(v, 10); return Number.isFinite(n) && n > 0 ? n : d; };
 const LIMITS = {
   perDay:      num(process.env.LI_AGENT_PER_DAY, 25),      // messages + replies per user per rolling 24h
@@ -50,7 +52,42 @@ const LIMITS = {
   windowEnd:   num(process.env.LI_AGENT_WINDOW_END, 17),   // local hour, exclusive
   weekdaysOnly: String(process.env.LI_AGENT_WEEKDAYS_ONLY || "true") !== "false",
   copiesPerDay: num(process.env.LI_AGENT_COPIES_PER_DAY, 60), // profile pages copied on request, per rolling 24h
+  inboxEveryMin:  num(process.env.LI_AGENT_INBOX_MIN, 15),   // how often the worker reads the inbox
+  acceptEveryMin: num(process.env.LI_AGENT_ACCEPT_MIN, 60),  // ...and the new-connections list
 };
+
+// What a user may set for themselves, and the hard range for each. The ceilings sit below
+// LinkedIn's own thresholds; nothing a user types can push the agent past them.
+const BOUNDS = {
+  perDay: [1, 40], perHour: [1, 12], invitesPerDay: [1, 25], invitesPerWeek: [1, 100],
+  minGapSec: [30, 600], maxGapSec: [30, 900], windowStart: [0, 23], windowEnd: [1, 24],
+  copiesPerDay: [1, 100], inboxEveryMin: [5, 120], acceptEveryMin: [15, 480],
+};
+const clamp = (v, [lo, hi]) => Math.min(hi, Math.max(lo, Math.round(v)));
+
+// Keep only known keys, each inside its bounds. Anything else is dropped, not rejected, so an
+// older page posting a field that no longer exists still saves the rest.
+function cleanSettings(input) {
+  const s = {};
+  const src = input && typeof input === "object" ? input : {};
+  for (const [k, range] of Object.entries(BOUNDS)) {
+    const n = Number(src[k]);
+    if (src[k] !== undefined && src[k] !== null && src[k] !== "" && Number.isFinite(n)) s[k] = clamp(n, range);
+  }
+  if (typeof src.weekdaysOnly === "boolean") s.weekdaysOnly = src.weekdaysOnly;
+  return s;
+}
+
+// This user's limits: the defaults, their saved settings on top, then made consistent.
+function limitsFor(state) {
+  const L = { ...LIMITS, ...cleanSettings(state && state.settings) };
+  for (const [k, range] of Object.entries(BOUNDS)) L[k] = clamp(L[k], range);
+  if (L.maxGapSec < L.minGapSec) L.maxGapSec = L.minGapSec;
+  if (L.perHour > L.perDay) L.perHour = L.perDay;
+  if (L.invitesPerDay > L.invitesPerWeek) L.invitesPerDay = L.invitesPerWeek;
+  if (L.windowEnd <= L.windowStart) L.windowEnd = Math.min(24, L.windowStart + 1);
+  return L;
+}
 const ACTIONS = ["invite", "message", "reply"];
 const NOTE_MAX = 300; // LinkedIn's limit on an invitation note
 
@@ -143,6 +180,35 @@ async function ensureAgentSchema() {
       started_at  timestamptz,
       done_at     timestamptz)`);
     await q("create index if not exists linkedin_copy_user_idx on linkedin_copy (user_id, status, created_at)");
+    // Run from Karma Connect: the user's own settings, dry run, what the worker last said about
+    // itself (heartbeat), and one pending command for it ("check the inbox now", "sign in").
+    await q("alter table linkedin_agent add column if not exists settings jsonb not null default '{}'::jsonb");
+    await q("alter table linkedin_agent add column if not exists dry_run boolean not null default false");
+    await q("alter table linkedin_agent add column if not exists worker jsonb");
+    await q("alter table linkedin_agent add column if not exists command text");
+    await q("alter table linkedin_agent add column if not exists command_at timestamptz");
+    // A PC paired to this user. The worker signs in with the device token, never a password;
+    // only hashes are stored, and the token opens the worker's own endpoints and nothing else.
+    await q(`create table if not exists linkedin_agent_device (
+      id              uuid primary key default gen_random_uuid(),
+      user_id         uuid not null references users (id) on delete cascade,
+      name            text,
+      pair_code_hash  text,
+      pair_expires_at timestamptz,
+      token_hash      text unique,
+      created_at      timestamptz not null default now(),
+      paired_at       timestamptz,
+      last_used_at    timestamptz,
+      revoked_at      timestamptz)`);
+    await q("create index if not exists linkedin_agent_device_user_idx on linkedin_agent_device (user_id)");
+    // What the agent did, newest first, for the activity log in Karma Connect.
+    await q(`create table if not exists linkedin_agent_event (
+      id      bigserial primary key,
+      user_id uuid not null references users (id) on delete cascade,
+      at      timestamptz not null default now(),
+      level   text not null default 'info',
+      text    text not null)`);
+    await q("create index if not exists linkedin_agent_event_user_idx on linkedin_agent_event (user_id, at desc)");
   } catch (e) { console.error("ensureAgentSchema:", e.message); }
 }
 
@@ -166,6 +232,7 @@ async function setEnabled(userId, enabled) {
     [userId, !!enabled],
   );
   logActivity(userId, enabled ? "li_agent_started" : "li_agent_stopped", {});
+  await addEvents(userId, [{ text: enabled ? "Started from Karma Connect." : "Paused from Karma Connect." }]);
   return rows[0];
 }
 
@@ -179,6 +246,7 @@ async function halt(userId, reason) {
     [userId, String(reason || "Stopped").slice(0, 300)],
   );
   logActivity(userId, "li_agent_halted", { detail: String(reason || "").slice(0, 80) });
+  await addEvents(userId, [{ level: "error", text: "Stopped: " + String(reason || "Stopped") }]);
   return rows[0];
 }
 
@@ -205,33 +273,33 @@ async function sentCounts(userId) {
 
 // Is `now` inside the allowed sending window? The worker passes its own local hour/day, because
 // the server may well be in a different timezone than the recruiter.
-function inWindow(localHour, localDay) {
-  if (LIMITS.weekdaysOnly && (localDay === 0 || localDay === 6)) return false;
-  return localHour >= LIMITS.windowStart && localHour < LIMITS.windowEnd;
+function inWindow(localHour, localDay, L = LIMITS) {
+  if (L.weekdaysOnly && (localDay === 0 || localDay === 6)) return false;
+  return localHour >= L.windowStart && localHour < L.windowEnd;
 }
 
 // The single "may I act right now, and how much" decision. Pure apart from the counts it's
 // handed, so it unit-tests without a database. `msg` is how many messages/replies may go out
 // in this batch, `inv` how many invitations; `allowed` is the two together (never over batch).
-function decide({ state, counts, localHour, localDay, now = Date.now() }) {
+function decide({ state, counts, localHour, localDay, now = Date.now(), limits: L = LIMITS }) {
   const none = { allowed: 0, msg: 0, inv: 0 };
   if (!state || !state.enabled) return { ok: false, reason: state && state.halt_reason ? state.halt_reason : "The agent is off.", ...none };
-  if (!inWindow(localHour, localDay)) {
-    return { ok: false, reason: `Outside the sending window (${LIMITS.windowStart}:00–${LIMITS.windowEnd}:00${LIMITS.weekdaysOnly ? ", weekdays" : ""}).`, ...none };
+  if (!inWindow(localHour, localDay, L)) {
+    return { ok: false, reason: `Outside the sending window (${L.windowStart}:00–${L.windowEnd}:00${L.weekdaysOnly ? ", weekdays" : ""}).`, ...none };
   }
   if (counts.lastSent) {
     const gap = (now - new Date(counts.lastSent).getTime()) / 1000;
-    if (gap < LIMITS.minGapSec) return { ok: false, reason: `Too soon — ${Math.ceil(LIMITS.minGapSec - gap)}s to go.`, ...none, retryInSec: Math.ceil(LIMITS.minGapSec - gap) };
+    if (gap < L.minGapSec) return { ok: false, reason: `Too soon — ${Math.ceil(L.minGapSec - gap)}s to go.`, ...none, retryInSec: Math.ceil(L.minGapSec - gap) };
   }
-  const msg = Math.max(0, Math.min(LIMITS.batch, LIMITS.perDay - (counts.day || 0), LIMITS.perHour - (counts.hour || 0)));
-  const inv = Math.max(0, Math.min(LIMITS.batch, LIMITS.invitesPerDay - (counts.invDay || 0), LIMITS.invitesPerWeek - (counts.invWeek || 0)));
-  const allowed = Math.min(LIMITS.batch, msg + inv);
+  const msg = Math.max(0, Math.min(L.batch, L.perDay - (counts.day || 0), L.perHour - (counts.hour || 0)));
+  const inv = Math.max(0, Math.min(L.batch, L.invitesPerDay - (counts.invDay || 0), L.invitesPerWeek - (counts.invWeek || 0)));
+  const allowed = Math.min(L.batch, msg + inv);
   if (allowed > 0) return { ok: true, reason: "", allowed, msg, inv };
   const why = [];
-  if ((counts.day || 0) >= LIMITS.perDay) why.push(`Daily message cap reached (${LIMITS.perDay}).`);
-  else if ((counts.hour || 0) >= LIMITS.perHour) why.push(`Hourly message cap reached (${LIMITS.perHour}).`);
-  if ((counts.invWeek || 0) >= LIMITS.invitesPerWeek) why.push(`Weekly invitation cap reached (${LIMITS.invitesPerWeek}).`);
-  else if ((counts.invDay || 0) >= LIMITS.invitesPerDay) why.push(`Daily invitation cap reached (${LIMITS.invitesPerDay}).`);
+  if ((counts.day || 0) >= L.perDay) why.push(`Daily message cap reached (${L.perDay}).`);
+  else if ((counts.hour || 0) >= L.perHour) why.push(`Hourly message cap reached (${L.perHour}).`);
+  if ((counts.invWeek || 0) >= L.invitesPerWeek) why.push(`Weekly invitation cap reached (${L.invitesPerWeek}).`);
+  else if ((counts.invDay || 0) >= L.invitesPerDay) why.push(`Daily invitation cap reached (${L.invitesPerDay}).`);
   return { ok: false, reason: why.join(" ") || "No headroom left under the caps.", ...none };
 }
 
@@ -282,22 +350,24 @@ async function lease(userId, { leaseId, localHour, localDay } = {}) {
   if (!dbOn) return { items: [], wait: 60, reason: "No database configured." };
   await reclaimStale();
   const state = await getState(userId);
+  const L = limitsFor(state);
   const counts = await sentCounts(userId);
-  const verdict = decide({ state, counts, localHour, localDay });
+  const verdict = decide({ state, counts, localHour, localDay, limits: L });
   if (!verdict.ok) {
-    return { items: [], wait: verdict.retryInSec || 300, reason: verdict.reason, limits: LIMITS, counts };
+    return { items: [], wait: verdict.retryInSec || 300, reason: verdict.reason, limits: L, counts, dryRun: !!state.dry_run };
   }
-  const expires = new Date(Date.now() + LIMITS.leaseMin * 60000);
+  const expires = new Date(Date.now() + L.leaseMin * 60000);
   const msgs = await claim(userId, ["reply", "message"], verdict.msg, leaseId, expires);
   const invs = await claim(userId, ["invite"], Math.min(verdict.inv, verdict.allowed - msgs.length), leaseId, expires);
   const rows = [...msgs, ...invs];
   await q("update linkedin_agent set last_seen_at = now(), updated_at = now() where user_id = $1", [userId]);
   return {
     items: rows,
-    wait: rows.length ? LIMITS.minGapSec : 300,
+    wait: rows.length ? L.minGapSec : 300,
     reason: rows.length ? "" : "Nothing approved and due in the queue.",
-    limits: LIMITS,
+    limits: L,
     counts,
+    dryRun: !!state.dry_run,
   };
 }
 
@@ -396,7 +466,7 @@ async function watch(userId, { localHour, localDay } = {}) {
   if (!dbOn) return { ok: false, reason: "No database configured.", people: [], pendingInvites: [] };
   const state = await getState(userId);
   if (!state.enabled) return { ok: false, reason: state.halt_reason || "The agent is off.", people: [], pendingInvites: [], needProfile: [] };
-  if (!inWindow(localHour, localDay)) return { ok: false, reason: "Outside the window.", people: [], pendingInvites: [], needProfile: [] };
+  if (!inWindow(localHour, localDay, limitsFor(state))) return { ok: false, reason: "Outside the window.", people: [], pendingInvites: [], needProfile: [] };
   const { rows } = await q(
     `select distinct on (coalesce(linkedin_url, lead_label)) linkedin_url, lead_label, action, invite_state
        from outreach_queue
@@ -686,7 +756,7 @@ async function requestCopy(userId, { url, prospectId } = {}) {
 async function getCopy(userId, id) {
   await q(
     `update linkedin_copy set status = 'failed', done_at = now(),
-       error = 'The agent didn''t pick this up. Is it running on your computer? (Send Queue → Start agent, then npm run agent.)'
+       error = 'The agent didn''t pick this up. Is its PC on and connected? Check the LinkedIn agent page.'
      where user_id = $1 and status = 'pending' and created_at < now() - ($2 || ' minutes')::interval`, [userId, String(COPY_WAIT_MIN)]);
   const { rows } = await q("select id, url, status, text, error from linkedin_copy where id = $1 and user_id = $2", [id, userId]);
   const r = rows[0];
@@ -701,10 +771,11 @@ async function leaseCopies(userId) {
   const state = await getState(userId);
   if (!state.enabled) return { items: [], reason: state.halt_reason || "The agent is off." };
   await q("update linkedin_copy set status = 'pending', started_at = null where user_id = $1 and status = 'copying' and started_at < now() - interval '5 minutes'", [userId]);
+  const L = limitsFor(state);
   const { rows: c } = await q("select count(*) as n from linkedin_copy where user_id = $1 and status = 'done' and done_at > now() - interval '24 hours'", [userId]);
-  if (Number(c[0].n) >= LIMITS.copiesPerDay) {
+  if (Number(c[0].n) >= L.copiesPerDay) {
     await q(`update linkedin_copy set status = 'failed', done_at = now(), error = $2 where user_id = $1 and status = 'pending'`,
-      [userId, `Daily limit of ${LIMITS.copiesPerDay} profile copies reached — paste this one by hand, or try tomorrow.`]);
+      [userId, `Daily limit of ${L.copiesPerDay} profile copies reached — paste this one by hand, or try tomorrow.`]);
     return { items: [], reason: "Daily copy limit reached." };
   }
   const { rows } = await q(
@@ -727,10 +798,199 @@ async function finishCopy(userId, id, { text, error, halt: haltMsg } = {}) {
   return rows[0] || null;
 }
 
-// What the Send Queue UI shows in its agent strip.
+// ── Run from Karma Connect: settings, dry run, commands, heartbeat ──
+// Settings the user saves on the LinkedIn agent page. Only known keys inside BOUNDS are kept.
+async function saveSettings(userId, { settings, dryRun } = {}) {
+  await getState(userId);
+  if (settings !== undefined) {
+    const clean = cleanSettings(settings);
+    await q("update linkedin_agent set settings = $2::jsonb, updated_at = now() where user_id = $1", [userId, JSON.stringify(clean)]);
+    await addEvents(userId, [{ text: "Settings changed in Karma Connect." }]);
+  }
+  if (typeof dryRun === "boolean") {
+    await q("update linkedin_agent set dry_run = $2, updated_at = now() where user_id = $1", [userId, dryRun]);
+    await addEvents(userId, [{ text: dryRun ? "Dry run on: the agent types everything but never presses Send." : "Dry run off: the agent sends for real." }]);
+  }
+  return status(userId);
+}
+
+// One thing for the worker to do on its next check-in (about every 15 seconds). A newer
+// command replaces an older one that hasn't been picked up; a stale one is ignored.
+const COMMANDS = {
+  check_inbox: "Check the LinkedIn inbox now.",
+  check_accepts: "Check for accepted invitations now.",
+  linkedin_login: "Open LinkedIn on the PC to sign in.",
+};
+const COMMAND_TTL_MIN = 10;
+async function setCommand(userId, command) {
+  if (!COMMANDS[command]) throw new Error("Unknown command.");
+  await getState(userId);
+  await q("update linkedin_agent set command = $2, command_at = now(), updated_at = now() where user_id = $1", [userId, command]);
+  await addEvents(userId, [{ text: "Asked from Karma Connect: " + COMMANDS[command] }]);
+  return status(userId);
+}
+
+// The worker checks in. It tells us about itself (which PC, which LinkedIn account, what it's
+// doing) and any log lines since last time; we tell it whether to work, whether it's a dry run,
+// the limits, and any pending command — handed over once, then cleared.
+const WORKER_STATES = ["idle", "working", "paused", "signing_in", "signed_out", "starting"];
+function cleanWorker(w) {
+  const s = (v, n) => (v == null ? null : String(v).slice(0, n));
+  const li = (w && w.linkedin) || {};
+  return {
+    version: s(w && w.version, 20),
+    host: s(w && w.host, 80),
+    browser: s(w && w.browser, 30),
+    state: WORKER_STATES.includes(w && w.state) ? w.state : "idle",
+    activity: s(w && w.activity, 200),
+    linkedin: li.handle || li.name ? { name: s(li.name, 120), handle: s(li.handle, 120) } : null,
+    lastInboxAt: s(w && w.lastInboxAt, 40),
+    lastAcceptAt: s(w && w.lastAcceptAt, 40),
+    startedAt: s(w && w.startedAt, 40),
+  };
+}
+async function heartbeat(userId, { worker, events, device } = {}) {
+  if (!dbOn) return { enabled: false, dryRun: false, limits: LIMITS, command: null };
+  await getState(userId);
+  const info = { ...cleanWorker(worker), device: device ? { id: device.id, name: device.name } : null };
+  const { rows } = await q(
+    `with prev as (select command, command_at from linkedin_agent where user_id = $1 for update)
+     update linkedin_agent a set worker = $2::jsonb, last_seen_at = now(), command = null, command_at = null, updated_at = now()
+       from prev where a.user_id = $1
+     returning a.*, prev.command as old_command, prev.command_at as old_command_at`,
+    [userId, JSON.stringify(info)],
+  );
+  const st = rows[0];
+  await addEvents(userId, events);
+  const fresh = st.old_command && st.old_command_at && Date.now() - new Date(st.old_command_at).getTime() < COMMAND_TTL_MIN * 60000;
+  return {
+    enabled: !!st.enabled,
+    dryRun: !!st.dry_run,
+    haltReason: st.halt_reason || null,
+    limits: limitsFor(st),
+    command: fresh ? st.old_command : null,
+  };
+}
+
+// ── Activity log ────────────────────────────────────────────────────
+const EVENT_KEEP_DAYS = 14;
+async function addEvents(userId, events) {
+  const list = (Array.isArray(events) ? events : []).slice(0, 50)
+    .map((e) => ({ level: ["info", "warn", "error", "success"].includes(e && e.level) ? e.level : "info",
+      text: String((e && e.text) || "").trim().slice(0, 400), at: e && e.at && !isNaN(Date.parse(e.at)) ? new Date(e.at) : new Date() }))
+    .filter((e) => e.text)
+    // A worker clock that's off can't plant entries far in the future or the past.
+    .map((e) => (Math.abs(e.at.getTime() - Date.now()) > 3600000 ? { ...e, at: new Date() } : e));
+  if (!list.length || !dbOn) return 0;
+  await q(
+    `insert into linkedin_agent_event (user_id, at, level, text)
+       select $1, x.at, x.level, x.text from jsonb_to_recordset($2::jsonb) as x(at timestamptz, level text, text text)`,
+    [userId, JSON.stringify(list)],
+  );
+  if (Math.random() < 0.05) {
+    await q(`delete from linkedin_agent_event where user_id = $1 and at < now() - interval '${EVENT_KEEP_DAYS} days'`, [userId]).catch(() => {});
+  }
+  return list.length;
+}
+async function listEvents(userId, limit = 150) {
+  if (!dbOn) return [];
+  const { rows } = await q(
+    `select id, at, level, text from linkedin_agent_event where user_id = $1 order by at desc, id desc limit ${Math.min(500, Math.max(1, Number(limit) || 150))}`,
+    [userId],
+  );
+  return rows;
+}
+
+// ── Pairing a PC ────────────────────────────────────────────────────
+// Karma Connect shows a short code; the worker on the PC trades it for a long-lived device
+// token (`--pair CODE`). The code lasts 15 minutes and works once. Only SHA-256 hashes of the
+// code and the token are stored, so a database read can't be used to impersonate a PC.
+const sha = (v) => crypto.createHash("sha256").update(String(v)).digest("hex");
+const PAIR_TTL_MIN = 15;
+const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O, 1/I
+const normCode = (c) => String(c || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+function newCode() {
+  const b = crypto.randomBytes(8);
+  let s = "";
+  for (let i = 0; i < 8; i++) s += CODE_ALPHABET[b[i] % CODE_ALPHABET.length];
+  return s.slice(0, 4) + "-" + s.slice(4);
+}
+
+async function createPairCode(userId) {
+  // Unused codes from earlier attempts are cleared, so only the newest one works.
+  await q("delete from linkedin_agent_device where user_id = $1 and paired_at is null", [userId]);
+  const code = newCode();
+  const expires = new Date(Date.now() + PAIR_TTL_MIN * 60000);
+  await q("insert into linkedin_agent_device (user_id, pair_code_hash, pair_expires_at) values ($1,$2,$3)", [userId, sha(normCode(code)), expires]);
+  return { code, expiresAt: expires.toISOString() };
+}
+
+async function claimPairCode({ code, name } = {}) {
+  const c = normCode(code);
+  if (c.length !== 8) return null;
+  const token = "kca_" + crypto.randomBytes(32).toString("base64url");
+  const { rows } = await q(
+    `update linkedin_agent_device set token_hash = $2, pair_code_hash = null, pair_expires_at = null, paired_at = now(),
+         last_used_at = now(), name = $3
+       where pair_code_hash = $1 and paired_at is null and revoked_at is null and pair_expires_at > now()
+     returning id, user_id, name`,
+    [sha(c), sha(token), String(name || "PC").slice(0, 80)],
+  );
+  const d = rows[0];
+  if (!d) return null;
+  // The same PC connecting again replaces its old entry: the old key stops working.
+  await q(
+    `update linkedin_agent_device set revoked_at = now(), token_hash = null
+      where user_id = $1 and id <> $2 and name = $3 and revoked_at is null`,
+    [d.user_id, d.id, d.name],
+  );
+  const u = await q("select email from users where id = $1", [d.user_id]);
+  await addEvents(d.user_id, [{ level: "success", text: `PC "${d.name}" connected.` }]);
+  return { token, deviceId: d.id, name: d.name, email: (u.rows[0] || {}).email || "" };
+}
+
+// The device behind a worker's token, with its user — or null. Used by the worker-only routes.
+async function deviceForToken(token) {
+  const t = String(token || "");
+  if (!dbOn || !t.startsWith("kca_") || t.length < 40) return null;
+  const { rows } = await q(
+    `select d.id, d.name, d.user_id, d.last_used_at, u.* from linkedin_agent_device d join users u on u.id = d.user_id
+      where d.token_hash = $1 and d.revoked_at is null and d.paired_at is not null`,
+    [sha(t)],
+  );
+  const r = rows[0];
+  if (!r) return null;
+  if (!r.last_used_at || Date.now() - new Date(r.last_used_at).getTime() > 60000) {
+    q("update linkedin_agent_device set last_used_at = now() where id = $1", [r.id]).catch(() => {});
+  }
+  const { id: deviceId, name, user_id, last_used_at, ...user } = r;
+  return { device: { id: deviceId, name }, user: { ...user, id: user_id } };
+}
+
+async function listDevices(userId) {
+  if (!dbOn) return [];
+  const { rows } = await q(
+    `select id, name, paired_at, last_used_at from linkedin_agent_device
+      where user_id = $1 and paired_at is not null and revoked_at is null order by paired_at desc`,
+    [userId],
+  );
+  return rows;
+}
+
+async function revokeDevice(userId, id) {
+  const { rows } = await q(
+    "update linkedin_agent_device set revoked_at = now(), token_hash = null where id = $1 and user_id = $2 and revoked_at is null returning id, name",
+    [id, userId],
+  );
+  if (rows[0]) await addEvents(userId, [{ level: "warn", text: `PC "${rows[0].name || "PC"}" disconnected from Karma Connect.` }]);
+  return rows[0] || null;
+}
+
+// What the Send Queue strip and the LinkedIn agent page show.
 async function status(userId) {
   if (!dbOn) return { enabled: false, limits: LIMITS, counts: { day: 0, hour: 0, invDay: 0, invWeek: 0 }, queued: 0 };
   const state = await getState(userId);
+  const L = limitsFor(state);
   const counts = await sentCounts(userId);
   const { rows } = await q(
     `select count(*) filter (where status = 'approved' and not ${WAITING_SQL("o")}) as ready,
@@ -741,14 +1001,24 @@ async function status(userId) {
   );
   const inbox = await q("select count(*) filter (where needs_reply) as n from linkedin_inbox where user_id = $1", [userId]);
   const fu = await q("select count(*) as n from outreach_queue where user_id = $1 and action = 'invite' and followup_state in ('needs_draft','drafted')", [userId]);
+  const cp = await q("select count(*) as n from linkedin_copy where user_id = $1 and status = 'done' and done_at > now() - interval '24 hours'", [userId]);
+  const defaults = {};
+  for (const k of [...Object.keys(BOUNDS), "weekdaysOnly"]) defaults[k] = LIMITS[k];
   return {
     enabled: !!state.enabled,
     haltedAt: state.halted_at,
     haltReason: state.halt_reason,
     lastSeenAt: state.last_seen_at,
     lastSentAt: state.last_sent_at,
-    limits: LIMITS,
-    counts: { day: counts.day, hour: counts.hour, invDay: counts.invDay, invWeek: counts.invWeek },
+    dryRun: !!state.dry_run,
+    worker: state.worker || null,
+    pendingCommand: state.command || null,
+    settings: cleanSettings(state.settings),
+    defaults,
+    bounds: BOUNDS,
+    devices: await listDevices(userId),
+    limits: L,
+    counts: { day: counts.day, hour: counts.hour, invDay: counts.invDay, invWeek: counts.invWeek, copies: Number((cp.rows[0] || {}).n || 0) },
     ready: Number((rows[0] || {}).ready || 0),
     waiting: Number((rows[0] || {}).waiting || 0),
     inflight: Number((rows[0] || {}).inflight || 0),
@@ -763,5 +1033,8 @@ module.exports = {
   watch, markAccepted, recordInbox, listInbox, setHandled, saveDraft, queueReply, sendWithoutWaiting,
   recordProfile, listFollowups, saveFollowupDraft, queueFollowup, skipFollowup, needProfile,
   requestCopy, getCopy, leaseCopies, finishCopy,
+  saveSettings, setCommand, heartbeat, addEvents, listEvents, COMMANDS,
+  createPairCode, claimPairCode, deviceForToken, listDevices, revokeDevice,
+  cleanSettings, limitsFor, BOUNDS,
   handleOf, nameKey, WAITING_SQL, ACTIONS, NOTE_MAX,
 };

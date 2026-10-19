@@ -111,7 +111,7 @@ function zip(entries) {
 // Standalone: the download is its own npm project, so playwright is a real dependency here
 // (in the main repo it's optional, to keep it off the Render build) and the scripts point at
 // run.cjs in the same folder rather than agent/run.cjs.
-function packageJson() {
+function packageJson({ baseUrl }) {
   return (
     JSON.stringify(
       {
@@ -120,6 +120,7 @@ function packageJson() {
         private: true,
         description: "Local LinkedIn worker for Karma Connect — sends the messages you approved in the app.",
         scripts: {
+          pair: "node run.cjs --url " + baseUrl + " --pair",
           login: "node run.cjs --login",
           start: "node run.cjs",
           "dry-run": "node run.cjs --dry-run",
@@ -132,18 +133,21 @@ function packageJson() {
   );
 }
 
-// Prefilled with the caller's own server URL and login email — the two values people most often
-// get wrong. The password is never written into the bundle; they type it at run time.
-function setupMd({ baseUrl, email }) {
-  const who = email || "you@karmastaff.com";
+// Prefilled with the caller's own server URL. No password goes anywhere: the PC is paired with a
+// one-time code from the LinkedIn agent page, and keeps a device token that only the agent's own
+// endpoints accept.
+function setupMd({ baseUrl }) {
   const F = "```"; // fence, kept out of the template literal below
 
   return `# Run the Karma Connect LinkedIn agent
 
 This agent runs on **your machine**, not on the server. It opens your signed-in browser and does
-the LinkedIn work you already approved in Karma Connect: connection requests with your note,
-messages (a follow-up waits until they accept), and replies. Between sends it reads your inbox
-for replies from prospects, so AI can draft an answer in the Send Queue for you to approve.
+the LinkedIn work you approved in Karma Connect: connection requests with your note, messages
+(a follow-up waits until they accept), and replies. Between sends it reads your inbox for replies
+from prospects, so AI can draft an answer in the Send Queue for you to approve.
+
+Once it's set up, you control everything from Karma Connect → **LinkedIn agent**: start and
+pause, dry run, daily limits and hours, "check the inbox now", and signing in to LinkedIn.
 
 Your server: **${baseUrl}**
 
@@ -155,54 +159,29 @@ ${F}bash
 npm install
 ${F}
 
-## 2. Point it at your account
+## 2. Connect this PC
 
-**Windows (PowerShell)**
-
-${F}powershell
-$env:KC_BASE_URL = "${baseUrl}"
-$env:KC_EMAIL    = "${who}"
-$env:KC_PASSWORD = "your Karma Connect password"
-${F}
-
-**macOS / Linux**
+In Karma Connect open **LinkedIn agent → Connect a PC**. It shows a code like \`K7Q4-MZ2P\`
+(valid 15 minutes). Then here:
 
 ${F}bash
-export KC_BASE_URL="${baseUrl}"
-export KC_EMAIL="${who}"
-export KC_PASSWORD="your Karma Connect password"
+npm run pair -- K7Q4-MZ2P
 ${F}
 
-These last for the current terminal window only. Open a new one and you set them again.
+On Windows that's all: the agent starts in the background now and every time Windows starts.
+On macOS / Linux, run \`npm start\` and leave the window open.
 
-## 3. Sign in to LinkedIn, once
+## 3. Sign in to LinkedIn
 
-${F}bash
-npm run login
-${F}
+On the LinkedIn agent page press **Sign in to LinkedIn**. Edge opens on this PC: sign in with your
+LinkedIn **email and password**, not "Continue with Google", which refuses automated browsers.
+The window closes itself when you're done, and the session is reused for weeks.
 
-Edge opens. Sign in with your LinkedIn **email and password** — not "Continue with Google",
-which refuses to work inside an automated browser. The window closes itself when you're done,
-and the session is reused for weeks.
+## 4. Try it, then run it
 
-## 4. Try it without sending anything
-
-${F}bash
-npm run dry-run
-${F}
-
-This opens each profile, presses Connect or Message, types the note or message, then clears it
-and closes the window. Nothing is sent. It still reads your inbox and new connections, which is
-how you check those work too.
-
-## 5. Run it
-
-${F}bash
-npm start
-${F}
-
-Leave the window open. In Karma Connect, open **Send Queue** and press **Start agent** — the
-strip at the top turns to "Running" once this worker checks in. Closing the window stops it.
+Turn on **Dry run** on the LinkedIn agent page and press **Start**. The agent opens each profile,
+presses Connect or Message, types the note or message, then clears it: nothing is sent. The
+activity log on that page shows every step. Turn Dry run off when you're happy.
 
 ## Notes
 
@@ -210,21 +189,21 @@ strip at the top turns to "Running" once this worker checks in. Closing the wind
   writes or edits message content. Replies are drafted by AI in the app and still need your OK.
 - It only reports conversations with people you reached out to from Karma Connect. Everything
   else in your LinkedIn inbox stays on this machine.
-- \`.profile/\` appears after step 3 and holds a **live logged-in LinkedIn session**. Don't copy
-  it to another machine, and delete this folder if the machine changes hands.
-- \`README.md\` next to this file is the full reference — selectors, limits, what each cycle does.
-  Its \`npm run agent\` commands are the in-repo names; here they are \`npm start\` and \`npm run login\`.
+- \`.profile/\` holds a **live logged-in LinkedIn session**, and \`.kc-agent.json\` this PC's
+  key to Karma Connect. Don't copy either to another machine. To cut a PC off, press
+  **Disconnect** next to it on the LinkedIn agent page.
+- \`agent.log\` is the log on this PC. \`README.md\` is the full reference.
 `;
 }
 
 // Builds the zip. Throws if the agent sources are missing from the deploy.
-function buildAgentZip({ baseUrl, email }) {
+function buildAgentZip({ baseUrl }) {
   const entries = FILES.map((name) => ({
     name: ROOT + "/" + name,
     data: fs.readFileSync(path.join(AGENT_DIR, name)),
   }));
-  entries.unshift({ name: ROOT + "/SETUP.md", data: Buffer.from(setupMd({ baseUrl, email }), "utf8") });
-  entries.push({ name: ROOT + "/package.json", data: Buffer.from(packageJson(), "utf8") });
+  entries.unshift({ name: ROOT + "/SETUP.md", data: Buffer.from(setupMd({ baseUrl }), "utf8") });
+  entries.push({ name: ROOT + "/package.json", data: Buffer.from(packageJson({ baseUrl }), "utf8") });
   return zip(entries);
 }
 

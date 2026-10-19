@@ -16,6 +16,11 @@ check-karma.ps1
 # The LinkedIn agent's Chrome profile: contains a LIVE logged-in LinkedIn session.
 # Committing it would hand out account access — never track it.
 agent/.profile/
+# This PC's device token for Karma Connect (from pairing), the single-instance lock, and the log.
+agent/.kc-agent.json
+agent/.agent.lock
+agent/agent.log
+agent/agent.log.old
 
 # intermediate for scripts/build-docs-pdf.mjs
 docs/.reference.html

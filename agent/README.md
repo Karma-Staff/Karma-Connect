@@ -36,26 +36,37 @@ has, and it stalls on 2FA anyway.
 
 ## Setup
 
+Everything after this is done from Karma Connect → **LinkedIn agent**: start and pause, dry run,
+limits and hours, "check the inbox / accepts now", signing in to LinkedIn, and the activity log.
+
 ```bash
 npm install                         # picks up playwright (optionalDependencies)
 npx playwright install chromium     # only needed for the LI_AGENT_BROWSER=chromium fallback
 
-# Karma Connect login — the same one you use in the app
-export KC_BASE_URL=https://your-app.onrender.com   # or http://localhost:8787
-export KC_EMAIL=you@karmastaff.com
-export KC_PASSWORD=...
-
-npm run agent:login   # Edge opens - sign in with EMAIL + PASSWORD, it closes itself
-npm run agent         # start the loop
+# LinkedIn agent → Connect a PC shows a one-time code (15 minutes). Then:
+npm run agent -- --pair K7Q4-MZ2P
 ```
 
-On Windows PowerShell, use `$env:KC_EMAIL = "..."` instead of `export`.
+Pairing trades the code for a **device token** saved in `agent/.kc-agent.json` (gitignored, never
+in the download zip). No Karma Connect password is involved; the token opens only the agent's own
+endpoints, and **Disconnect** on the LinkedIn agent page kills it at once. Pairing the same PC
+again replaces its old token.
 
-Try it safely first:
+On Windows, pairing also puts `Karma Connect LinkedIn agent.vbs` in your Startup folder and starts
+the agent in the background, with no console window. It logs to `agent/agent.log`.
 
-```bash
-npm run agent -- --dry-run
-```
+| | |
+|---|---|
+| `npm run agent` | run in this window instead, to watch the log |
+| `npm run agent:login` | sign in to LinkedIn by hand (same as **Sign in to LinkedIn** in the app) |
+| `npm run agent -- --dry-run` | force a dry run, whatever the app says |
+| `npm run agent -- --uninstall-startup` | stop it starting with Windows |
+| `--url http://localhost:8787` | with `--pair`, for a local server |
+
+Only one copy runs per PC (`agent/.agent.lock`). It checks in every 15 seconds: while paused it
+closes its browser and waits; a command from the app is picked up on the next check-in.
+
+Try it safely first: turn on **Dry run** on the LinkedIn agent page and press **Start**.
 
 A dry run opens each profile, scrapes it, opens the composer and types the message — then
 clears the box and stops without sending. It also checks the two things the real path needs
@@ -78,8 +89,8 @@ come back `unverified` — fix the selectors in `send.cjs` before running for re
    - **message**: open the profile → scrape → **Message** → type the approved body → **Send**.
    - **reply**: open the conversation → type the approved reply → **Send**.
 4. Reports `sent` / `failed` / `halted` back, then waits 45–180s before the next one.
-5. Every 15 minutes it reads the inbox (`LI_AGENT_INBOX_MIN`), and every hour the
-   new-connections list (`LI_AGENT_ACCEPT_MIN`), and reports replies and accepted invitations.
+5. Every 15 minutes it reads the inbox, and every hour the new-connections list (both set on
+   the LinkedIn agent page), and reports replies and accepted invitations.
 
 **Only your prospects leave this machine.** Before reading, the agent asks the server who you
 reached out to (`POST /api/outreach/agent/watch`). Conversations with anyone else are never even
@@ -103,19 +114,22 @@ writes or edits message content — AI reply drafts are written in the app and a
 ## Limits
 
 Enforced on the **server**, counted from the database — restarting the worker or running two
-copies doesn't reset anything. Tune with env vars on the server, not here.
+copies doesn't reset anything. Each user can change their own on the LinkedIn agent page, but
+never past the ceiling (`BOUNDS` in `server/linkedin-agent.cjs`). The env vars set the defaults.
 
-| | default | env |
-|---|---|---|
-| Messages + replies per day | 25 | `LI_AGENT_PER_DAY` |
-| Messages + replies per hour | 8 | `LI_AGENT_PER_HOUR` |
-| Invitations per day | 15 | `LI_AGENT_INVITES_PER_DAY` |
-| Invitations per week | 80 | `LI_AGENT_INVITES_PER_WEEK` (LinkedIn's own limit is ~100) |
-| Gap between any two actions | 45–180s | `LI_AGENT_MIN_GAP_SEC` / `LI_AGENT_MAX_GAP_SEC` |
-| Sending window | 09:00–17:00 | `LI_AGENT_WINDOW_START` / `LI_AGENT_WINDOW_END` |
-| Weekdays only | yes | `LI_AGENT_WEEKDAYS_ONLY=false` to allow weekends |
-| Batch per lease | 3 | `LI_AGENT_BATCH` |
-| Lease expiry | 10 min | `LI_AGENT_LEASE_MIN` |
+| | default | ceiling | env (default) |
+|---|---|---|---|
+| Messages + replies per day | 25 | 40 | `LI_AGENT_PER_DAY` |
+| Messages + replies per hour | 8 | 12 | `LI_AGENT_PER_HOUR` |
+| Invitations per day | 15 | 25 | `LI_AGENT_INVITES_PER_DAY` |
+| Invitations per week | 80 | 100 | `LI_AGENT_INVITES_PER_WEEK` (LinkedIn's own limit is ~100) |
+| Gap between any two actions | 45–180s | at least 30s | `LI_AGENT_MIN_GAP_SEC` / `LI_AGENT_MAX_GAP_SEC` |
+| Sending window | 09:00–17:00 | any hours | `LI_AGENT_WINDOW_START` / `LI_AGENT_WINDOW_END` |
+| Weekdays only | yes | | `LI_AGENT_WEEKDAYS_ONLY=false` to allow weekends |
+| Read inbox / new connections | 15 / 60 min | at least 5 / 15 min | `LI_AGENT_INBOX_MIN` / `LI_AGENT_ACCEPT_MIN` |
+| Profile copies on request per day | 60 | 100 | `LI_AGENT_COPIES_PER_DAY` |
+| Batch per lease | 3 | fixed | `LI_AGENT_BATCH` |
+| Lease expiry | 10 min | fixed | `LI_AGENT_LEASE_MIN` |
 
 Raising these raises the risk to the account. They're deliberately low.
 
