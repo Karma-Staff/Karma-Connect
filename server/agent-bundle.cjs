@@ -188,6 +188,16 @@ On the LinkedIn agent page press **Sign in to LinkedIn**. Edge opens on this PC:
 LinkedIn **email and password**, not "Continue with Google", which refuses automated browsers.
 The window closes itself when you're done, and the session is reused for weeks.
 
+**No window opened?** Look at "What it's been doing" on the LinkedIn agent page: it says why.
+Usually the PC can't start a browser for the agent (a company policy on Edge, for example). Fix it
+once, in this folder:
+
+${F}bash
+npx.cmd playwright install chromium
+${F}
+
+then press **Sign in to LinkedIn** again. The agent uses that browser when Edge and Chrome can't start.
+
 Running more than one LinkedIn account (up to four)? Press **Add a LinkedIn account** on that page,
 then **Sign in to LinkedIn** on the new account. Each one gets its own browser window on this PC.
 
@@ -235,6 +245,10 @@ const CONNECT_BAT = [
   "    exit /b 1",
   "  )",
   ")",
+  // A browser of its own, for a PC where Edge can't be driven (a company policy, say): the agent
+  // tries Edge, then Chrome, then this one.
+  "echo  Making sure the agent has a browser it can open...",
+  "call npx.cmd playwright install chromium",
   "echo.",
   "echo  In Karma Connect open LinkedIn agent, press Connect a PC. It shows a code like K7Q4-MZ2P.",
   "set /p CODE= Type or paste the code here, then press Enter: ",

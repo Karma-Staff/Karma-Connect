@@ -56,17 +56,24 @@ async function open(dir = PROFILE_DIR) {
 
   let ctx = null;
   let used = "";
-  for (const channel of order) {
+  const why = [];   // each browser's own reason, so a failure says what actually went wrong
+  for (const channel of [...new Set(order)]) {
     try {
       ctx = await chromium.launchPersistentContext(dir, channel ? { ...opts, channel } : opts);
       used = channel || "chromium";
       console.log("Browser: " + (channel || "bundled Chromium"));
       break;
     } catch (e) {
-      if (channel) console.log("Could not launch " + channel + " — trying the next option.");
+      const name = channel === "msedge" ? "Edge" : channel === "chrome" ? "Chrome" : "the built-in browser";
+      const msg = String((e && e.message) || e).split("\n").find((l) => l.trim() && !/^=+|^\s*at /.test(l)) || "failed";
+      why.push(name + ": " + (/Executable doesn't exist|npx playwright install/i.test(msg) ? "not installed" : msg.trim().slice(0, 160)));
+      if (channel) console.log("Could not launch " + channel + " — trying the next option. (" + msg.trim().slice(0, 200) + ")");
     }
   }
-  if (!ctx) throw new Error("No usable browser found. Try LI_AGENT_BROWSER=chromium.");
+  if (!ctx) {
+    throw new Error("Couldn't open a browser on this PC (" + why.join("; ") + "). "
+      + "In the agent's folder run:  npx.cmd playwright install chromium  — then press Sign in to LinkedIn again.");
+  }
   ctx.setDefaultTimeout(NAV_TIMEOUT);
   ctx.setDefaultNavigationTimeout(NAV_TIMEOUT);
   const page = ctx.pages()[0] || (await ctx.newPage());
@@ -98,9 +105,12 @@ async function isSignedIn(page) {
 
 // One-time setup: open the profile and wait for the human to sign in. Called by `npm run
 // agent:login`. Polls until the feed loads, then closes — the cookie is now in the profile.
-async function login({ waitMinutes = 10, dir = PROFILE_DIR } = {}) {
+// onOpen runs once the window is really up, so "LinkedIn is open" is never said before it is.
+async function login({ waitMinutes = 10, dir = PROFILE_DIR, onOpen = () => {} } = {}) {
   const { ctx, page } = await open(dir);
+  await page.bringToFront().catch(() => {});
   await page.goto("https://www.linkedin.com/login", { waitUntil: "domcontentloaded" });
+  onOpen();
   console.log("\nA browser window is open. Sign in to LinkedIn there with your email and");
   console.log("password — do NOT use \"Continue with Google\", which refuses automated browsers.");
   console.log("Waiting for you… this window closes by itself once you're in.\n");

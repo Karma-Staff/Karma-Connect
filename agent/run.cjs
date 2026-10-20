@@ -296,14 +296,19 @@ class Account {
 
   async signInToLinkedIn() {
     await this.closeBrowser();
-    this.doing("signing_in", `Waiting for someone to sign in to LinkedIn on ${pc.host}`);
-    this.log(`Opened LinkedIn on ${pc.host} — sign in there with email and password (not "Continue with Google").`, "warn");
+    this.doing("signing_in", `Opening LinkedIn on ${pc.host}…`);
     this.signingIn = true;
-    const ok = await login({ waitMinutes: 10, dir: this.dir }).catch(() => false);
+    let failed = "";
+    const ok = await login({ waitMinutes: 10, dir: this.dir, onOpen: () => {
+      this.doing("signing_in", `Waiting for someone to sign in to LinkedIn on ${pc.host}`);
+      this.log(`Opened LinkedIn on ${pc.host} — sign in there with email and password (not "Continue with Google").`, "warn");
+    } }).catch((e) => { failed = String((e && e.message) || e); return false; });
     this.signingIn = false;
     this.me.linkedin = null;
-    this.log(ok ? "LinkedIn sign-in saved on this PC." : "Nobody signed in within 10 minutes.", ok ? "success" : "warn");
-    this.doing("paused", ok ? "Signed in" : "Not signed in");
+    // The real reason when the window never opened — not "nobody signed in".
+    if (failed) this.log("Couldn't open LinkedIn on " + pc.host + ": " + failed.slice(0, 400), "error");
+    else this.log(ok ? "LinkedIn sign-in saved on this PC." : "Nobody signed in within 10 minutes.", ok ? "success" : "warn");
+    this.doing("paused", ok ? "Signed in" : failed ? "Couldn't open the browser — see the activity log" : "Not signed in");
   }
 
   // ── Sending ───────────────────────────────────────────────────────
