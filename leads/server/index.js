@@ -109,6 +109,9 @@ function mount(app, opts = {}) {
   app.use(require("./ringcentral").router);
   app.use(require("./rc-dashboard").router);
   app.use(require("./live").router);
+  /* every call goes through the Karma Connect Dialer desktop app: the browser
+     hands the number over, the app places the call and reports back */
+  app.use(require("./desktop-relay").router);
   app.use(require("./calllogs").router);
   app.use(require("./users-dir").router);
   /* calls into Zoho CRM's call log, and leads from connected calls — off

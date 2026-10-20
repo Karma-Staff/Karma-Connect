@@ -14,7 +14,13 @@
    7:30am. A lead with no state and no North American number has no known
    zone and is not held back: there is nothing to check it against.
 
-   CALL_HOURS ("8-21") changes the window; the default is the TCPA one. */
+   CALL_HOURS ("8-21") changes the window; the default is the TCPA one.
+
+   Lunch: no calls 12:00-1:30pm in the called person's own time either — a
+   business owner at lunch is a wasted dial and an annoyed prospect. Checked
+   the same way (both zones of a two-zone state), so the power dialer moves
+   those leads later in the list and a hand-dialled number is refused with
+   the reason. CALL_LUNCH ("12:00-13:30") changes it; "off" turns it off. */
 
 const { AREA_REGION } = require("./areacodes");
 
@@ -23,6 +29,15 @@ const [OPEN_H, CLOSE_H] = (() => {
   const o = m ? +m[1] : 8, c = m ? +m[2] : 21;
   return o >= 0 && c <= 24 && o < c ? [o, c] : [8, 21];
 })();
+
+const [LUNCH_S, LUNCH_E] = (() => {
+  const v = String(process.env.CALL_LUNCH || "12:00-13:30").trim();
+  if (/^off$/i.test(v)) return [null, null];
+  const m = v.match(/^(d{1,2})(?::(d{2}))?-(d{1,2})(?::(d{2}))?$/);
+  const s = m ? +m[1] + (+m[2] || 0) / 60 : 12, e = m ? +m[3] + (+m[4] || 0) / 60 : 13.5;
+  return s >= 0 && e <= 24 && s < e ? [s, e] : [12, 13.5];
+})();
+const atLunch = (h) => LUNCH_S != null && h >= LUNCH_S && h < LUNCH_E;
 
 const ET = "America/New_York", CT = "America/Chicago", MT = "America/Denver",
   PT = "America/Los_Angeles", AZ = "America/Phoenix";
@@ -79,7 +94,8 @@ const hourIn = (tz, at) => {
     .formatToParts(at);
   return +p.find((x) => x.type === "hour").value + +p.find((x) => x.type === "minute").value / 60;
 };
-const openIn = (zones, at) => zones.every((tz) => { const h = hourIn(tz, at); return h >= OPEN_H && h < CLOSE_H; });
+const openIn = (zones, at) => zones.every((tz) => { const h = hourIn(tz, at); return h >= OPEN_H && h < CLOSE_H && !atLunch(h); });
+const lunchIn = (zones, at) => zones.some((tz) => atLunch(hourIn(tz, at)));
 
 /* When every zone is next inside the window, looking ahead in 5-minute steps. */
 function nextOpen(zones, from) {
@@ -90,8 +106,9 @@ function nextOpen(zones, from) {
   return null;
 }
 
-/* The answer for one lead: { open, region, local, zone, opensAt } —
-   open is true when its zone is unknown (nothing to hold it back on). */
+/* The answer for one lead: { open, region, local, zone, opensAt, lunch } —
+   open is true when its zone is unknown (nothing to hold it back on); lunch
+   says a closed answer is the lunch break rather than the hours. */
 function check(lead, at = new Date()) {
   const region = regionOf(lead?.state, lead?.phone);
   if (!region) return { open: true, region: null, local: null, zone: null, opensAt: null };
@@ -99,7 +116,8 @@ function check(lead, at = new Date()) {
   const open = openIn(zones, at);
   const local = new Intl.DateTimeFormat("en-US", { timeZone: zones[0], hour: "numeric", minute: "2-digit" }).format(at);
   return { open, region, local, zone: SHORT[zones[0]] || zones[0].split("/").pop().replace(/_/g, " "),
-    opensAt: open ? null : nextOpen(zones, at)?.toISOString() || null };
+    opensAt: open ? null : nextOpen(zones, at)?.toISOString() || null,
+    lunch: !open && lunchIn(zones, at) };
 }
 
-module.exports = { check, regionOf, HOURS: [OPEN_H, CLOSE_H] };
+module.exports = { check, regionOf, HOURS: [OPEN_H, CLOSE_H], LUNCH: LUNCH_S == null ? null : [LUNCH_S, LUNCH_E] };

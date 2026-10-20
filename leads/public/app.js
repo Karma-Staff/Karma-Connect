@@ -3036,6 +3036,7 @@ function reportCall(raw, state) {
      hang-up is what should move a hands-free session on — not a button
      press after the fact. */
   if (c.leadId && typeof campaignCallEnded === "function") campaignCallEnded(c.leadId, outcome);
+  if (c.relay) deskEnded(c, outcome);
   /* A lead id greater than zero is a real lead, logged against it. A NEGATIVE
      id is an uploaded campaign row (campaign-upload.js) — a call list kept apart
      from the lead base — so its call is logged against the number like any
@@ -3218,6 +3219,7 @@ async function rcStart() {
   VOICE.mode = "sdk";
   VOICE.provider = "ringcentral";
   VOICE.ready = true;
+  deskPing();                       // the app tells the browser its phone is up, now
   VOICE.sandbox = !!s.sandbox;
   VOICE.rcError = "";
   KD.registered = true;
@@ -4030,6 +4032,13 @@ function rcShowLauncher(on) {
   b.classList.toggle("hidden", !on);
   /* A red dot on the button itself, so a failed line is visible with the
      panel shut — otherwise a rep only finds out by trying to dial. */
+  if (VOICE.provider === "desktop") {
+    b.classList.toggle("err", !VOICE.ready);
+    b.title = VOICE.ready ? "Calls go through the Karma Connect Dialer app — click to open it"
+      : VOICE.desk?.online ? "The Karma Connect Dialer app's phone isn't connected — click to open it"
+        : "The Karma Connect Dialer app isn't open — click to open it";
+    return;
+  }
   const err = !!VOICE.rcError && !KD.registered;
   b.classList.toggle("err", err);
   b.title = err ? "Phone not connected — click for details" : "Dialler — type a number or use the keypad";
@@ -4068,6 +4077,8 @@ async function rcRetry() {
 }
 
 function rcPanelToggle(show) {
+  // no phone in this browser: the dialer is the app
+  if (VOICE.provider === "desktop") { if (show !== false) deskOpenApp(); return; }
   const el = kdEl("rc-call");
   if (!el) return;
   const open = show === undefined ? el.classList.contains("hidden") : show;
@@ -5447,6 +5458,7 @@ async function kdSaveUploadDispo() {
     // carry the disposition + note into the campaign's record of this call
     const campNote = [picked?.label, note].filter(Boolean).join(" — ");
     if (campNote && $("camp-note")) $("camp-note").value = campNote;
+    DESK.wrapNote = campNote;                 // and to the browser's session, from the app
     kdShow("kd-wrap", false);
     if (kdEl("kd-note")) kdEl("kd-note").value = "";
     KD.dispo = "";
@@ -5760,11 +5772,16 @@ async function rcCall(digits, name, leadId) {
   /* A power-dialer campaign can name who callbacks go to: its calls then
      show THAT person's direct number, so a lead who rings back reaches them
      — RingCentral routes the number to its owner, nothing to configure. */
-  const camp = CAMP.s?.campaign && leadId && String(CAMP.s.current?.lead?.id) === String(leadId) ? CAMP.s.campaign : null;
+  /* or, in the desktop app, a call the browser handed over (desktop-relay.js),
+     which says which campaign it belongs to */
+  const relay = DESK.taking && String(DESK.taking.leadId || "") === String(leadId || "") ? DESK.taking : null;
+  DESK.taking = null;
+  const camp = (CAMP.s?.campaign && leadId && String(CAMP.s.current?.lead?.id) === String(leadId) ? CAMP.s.campaign : null)
+    || relay?.campaign || null;
   const callAs = camp?.callback?.number ? camp.callback.number.replace(/\D/g, "") : undefined;
   VOICE.call = { leadId: leadId || null, number: digits,
     connected: false, seconds: 0, reported: false,
-    callbackExt: camp?.callback?.ext || null, campaign: camp?.name || null };
+    callbackExt: camp?.callback?.ext || null, campaign: camp?.name || null, relay };
   KD.callAs = camp?.callback?.number || null;
 
   /* RingCentral's call() does not return until the far end ANSWERS (or the
@@ -5855,7 +5872,8 @@ async function rcCall(digits, name, leadId) {
        it is what Zoho CRM gets as the Call Result. campaignCallEnded (run
        from reportCall above) has marked the session as waiting for it; the
        next lead rings once it is saved or skipped (kdAfterWrap). */
-    const inSession = !!CAMP.awaitDispo;
+    const inSession = !!CAMP.awaitDispo
+      || !!DESK.wrapFor;                     // in the app: a power-dialer call handed over from the browser
     /* A voicemail drop is its own disposition: log "VM" straight away
        (after the call row exists, so it lands on it — and from there into
        Zoho CRM) instead of asking the rep what just happened. */
@@ -5896,6 +5914,22 @@ async function rcCall(digits, name, leadId) {
 
 async function voiceInit() {
   watchVoiceBlocks();
+
+  /* Every call goes through the Karma Connect Dialer app (desktop-relay.js):
+     the browser starts no phone of its own — no outgoing calls, no ringing —
+     and hands each number to the app. The app's own window is the exception:
+     it IS the phone, and carries on below. */
+  if (!kcInDesktopApp()) {
+    let st = null;
+    try { st = await api("/api/voice/desktop/status"); } catch (e) { /* old server: dial here as before */ }
+    if (st?.required) {
+      try {
+        const cfg = await api("/api/voice/config");
+        if (cfg.countryCode !== undefined) VOICE.countryCode = cfg.countryCode;
+      } catch (e) { /* keep the default country code */ }
+      return deskBrowserStart(st);
+    }
+  }
 
   /* RingCentral first: if this rep has connected their own account it wins,
      and Zoho is never loaded. */
@@ -6070,8 +6104,15 @@ function dialInPage(number, name, leadId) {
 }
 
 const hourWord = (h) => (h % 12 || 12) + (h < 12 || h === 24 ? "am" : "pm");
+// [12, 13.5] → "12–1:30pm"
+const lunchWords = (l) => {
+  const w = (h) => { const m = Math.round((h % 1) * 60); return (Math.floor(h) % 12 || 12) + (m ? ":" + String(m).padStart(2, "0") : ""); };
+  const [a, b] = Array.isArray(l) ? l : [12, 13.5];
+  return w(a) + "–" + w(b) + (b < 12 ? "am" : "pm");
+};
 async function callHoursOk(number, leadId) {
-  const say = (msg) => { toast(msg, 9000); kdToast(msg, 9000); };
+  const say = (msg) => { DESK.hoursWhy = msg; toast(msg, 9000); kdToast(msg, 9000); };
+  DESK.hoursWhy = "";
   let ct;
   try {
     ct = await api("/api/calltime?phone=" + encodeURIComponent(normalizeNumber(number))
@@ -6083,12 +6124,18 @@ async function callHoursOk(number, leadId) {
   if (ct.open) return true;
   const [o, c] = ct.hours || [8, 21];
   const at = ct.opensAt ? new Date(ct.opensAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
+  if (ct.lunch) {
+    say(`Not dialled — it is ${ct.local} ${ct.zone} time there, their lunch break (${lunchWords(ct.lunchHours)}).`
+      + `${at ? ` You can call from ${at} your time.` : ""}`);
+    return false;
+  }
   say(`Not dialled — it is ${ct.local} ${ct.zone} time there. Calls are allowed ${hourWord(o)}–${hourWord(c)}`
     + ` their time${at ? `; you can call from ${at} your time` : ""}.`);
   return false;
 }
 
 function dialNow(number, name, leadId) {
+  if (VOICE.provider === "desktop") return deskCall(number, name, leadId);
   if (VOICE.mode === "tel") return false;            // deliberately the OS's job
 
   /* RingCentral, where this rep has connected their own seat. Checked before
@@ -6590,7 +6637,8 @@ function campaignCallEnded(leadId, sdkOutcome) {
      finish, straight after this). Every other ending — a call that failed
      to connect, a Zoho Voice call, a number handed off or copied — opens
      nothing, and the session would wait for a sheet that never comes. */
-  setTimeout(() => { if (CAMP.awaitDispo === w && kdEl("kd-wrap")?.classList.contains("hidden")) campOpenWrap(); }, 250);
+  if (VOICE.provider !== "desktop")
+    setTimeout(() => { if (CAMP.awaitDispo === w && kdEl("kd-wrap")?.classList.contains("hidden")) campOpenWrap(); }, 250);
   campPaintLive();
 }
 
@@ -6598,6 +6646,7 @@ function campaignCallEnded(leadId, sdkOutcome) {
    that did not open it, and for the bar's Disposition button after the rep
    closed it. */
 function campOpenWrap() {
+  if (VOICE.provider === "desktop") return deskOpenApp();   // the sheet is in the app
   const cur = CAMP.s?.current?.lead;
   if (!cur || kdActive()) return;
   if (String(KD.lead?.id) !== String(cur.id))
@@ -6612,6 +6661,7 @@ function campOpenWrap() {
    was; anything else keeps what the line reported — and move on, which
    rings the next lead when auto-dial is on. */
 function kdAfterWrap(picked) {
+  deskWrapped(picked);
   const w = CAMP.awaitDispo;
   if (!w) return;
   CAMP.awaitDispo = null;
@@ -6671,6 +6721,12 @@ const autoGap = () => {
 /* Can it actually dial without a person? Says why not, so the switch can
    explain itself instead of silently doing nothing. */
 function autoReady() {
+  if (VOICE.provider === "desktop")
+    return VOICE.ready
+      ? { ok: true, why: "" }
+      : { ok: false, why: VOICE.desk?.online
+        ? "the phone in the Karma Connect Dialer app has not connected yet"
+        : "open the Karma Connect Dialer app — every call goes through it" };
   if (VOICE.provider === "ringcentral")
     return VOICE.ready
       ? { ok: true, why: "" }
@@ -7080,7 +7136,9 @@ function renderCampaign(d) {
         <div class="cs-eyebrow" id="cs-eyebrow">${look.eyebrow}</div>
         <h2>${esc(name)}</h2>
         <div class="cs-meta">${meta.map((m) => `<span>${esc(m)}</span>`).join(`<span aria-hidden="true">·</span>`)}${
-          ct && !ct.open && ct.local ? `<span class="cs-closed" title="Calls are allowed 8am–9pm in the lead's local time">outside calling hours</span>` : ""}${
+          ct && !ct.open && ct.local ? (ct.lunch
+            ? `<span class="cs-closed" title="No calls 12–1:30pm in the lead's local time">their lunch break</span>`
+            : `<span class="cs-closed" title="Calls are allowed 8am–9pm in the lead's local time">outside calling hours</span>`) : ""}${
           ct?.deferred ? `<span class="cs-moved">${ct.deferred} lead${ct.deferred === 1 ? "" : "s"} it's too early or late for moved to later</span>` : ""}</div>
         <div class="cs-phone-row">
           <div class="cs-phone">
@@ -7252,7 +7310,7 @@ function holdForHours(ct) {
   clearTimeout(CAMP.hoursTimer);
   const at = ct.opensAt ? new Date(ct.opensAt) : null;
   const el = $("camp-auto-state");
-  if (el) el.textContent = `outside calling hours for every lead up next — nothing will ring${at
+  if (el) el.textContent = `${ct.lunch ? "lunch break or outside calling hours" : "outside calling hours"} for every lead up next — nothing will ring${at
     ? ` until ${at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} your time` : ""}`;
   // look again when it opens (or every 10 minutes, whichever is sooner)
   const wait = at ? Math.max(60e3, Math.min(at.getTime() - Date.now() + 5e3, 10 * 60e3)) : 10 * 60e3;
@@ -7574,7 +7632,7 @@ async function meAction(what) {
     if (!confirm("Disconnect RingCentral? You won't be able to dial from Karma Connect until you connect again.")) return;
     try {
       await api("/api/voice/rc/connect", { method: "DELETE" });
-      VOICE.rcConnected = false; VOICE.provider = ""; VOICE.ready = false;
+      VOICE.rcConnected = false; if (VOICE.provider !== "desktop") { VOICE.provider = ""; VOICE.ready = false; }
       toast("RingCentral disconnected");
     } catch (e) { toast("Could not disconnect: " + e.message, 8000); }
     return renderMySettings();
@@ -9850,7 +9908,7 @@ function wire() {
     if (e.target.closest("#rc-disconnect")) {
       if (!confirm("Disconnect RingCentral? You will dial from the shared line until you sign in again.")) return;
       api("/api/voice/rc/connect", { method: "DELETE" })
-        .then(() => { VOICE.rcConnected = false; VOICE.provider = ""; VOICE.ready = false;
+        .then(() => { VOICE.rcConnected = false; if (VOICE.provider !== "desktop") { VOICE.provider = ""; VOICE.ready = false; }
           toast("RingCentral disconnected"); loadCallReport(); })
         .catch((err) => toast("Could not disconnect: " + err.message));
     }
@@ -12597,6 +12655,7 @@ async function boot() {
   S.booted = true;             // from here on, a 401 means the session died
   if (document.body.classList.contains("kc-embed")) rcPanelToggle(true);
   else openDesktopDialer();
+  if (kcInDesktopApp()) deskServe();
   kdStartReminders();
   pdRepStart();
   crmStart();
@@ -12616,6 +12675,151 @@ function openDesktopDialer() {
     sessionStorage.setItem("kc_desktop_dialer_opened", "1");
     location.href = "karmaconnect://open";
   } catch (e) { /* storage blocked — skip it */ }
+}
+
+/* ---------------- every call through the desktop app ----------------
+   desktop-relay.js on the server. In the BROWSER: no phone; a Call hands the
+   number to the app, and what the app reports (the call ended, the wrap-up
+   was saved) drives the power-dialer session here as the phone used to. In
+   the APP's window: take those calls and place them like a click would. */
+const DESK = { taking: null, wrapFor: null, wrapNote: "", serving: false, listening: false };
+const kcInDesktopApp = () => document.body.classList.contains("kc-desktop");
+const deskSleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/* Bring the app forward (or start it). karmaconnect:// is registered by the
+   installer; with no app installed the browser simply has nowhere to send it. */
+function deskOpenApp() {
+  try { location.href = "karmaconnect://open"; } catch (e) { /* nothing to open */ }
+}
+
+function deskBrowserStart(st) {
+  VOICE.provider = "desktop";
+  VOICE.mode = "desktop";
+  deskSetStatus(st);
+  setInterval(async () => {
+    try { deskSetStatus(await api("/api/voice/desktop/status")); } catch (e) { /* next time */ }
+  }, 5000);
+  deskListen();
+}
+function deskSetStatus(st) {
+  const was = VOICE.ready;
+  VOICE.desk = { online: !!st?.online, registered: !!st?.registered };
+  VOICE.ready = VOICE.desk.online && VOICE.desk.registered;
+  rcShowLauncher(true);
+  if (was !== VOICE.ready && S.tab === "camp" && CAMP.s) campPaintLive();
+}
+
+// browser → app. Answers "handled" at once, like every other dial route.
+function deskCall(number, name, leadId) {
+  const digits = normalizeNumber(number);
+  const c = CAMP.s?.campaign && leadId && String(CAMP.s.current?.lead?.id) === String(leadId) ? CAMP.s.campaign : null;
+  const body = { number: digits, name: name || "", leadId: leadId || null,
+    campaign: c ? { name: c.name || "", callback: c.callback || null } : null };
+  api("/api/voice/desktop/call", { method: "POST", body: JSON.stringify(body) })
+    .then(() => toast("Calling " + (name || number) + " on the Karma Connect Dialer app…"))
+    .catch((e) => {
+      deskOpenApp();
+      deskDialFailed(leadId, /isn't open/i.test(e.message)
+        ? "Not dialled — the Karma Connect Dialer app isn't open. It's opening now; press Call again once it's up."
+        : "Not dialled: " + e.message);
+    });
+  return true;
+}
+function deskDialFailed(leadId, msg) {
+  toast(msg, 9000);
+  if (leadId && String(CAMP.s?.current?.lead?.id) === String(leadId)) {
+    const el = $("camp-auto-state");
+    if (el) el.textContent = "could not dial — " + msg.replace(/^Not dialled[:—\s-]*/i, "");
+  }
+}
+
+// what the app reported, in order
+async function deskListen() {
+  if (DESK.listening) return;
+  DESK.listening = true;
+  let after = -1;
+  for (;;) {
+    try {
+      const r = await api("/api/voice/desktop/events?after=" + after);
+      after = r.seq;
+      for (const e of r.events || []) deskOnEvent(e);
+    } catch (e) { await deskSleep(5000); }
+  }
+}
+function deskOnEvent(e) {
+  if (e.kind === "refused") return deskDialFailed(e.leadId, e.reason || "The dialer app could not place the call");
+  if (!e.leadId) return;
+  if (e.kind === "ended") return campaignCallEnded(e.leadId, e.outcome);
+  if (e.kind === "wrapped") {
+    const w = CAMP.awaitDispo;
+    if (!w || String(w.leadId) !== String(e.leadId)) return;
+    if (e.note && $("camp-note")) $("camp-note").value = e.note;
+    kdAfterWrap(e.label ? { label: e.label } : null);
+  }
+}
+
+// ---- in the app's window ----
+async function deskServe() {
+  if (DESK.serving) return;
+  let st = null;
+  try { st = await api("/api/voice/desktop/status"); } catch (e) { /* treat as off */ }
+  if (!st?.required) return;
+  DESK.serving = true;
+  for (;;) {
+    DESK.poll = new AbortController();
+    try {
+      const up = VOICE.provider === "ringcentral" && VOICE.ready ? 1 : 0;
+      const r = await api("/api/voice/desktop/wait?registered=" + up, { signal: DESK.poll.signal });
+      for (const c of r.calls || []) await deskTake(c);
+    } catch (e) {
+      if (e.name !== "AbortError") await deskSleep(5000);
+    }
+  }
+}
+// the phone just came up (or went): start a fresh poll so the server hears it now
+function deskPing() { DESK.poll?.abort(); }
+function deskSay(kind, extra) {
+  return api("/api/voice/desktop/event", { method: "POST", body: JSON.stringify({ kind, ...extra }) })
+    .catch(() => { /* the browser's session can be moved on by hand */ });
+}
+async function deskTake(c) {
+  const ref = { ref: c.id, leadId: c.leadId || null };
+  window.kcDesktop?.show?.();
+  if (kdActive()) {
+    kdToast("Already on a call — hang up first, then call again");
+    return deskSay("refused", { ...ref, reason: "Not dialled — you're already on a call in the dialer app" });
+  }
+  if (!(VOICE.provider === "ringcentral" && VOICE.ready))
+    return deskSay("refused", { ...ref, reason: "Not dialled — the phone in the dialer app isn't connected. Check the app, then call again." });
+  let ok = false;
+  try { ok = await callHoursOk(c.number, c.leadId || null); } catch (e) { ok = false; }
+  if (!ok) return deskSay("refused", { ...ref, reason: DESK.hoursWhy || "Not dialled — it's outside calling hours where this number is" });
+  DESK.taking = { ref: c.id, leadId: c.leadId || null, campaign: c.campaign || null };
+  DESK.wrapFor = null;
+  deskSay("accepted", ref);
+  if (!dialNow(c.number, c.name || "", c.leadId || null)) {
+    DESK.taking = null;
+    deskSay("refused", { ...ref, reason: "Not dialled — calling isn't set up in the dialer app" });
+  }
+}
+/* A handed-over call ended. A campaign call always gets its wrap-up sheet
+   here, even when the line failed (only a normal hang-up opens it by itself),
+   or the browser's session would wait for a sheet that never comes. */
+function deskEnded(c, outcome) {
+  deskSay("ended", { ref: c.relay.ref, leadId: c.leadId || null, outcome });
+  if (!c.relay.campaign || !c.leadId) return;
+  DESK.wrapFor = { ref: c.relay.ref, leadId: c.leadId };
+  DESK.wrapNote = "";
+  setTimeout(() => {
+    if (DESK.wrapFor && kdEl("kd-wrap")?.classList.contains("hidden") && !kdActive()) kdOpenWrap();
+  }, 300);
+}
+function deskWrapped(picked) {
+  const w = DESK.wrapFor;
+  if (!w || !kcInDesktopApp()) return;
+  DESK.wrapFor = null;
+  deskSay("wrapped", { ref: w.ref, leadId: w.leadId, label: picked?.label || null, note: DESK.wrapNote || "" });
+  DESK.wrapNote = "";
 }
 
 async function init() {

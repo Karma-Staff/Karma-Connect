@@ -44,3 +44,32 @@ describe("calling hours", () => {
     expect(check({ state: "", phone: "" }, utc(3)).open).toBe(true);
   });
 });
+
+describe("lunch break", () => {
+  it("is closed 12:00-1:30pm local, with the reason", () => {
+    expect(check({ state: "NY" }, utc(15, 59)).open).toBe(true);    // 11:59am Eastern
+    const noon = check({ state: "NY" }, utc(16));                   // 12:00pm
+    expect(noon.open).toBe(false);
+    expect(noon.lunch).toBe(true);
+    expect(noon.opensAt).toBe(utc(17, 30).toISOString());           // 1:30pm Eastern
+    expect(check({ state: "NY" }, utc(17, 29)).open).toBe(false);   // 1:29pm
+    expect(check({ state: "NY" }, utc(17, 30)).open).toBe(true);    // 1:30pm
+  });
+
+  it("is the lead's own lunch, not the caller's", () => {
+    expect(check({ state: "NY" }, utc(16, 30)).open).toBe(false);   // 12:30pm Eastern
+    expect(check({ state: "CA" }, utc(16, 30)).open).toBe(true);    // 9:30am Pacific
+  });
+
+  it("a state spanning two zones is closed while either zone is at lunch", () => {
+    expect(check({ state: "FL" }, utc(17)).open).toBe(false);       // 1pm ET / 12pm CT
+    expect(check({ state: "FL" }, utc(17, 30)).lunch).toBe(true);   // 1:30pm ET / 12:30pm CT
+    expect(check({ state: "FL" }, utc(18, 30)).open).toBe(true);    // 2:30pm ET / 1:30pm CT
+  });
+
+  it("an early or late hour is not called lunch", () => {
+    const late = check({ state: "NY" }, utc(2));                     // 10pm Eastern
+    expect(late.open).toBe(false);
+    expect(late.lunch).toBe(false);
+  });
+});

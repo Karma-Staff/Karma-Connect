@@ -232,7 +232,7 @@ router.get("/api/calltime", requireUser, async (req, res, next) => {
       ? (await query("SELECT state FROM leads WHERE id = $1", [id])).rows[0]?.state
       : id < 0 ? (await query("SELECT state FROM campaign_leads WHERE id = $1", [-id])).rows[0]?.state
         : null;
-    res.json({ ...calltime.check({ state, phone: String(req.query.phone || "") }), hours: calltime.HOURS });
+    res.json({ ...calltime.check({ state, phone: String(req.query.phone || "") }), hours: calltime.HOURS, lunchHours: calltime.LUNCH });
   } catch (e) { next(e); }
 });
 

@@ -4,7 +4,7 @@
 
 # API
 
-**249 routes**, generated from the source on 2026-10-19.
+**258 routes**, generated from the source on 2026-10-20.
 
 Every path is absolute. That is deliberate: Karma Leads' API paths are the same
 whether it runs standalone or mounted into Connect, which is what let its front
@@ -47,13 +47,13 @@ declared once for the group.
 
 ---
 
-## Karma Leads — 162 routes
+## Karma Leads — 167 routes
 
 ### `/api/activity`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/activity` | admin | [leads/server/index.js:167](../../leads/server/index.js#L167) |  |
+| GET | `/api/activity` | admin | [leads/server/index.js:170](../../leads/server/index.js#L170) |  |
 
 ### `/api/alerts`
 
@@ -355,6 +355,11 @@ declared once for the group.
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
 | GET | `/api/voice/config` | signed in | [leads/server/voice.js:160](../../leads/server/voice.js#L160) |  |
+| POST | `/api/voice/desktop/call` | signed in | [leads/server/desktop-relay.js:160](../../leads/server/desktop-relay.js#L160) |  |
+| POST | `/api/voice/desktop/event` | signed in | [leads/server/desktop-relay.js:184](../../leads/server/desktop-relay.js#L184) |  |
+| GET | `/api/voice/desktop/events` | signed in | [leads/server/desktop-relay.js:169](../../leads/server/desktop-relay.js#L169) |  |
+| GET | `/api/voice/desktop/status` | signed in | [leads/server/desktop-relay.js:156](../../leads/server/desktop-relay.js#L156) |  |
+| GET | `/api/voice/desktop/wait` | signed in | [leads/server/desktop-relay.js:177](../../leads/server/desktop-relay.js#L177) |  |
 | GET | `/api/voice/providers` | signed in | [leads/server/voice.js:234](../../leads/server/voice.js#L234) | GET/PUT /api/voice/providers — which telephony providers are on offer. |
 | PUT | `/api/voice/providers` | owner | [leads/server/voice.js:251](../../leads/server/voice.js#L251) |  |
 | GET | `/api/voice/rc/callback` | — | [leads/server/ringcentral.js:139](../../leads/server/ringcentral.js#L139) |  |
@@ -378,7 +383,7 @@ declared once for the group.
 
 ---
 
-## Karma Connect — 87 routes
+## Karma Connect — 91 routes
 
 ### `/api/admin`
 
@@ -442,7 +447,7 @@ declared once for the group.
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| POST | `/api/claude` | signed in | [server.js:1533](../../server.js#L1533) | ─────────────────────────── Anthropic proxy ──────────────────────── In dev the proxy is open… |
+| POST | `/api/claude` | signed in | [server.js:1594](../../server.js#L1594) | ─────────────────────────── Anthropic proxy ──────────────────────── In dev the proxy is open… |
 
 ### `/api/coach`
 
@@ -475,7 +480,7 @@ declared once for the group.
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/health` | — | [server.js:1551](../../server.js#L1551) | Health check for Render. |
+| GET | `/api/health` | — | [server.js:1612](../../server.js#L1612) | Health check for Render. |
 
 ### `/api/history`
 
@@ -497,39 +502,43 @@ declared once for the group.
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| POST | `/api/outreach/agent/accepted` | — | [server.js:1335](../../server.js#L1335) | Invitations the worker saw accepted. |
-| POST | `/api/outreach/agent/command` | signed in | [server.js:1420](../../server.js#L1420) | Ask the worker to do something on its next check-in. |
-| POST | `/api/outreach/agent/copies` | — | [server.js:1365](../../server.js#L1365) | The worker: profiles someone asked it to copy → { items: [{ id, handle }] }. |
-| POST | `/api/outreach/agent/copies/:id` | — | [server.js:1372](../../server.js#L1372) | The worker: one copied profile. Body: { text } or { error } or { halt }. |
-| POST | `/api/outreach/agent/copy-request` | signed in | [server.js:1349](../../server.js#L1349) | "Copy it with the agent" (the Deep LinkedIn paste panel). |
-| GET | `/api/outreach/agent/copy-request/:id` | signed in | [server.js:1356](../../server.js#L1356) | The page polls this until the agent has copied the profile: |
-| POST | `/api/outreach/agent/devices/:id/revoke` | signed in | [server.js:1434](../../server.js#L1434) | Disconnect a paired PC: |
-| GET | `/api/outreach/agent/download` | signed in | [server.js:1264](../../server.js#L1264) | The agent's source, zipped, so a recruiter can run it without GitHub access or a clone. |
-| POST | `/api/outreach/agent/enable` | signed in | [server.js:1278](../../server.js#L1278) | The kill switch. |
-| GET | `/api/outreach/agent/events` | signed in | [server.js:1443](../../server.js#L1443) | The activity log, newest first → { events: |
-| POST | `/api/outreach/agent/halt` | — | [server.js:1381](../../server.js#L1381) | The worker hit a captcha / checkpoint / limit while reading (not sending). |
-| POST | `/api/outreach/agent/heartbeat` | — | [server.js:1391](../../server.js#L1391) | The worker checks in about every 15 seconds. |
-| POST | `/api/outreach/agent/inbox` | — | [server.js:1328](../../server.js#L1328) | Conversations the worker read. |
-| POST | `/api/outreach/agent/lease` | — | [server.js:1288](../../server.js#L1288) | Hand the worker its next batch. |
-| POST | `/api/outreach/agent/pair` | signed in | [server.js:1427](../../server.js#L1427) | A one-time code for connecting a PC (valid 15 minutes) → { code, expiresAt }. |
-| POST | `/api/outreach/agent/pair/claim` | rate-limited | [server.js:1400](../../server.js#L1400) | A PC trades the code shown on the LinkedIn agent page for its device token. |
-| POST | `/api/outreach/agent/profile` | — | [server.js:1342](../../server.js#L1342) | The accepted person's whole profile page, copied by the worker. |
-| POST | `/api/outreach/agent/report/:id` | — | [server.js:1302](../../server.js#L1302) | Report one leased item back. |
-| PUT | `/api/outreach/agent/settings` | signed in | [server.js:1411](../../server.js#L1411) | ─────────────── LinkedIn agent (controls, in Karma Connect) ──────── Settings and dry run. |
-| GET | `/api/outreach/agent/status` | signed in | [server.js:1255](../../server.js#L1255) | Agent state for the Send Queue strip: |
-| POST | `/api/outreach/agent/watch` | — | [server.js:1317](../../server.js#L1317) | What the worker should look out for while reading LinkedIn: |
-| GET | `/api/outreach/followups` | signed in | [server.js:1486](../../server.js#L1486) | ─────────────── First message after an accept (Send Queue) ───────── People who accepted, wit… |
-| POST | `/api/outreach/followups/:id/approve` | signed in | [server.js:1502](../../server.js#L1502) | Approve the first message: |
-| POST | `/api/outreach/followups/:id/draft` | signed in | [server.js:1493](../../server.js#L1493) | Save the AI's draft. |
-| POST | `/api/outreach/followups/:id/skip` | signed in | [server.js:1511](../../server.js#L1511) | No first message for this one. |
-| GET | `/api/outreach/inbox` | signed in | [server.js:1451](../../server.js#L1451) | ─────────────────────── LinkedIn replies (Send Queue) ────────────── Conversations with prosp… |
-| POST | `/api/outreach/inbox/:id/draft` | signed in | [server.js:1458](../../server.js#L1458) | Save the AI's draft with the thread. |
-| POST | `/api/outreach/inbox/:id/handled` | signed in | [server.js:1476](../../server.js#L1476) | Done with a conversation without replying (or { handled: |
-| POST | `/api/outreach/inbox/:id/reply` | signed in | [server.js:1467](../../server.js#L1467) | Approve a reply: |
+| POST | `/api/outreach/agent/accepted` | — | [server.js:1349](../../server.js#L1349) | Invitations the worker saw accepted. |
+| POST | `/api/outreach/agent/accounts` | signed in | [server.js:1475](../../server.js#L1475) | LinkedIn accounts on the agent (up to four). |
+| PATCH | `/api/outreach/agent/accounts/:id` | signed in | [server.js:1483](../../server.js#L1483) | Rename an account, or pick the PC that runs it. |
+| DELETE | `/api/outreach/agent/accounts/:id` | signed in | [server.js:1493](../../server.js#L1493) | Take an account off the agent → status. |
+| POST | `/api/outreach/agent/command` | signed in | [server.js:1443](../../server.js#L1443) | Ask one account to do something on the PC's next check-in. |
+| POST | `/api/outreach/agent/copies` | — | [server.js:1381](../../server.js#L1381) | The worker: profiles someone asked it to copy → { items: [{ id, handle }] }. |
+| POST | `/api/outreach/agent/copies/:id` | — | [server.js:1389](../../server.js#L1389) | The worker: one copied profile. Body: { text } or { error } or { halt }. |
+| POST | `/api/outreach/agent/copy-request` | signed in | [server.js:1365](../../server.js#L1365) | "Copy it with the agent" (the Deep LinkedIn paste panel). |
+| GET | `/api/outreach/agent/copy-request/:id` | signed in | [server.js:1372](../../server.js#L1372) | The page polls this until the agent has copied the profile: |
+| POST | `/api/outreach/agent/devices/:id/revoke` | signed in | [server.js:1458](../../server.js#L1458) | Disconnect a paired PC: |
+| GET | `/api/outreach/agent/download` | signed in | [server.js:1272](../../server.js#L1272) | The agent's source, zipped, so a recruiter can run it without GitHub access or a clone. |
+| POST | `/api/outreach/agent/enable` | signed in | [server.js:1286](../../server.js#L1286) | The kill switch. |
+| GET | `/api/outreach/agent/events` | signed in | [server.js:1468](../../server.js#L1468) | The activity log, newest first (?accountId= for one account) → { events: |
+| POST | `/api/outreach/agent/halt` | — | [server.js:1399](../../server.js#L1399) | The worker hit a captcha / checkpoint / limit while reading (not sending). |
+| POST | `/api/outreach/agent/heartbeat` | — | [server.js:1412](../../server.js#L1412) | The PC checks in every few seconds, for every account it runs. |
+| POST | `/api/outreach/agent/inbox` | — | [server.js:1341](../../server.js#L1341) | Conversations the worker read. |
+| POST | `/api/outreach/agent/lease` | — | [server.js:1299](../../server.js#L1299) | Hand the worker its next batch. |
+| POST | `/api/outreach/agent/pair` | signed in | [server.js:1451](../../server.js#L1451) | A one-time code for connecting a PC (valid 15 minutes) → { code, expiresAt }. |
+| POST | `/api/outreach/agent/pair/claim` | rate-limited | [server.js:1421](../../server.js#L1421) | A PC trades the code shown on the LinkedIn agent page for its device token. |
+| POST | `/api/outreach/agent/profile` | — | [server.js:1357](../../server.js#L1357) | The accepted person's whole profile page, copied by the worker. |
+| POST | `/api/outreach/agent/report/:id` | — | [server.js:1314](../../server.js#L1314) | Report one leased item back. |
+| PUT | `/api/outreach/agent/settings` | signed in | [server.js:1432](../../server.js#L1432) | ─────────────── LinkedIn agent (controls, in Karma Connect) ──────── One account's settings a… |
+| GET | `/api/outreach/agent/status` | signed in | [server.js:1263](../../server.js#L1263) | Agent state for the Send Queue strip: |
+| POST | `/api/outreach/agent/watch` | — | [server.js:1329](../../server.js#L1329) | What the worker should look out for while reading LinkedIn: |
+| GET | `/api/outreach/followups` | signed in | [server.js:1547](../../server.js#L1547) | ─────────────── First message after an accept (Send Queue) ───────── People who accepted, wit… |
+| POST | `/api/outreach/followups/:id/approve` | signed in | [server.js:1563](../../server.js#L1563) | Approve the first message: |
+| POST | `/api/outreach/followups/:id/draft` | signed in | [server.js:1554](../../server.js#L1554) | Save the AI's draft. |
+| POST | `/api/outreach/followups/:id/skip` | signed in | [server.js:1572](../../server.js#L1572) | No first message for this one. |
+| GET | `/api/outreach/inbox` | signed in | [server.js:1512](../../server.js#L1512) | ─────────────────────── LinkedIn replies (Send Queue) ────────────── Conversations with prosp… |
+| POST | `/api/outreach/inbox/:id/draft` | signed in | [server.js:1519](../../server.js#L1519) | Save the AI's draft with the thread. |
+| POST | `/api/outreach/inbox/:id/handled` | signed in | [server.js:1537](../../server.js#L1537) | Done with a conversation without replying (or { handled: |
+| POST | `/api/outreach/inbox/:id/reply` | signed in | [server.js:1528](../../server.js#L1528) | Approve a reply: |
 | GET | `/api/outreach/queue` | signed in | [server.js:1181](../../server.js#L1181) | List this user's queue (optional ?status= and ?channel= filters). |
 | POST | `/api/outreach/queue` | signed in | [server.js:1172](../../server.js#L1172) | ───────────────────────── Outreach send queue ────────────────────── Queue a generated messag… |
+| POST | `/api/outreach/queue/:id/account` | signed in | [server.js:1502](../../server.js#L1502) | Which account an unsent LinkedIn item goes from. |
 | POST | `/api/outreach/queue/:id/approve` | signed in | [server.js:1189](../../server.js#L1189) | Approve a pending item (schedules it; email then auto-sends on the next tick). |
-| POST | `/api/outreach/queue/:id/no-wait` | signed in | [server.js:1520](../../server.js#L1520) | A message held until an invitation is accepted: |
+| POST | `/api/outreach/queue/:id/no-wait` | signed in | [server.js:1581](../../server.js#L1581) | A message held until an invitation is accepted: |
 | POST | `/api/outreach/queue/:id/send-now` | signed in | [server.js:1202](../../server.js#L1202) | Send an approved email item immediately (don't wait for the tick). |
 | POST | `/api/outreach/queue/:id/sent` | signed in | [server.js:1212](../../server.js#L1212) | Mark a LinkedIn item sent after the human one-click hand-off. |
 | POST | `/api/outreach/queue/:id/skip` | signed in | [server.js:1221](../../server.js#L1221) | Skip / cancel a queued item. |

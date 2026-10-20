@@ -66,6 +66,20 @@ antivirus is holding the folder): add
   (microphone, start with Windows, what is stored, connections, updates).
 - **Uninstall** removes the profile folder too (it holds the session).
 
+## Every call goes through this app
+
+Since Oct 2026 the browser has no phone of its own. Pressing Call anywhere in Karma Connect (a
+number, the keypad, the power dialer) hands the number to this app through the server
+(`leads/server/desktop-relay.js`), and the app places the call. Incoming calls ring only here.
+The app reports back when a call ends and when the wrap-up is saved, so a power-dialer session
+in the browser moves on as before.
+
+- App not open: the call is not made; the browser opens the app and says to press Call again.
+- Only the rep's own signed-in Karma Connect can send calls to their app. A website can't, which is
+  why this doesn't use a `karmaconnect://call` link.
+- The logic lives in the web page (`leads/public/app.js`), so installed 0.3.0 apps take part too.
+- `CALLS_VIA_DESKTOP=0` on the server switches it off: the browser dials by itself again.
+
 ## How it works / notes
 
 - **Always on top:** the window floats above other windows, including full-screen
