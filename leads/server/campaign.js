@@ -66,7 +66,7 @@ async function leadCard(id, actor) {
             ORDER BY created_at DESC LIMIT 3`, [id]),
     /* what happened last time anyone rang them — a rep should not open with
        "is this a good time" to somebody who said no on Tuesday */
-    query(`SELECT at, actor, to_value FROM activity_log
+    query(`SELECT at, actor, to_value, (coalesce(meta, '{}'::jsonb) ? 'session') AS in_session FROM activity_log
             WHERE lead_id = $1 AND action = 'call'
             ORDER BY at DESC LIMIT 1`, [id]),
     /* worked in Zoho since the campaign was built (the scan saw a call
@@ -257,19 +257,46 @@ router.post("/api/campaign/outcome", requireUser, express.json({ limit: "8kb" })
       if (upload.isUpload(s)) return res.json(await upload.outcomeUpload(s, b));
       const id = s.cur_id;
       if (!id) return res.json(shape(s, null));
+      /* The page names the lead it was showing. If the session is already past
+         it — a retry whose first try got through but whose answer was lost, or
+         a second tab — recording now would put this call on a lead nobody rang.
+         Answer with where the session is instead. */
+      if (Number.isInteger(b.leadId) && b.leadId > 0 && b.leadId !== +id)
+        return res.json({ ...(await serve(s, me(req))), stale: true });
 
       const lead = (await query(
         "SELECT id, lead_code, name, company, status FROM leads WHERE id = $1", [id])).rows[0];
-      const skip = b.skip === true;
+      let skip = b.skip === true;
+      let outcome = String(b.outcome || "no-answer");
 
-      if (lead && !skip) {
+      /* Skip on a lead this rep has just rung (the session never heard the
+         call end — the page was refreshed, the save didn't reach it): that
+         call is the outcome, so it counts as called, not skipped. Only a call
+         that reached the line; one that failed to dial was no call. */
+      let recent = null;
+      if (lead && skip) {
+        recent = (await query(
+          `SELECT id, coalesce(meta->>'outcome', to_value) AS outcome FROM activity_log
+            WHERE action = 'call' AND lead_id = $1 AND actor = $2
+              AND at > now() - interval '30 minutes'
+              AND NOT (coalesce(meta, '{}'::jsonb) ? 'session')
+              AND coalesce(meta->>'outcome', to_value) IN ('connected', 'no-answer', 'busy')
+            ORDER BY at DESC LIMIT 1`, [lead.id, me(req)])).rows[0] || null;
+        if (recent) { skip = false; outcome = recent.outcome; }
+      }
+
+      if (lead && !skip && recent) {
+        // the disposition the wrap-up saved on that call stays as it is
+        await query(
+          `UPDATE activity_log SET meta = coalesce(meta, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
+          [recent.id, JSON.stringify({ session: s.id, session_outcome: outcome })]);
+      } else if (lead && !skip) {
         /* The call itself — ONCE. When the in-page softphone placed it, the
            softphone has already logged it on hang-up (with the real length),
            so the session's verdict is stamped onto that row. Logging a
            second row here, as this used to, counted every session call twice
            in the call report. Only a call the softphone never saw (a tel:
            link, a desk phone) gets a row of its own. */
-        const outcome = String(b.outcome || "no-answer");
         const disposition = { voicemail: "VM", "no-answer": "No Answer", busy: "Busy" }[outcome] || null;
         const stamp = { session: s.id, session_outcome: outcome,
           ...(disposition ? { disposition, dispo_at: new Date().toISOString() } : {}) };
@@ -287,6 +314,9 @@ router.post("/api/campaign/outcome", requireUser, express.json({ limit: "8kb" })
           to_value: outcome,
           meta: { outcome, seconds: 0, provider: "manual", ...stamp },
         });
+      }
+
+      if (lead && !skip) {
 
         /* The status is no longer set here: it follows the call's result in
            Zoho CRM (crm-sync.js sends the disposition, zoho-scan.js reads it
@@ -316,7 +346,7 @@ router.post("/api/campaign/outcome", requireUser, express.json({ limit: "8kb" })
         }
       }
 
-      const connected = !skip && b.outcome === "connected";
+      const connected = !skip && outcome === "connected";
       const next = (await query(
         `UPDATE call_sessions
             SET pos = pos + 1,

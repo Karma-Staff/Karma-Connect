@@ -378,13 +378,28 @@ async function outcomeUpload(s, b) {
     [-b.leadId, s.id])).rows[0] : null;
   const row = shown || await currentRow(s.id);
   if (row) {
-    const skip = b.skip === true;
-    const outcome = skip ? "skip" : String(b.outcome || "no-answer");
+    let skip = b.skip === true;
+    let called = String(b.outcome || "no-answer");
+    /* Skip on a row this rep has just rung (the session never heard the call
+       end): that call is the outcome — counted as called, not skipped. The
+       row has no lead id, so its call is found by number, as calls.js logs it. */
+    const ten = String(row.phone || "").replace(/\D/g, "").slice(-10);
+    if (skip && ten.length >= 7) {
+      const recent = (await query(
+        `SELECT coalesce(meta->>'outcome', to_value) AS outcome FROM activity_log
+          WHERE action = 'call' AND lead_id IS NULL AND actor = $2
+            AND right(regexp_replace(coalesce(meta->>'number', ''), '\\D', '', 'g'), 10) = $1
+            AND at > now() - interval '30 minutes'
+            AND coalesce(meta->>'outcome', to_value) IN ('connected', 'no-answer', 'busy')
+          ORDER BY at DESC LIMIT 1`, [ten, s.actor])).rows[0];
+      if (recent) { skip = false; called = recent.outcome; }
+    }
+    const outcome = skip ? "skip" : called;
     const note = clean(b.note).slice(0, 2000) || null;
     await query(
       `UPDATE campaign_leads SET status = 'done', outcome = $2, outcome_note = $3, called_at = now()
         WHERE id = $1`, [row.id, outcome, note]);
-    const connected = !skip && b.outcome === "connected";
+    const connected = !skip && outcome === "connected";
     await query(
       `UPDATE call_sessions SET called = called + $2, connected = connected + $3, skipped = skipped + $4
         WHERE id = $1`, [s.id, skip ? 0 : 1, connected ? 1 : 0, skip ? 1 : 0]);

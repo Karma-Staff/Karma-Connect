@@ -105,9 +105,19 @@ describe("desktop relay: app → browser", () => {
 describe("desktop relay: what is accepted", () => {
   it("takes a phone number and trims the rest", () => {
     expect(cleanCall({ number: "+1 (555) 123-4567", name: "Jane", leadId: 12 }))
-      .toEqual({ number: "+15551234567", name: "Jane", leadId: 12, campaign: null });
+      .toEqual({ number: "+15551234567", name: "Jane", leadId: 12, campaign: null, session: false });
     expect(cleanCall({ number: "+15551234567", leadId: -4, campaign: { name: "Oct list", callback: { number: "+1 555 000 1111", ext: "101" } } }).campaign)
       .toEqual({ name: "Oct list", callback: { number: "+15550001111", ext: "101" } });
+  });
+
+  it("marks a call session's call, campaign or not, so the app reports its wrap-up", () => {
+    // the rep's own call session: no campaign, still a session call
+    expect(cleanCall({ number: "+15551234567", leadId: 12, session: true }).session).toBe(true);
+    expect(cleanCall({ number: "+15551234567", leadId: -7, session: true }).session).toBe(true);
+    expect(cleanCall({ number: "+15551234567", leadId: 12, campaign: { name: "Oct list" } }).session).toBe(true);
+    // no lead to move on from, or not asked for: an ordinary call
+    expect(cleanCall({ number: "+15551234567", session: true }).session).toBe(false);
+    expect(cleanCall({ number: "+15551234567", leadId: 12, session: "yes" }).session).toBe(false);
   });
 
   it("refuses anything that isn't a phone number", () => {
@@ -123,5 +133,7 @@ describe("desktop relay: what is accepted", () => {
     expect(cleanEvent({ kind: "ended", leadId: 3, outcome: "weird" })).toMatchObject({ outcome: "no-answer" });
     expect(cleanEvent({ kind: "wrapped", leadId: 3, label: "VM", note: "left a message" }))
       .toMatchObject({ kind: "wrapped", label: "VM", note: "left a message" });
+    expect(cleanEvent({ kind: "wrapped", leadId: 3, outcome: "connected" }).outcome).toBe("connected");
+    expect(cleanEvent({ kind: "wrapped", leadId: 3, outcome: "weird" }).outcome).toBeUndefined();
   });
 });

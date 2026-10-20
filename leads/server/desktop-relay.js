@@ -82,9 +82,9 @@ function createRelay({ now = () => Date.now() } = {}) {
   }
 
   /* The browser asks for a call. null = no app online to take it. */
-  function call(uid, { number, name, leadId, campaign }) {
+  function call(uid, { number, name, leadId, campaign, session = false }) {
     if (!online(uid)) return null;
-    const c = { id: String(nextId++), type: "call", at: now(), number, name, leadId, campaign };
+    const c = { id: String(nextId++), type: "call", at: now(), number, name, leadId, campaign, session };
     const d = desk(uid);
     // the newest poll is the app that is surely still there
     const w = d.waiters.pop();
@@ -134,7 +134,10 @@ function cleanCall(b) {
       ext: String(cb.ext || "").replace(/\D/g, "").slice(0, 10) || null,
     } : null,
   } : null;
-  return { number, name: String(b?.name || "").slice(0, 200), leadId, campaign };
+  /* session: the lead is the one a call session (a manager's campaign or the
+     rep's own list) is on, so the app asks for the wrap-up and reports it back */
+  return { number, name: String(b?.name || "").slice(0, 200), leadId, campaign,
+    session: !!campaign || (b?.session === true && !!leadId) };
 }
 
 function cleanEvent(b) {
@@ -143,6 +146,8 @@ function cleanEvent(b) {
   if (Number.isInteger(b.leadId) && b.leadId !== 0) e.leadId = b.leadId;
   if (b.kind === "ended") e.outcome = OUTCOMES.has(b.outcome) ? b.outcome : "no-answer";
   if (b.kind === "wrapped") {
+    // the line's verdict again, for a browser that missed the "ended"
+    if (OUTCOMES.has(b.outcome)) e.outcome = b.outcome;
     e.label = b.label ? String(b.label).slice(0, 60) : null;
     e.note = b.note ? String(b.note).slice(0, 2000) : "";
   }

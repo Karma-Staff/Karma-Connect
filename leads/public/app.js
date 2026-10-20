@@ -161,7 +161,9 @@ async function api(path, opts = {}) {
          both, or a page ends up printing "[object Object]" */
       if (msg && typeof msg === "object") msg = msg.message || JSON.stringify(msg);
     } catch { /* not JSON */ }
-    throw new Error(msg || `${path} -> ${res.status}: ${text}`);
+    const err = new Error(msg || `${path} -> ${res.status}: ${text}`);
+    err.status = res.status;
+    throw err;
   }
   const text = await res.text();
   return text ? JSON.parse(text) : null;
@@ -7097,6 +7099,13 @@ function renderCampaign(d) {
     r.Employees ? r.Employees.toLocaleString() + " employees" : "",
     ct?.local ? `${ct.local} ${ct.zone}` : ""].filter(Boolean);
   const last = d.current.lastCall;
+  /* This rep rang this lead minutes ago and the session never heard how it
+     ended (the page was refreshed, a save didn't reach it). Don't ring them
+     again: Next moves on, and the server counts it as called (campaign.js). */
+  const justCalled = !!(last && !last.in_session && S.me?.email
+    && String(last.actor || "").toLowerCase() === S.me.email.toLowerCase()
+    && Date.now() - new Date(last.at).getTime() < 30 * 60e3
+    && ["connected", "no-answer", "busy"].includes(last.to_value)) && !kdActive() && !CAMP.awaitDispo;
   const callerId = c?.callback?.name
     ? `<span class="cs-cid-k">Caller ID</span><span><b>${esc(c.callback.name)}</b> · callbacks ring ${esc(String(c.callback.name).split(" ")[0])}</span>`
     : KD.callerId ? `<span class="cs-cid-k">Caller ID</span><span><b>${esc(kdFmtNum(KD.callerId))}</b> · your own number</span>` : "";
@@ -7126,9 +7135,12 @@ function renderCampaign(d) {
           <label class="cs-gap" title="Seconds between calls">gap <input type="number" id="camp-gap" min="2" max="60" value="${autoGap()}"> s</label>` : ""}
         <div class="cs-prog">${campProgress(d)}</div>
         <span id="cs-act">${campAction(d, phase)}</span>
-        <button type="button" class="cs-btn cs-ghost camp-skip" id="camp-skip" title="Leave it untouched and move on"><span>Skip</span>${CS_IC.next}</button>
+        <button type="button" class="cs-btn cs-ghost camp-skip" id="camp-skip" title="${justCalled
+          ? "You've already called them — move on; it counts as called" : "Leave it untouched and move on"}"><span>${justCalled ? "Next" : "Skip"}</span>${CS_IC.next}</button>
       </div>
-      <div class="cs-status"><span id="camp-auto-state" class="camp-auto-state cs-msg">${esc(campStateText(d))}</span></div>
+      <div class="cs-status"><span id="camp-auto-state" class="camp-auto-state cs-msg">${esc(justCalled
+        ? `You called ${name} ${relTime(last.at)} — press Next to move on; it counts as called, not skipped`
+        : campStateText(d))}</span></div>
       ${VOICE.mode === "copy" ? `<div class="cs-warn">No in-page phone on this Zoho account — numbers are copied for you; log each call below.</div>`
         : VOICE.scopeWarning ? `<div class="cs-warn">${esc(VOICE.scopeWarning)}</div>` : ""}
 
@@ -7325,6 +7337,7 @@ async function submitOutcome(extra) {
   if (CAMP.busy) return;                       // a double press must not skip a lead
   CAMP.busy = true;
   // pressed on the card instead of saving the sheet: the sheet's question is answered
+  const waited = CAMP.awaitDispo;
   if (CAMP.awaitDispo) { CAMP.awaitDispo = null; kdShow("kd-wrap", false); }
   document.querySelectorAll(".camp-out, .camp-skip").forEach((b) => (b.disabled = true));
   const fu = $("camp-fu");
@@ -7341,20 +7354,35 @@ async function submitOutcome(extra) {
       } catch (e) { toast("Zoho CRM: " + e.message, 8000); }
     }
     CAMP.advanced = true;
-    CAMP.s = await api("/api/campaign/outcome", {
-      method: "POST",
-      body: JSON.stringify({
-        ...extra,
-        leadId: CAMP.s?.current?.lead?.id ?? null,
-        note: $("camp-note") ? $("camp-note").value : "",
-        followUpAt: fu && fu.checked && $("camp-fu-when").value
-          ? new Date($("camp-fu-when").value).toISOString() : null,
-      }),
+    const body = JSON.stringify({
+      ...extra,
+      leadId: CAMP.s?.current?.lead?.id ?? null,
+      note: $("camp-note") ? $("camp-note").value : "",
+      followUpAt: fu && fu.checked && $("camp-fu-when").value
+        ? new Date($("camp-fu-when").value).toISOString() : null,
     });
+    /* A blip here used to strand the session: the disposition was saved, the
+       session never heard, and nothing rang next. Try again before giving
+       up — a refusal from the server (4xx) is an answer, not a blip. */
+    for (let attempt = 0; ; attempt++) {
+      try {
+        CAMP.s = await api("/api/campaign/outcome", { method: "POST", body });
+        break;
+      } catch (e) {
+        if (attempt >= 2 || (e.status >= 400 && e.status < 500)) throw e;
+        await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+      }
+    }
     renderCampaign(CAMP.s);
   } catch (e) {
-    toast("Could not record that: " + e.message, 8000);
+    CAMP.advanced = false;
+    // still waiting on this call: keep the bar saying so, with its Disposition button
+    if (waited) CAMP.awaitDispo = waited;
+    toast("Could not record that: " + e.message + " — press Skip to move on; a lead you've called still counts as called", 10000);
+    const el = $("camp-auto-state");
+    if (el) el.textContent = "couldn't save the last call — press Skip to move on (it still counts as called)";
     document.querySelectorAll(".camp-out, .camp-skip").forEach((b) => (b.disabled = false));
+    campPaintLive();
   }
   CAMP.busy = false;
 }
@@ -12712,8 +12740,13 @@ function deskSetStatus(st) {
 // browser → app. Answers "handled" at once, like every other dial route.
 function deskCall(number, name, leadId) {
   const digits = normalizeNumber(number);
-  const c = CAMP.s?.campaign && leadId && String(CAMP.s.current?.lead?.id) === String(leadId) ? CAMP.s.campaign : null;
-  const body = { number: digits, name: name || "", leadId: leadId || null,
+  /* The session's own lead — a manager's campaign or the rep's own list. The
+     app then asks for the wrap-up and reports it back, which is what moves
+     this session on; without the flag an own-list call got neither, and the
+     session sat waiting after every call. */
+  const inSession = !!(CAMP.s && leadId && String(CAMP.s.current?.lead?.id) === String(leadId));
+  const c = inSession ? CAMP.s.campaign : null;
+  const body = { number: digits, name: name || "", leadId: leadId || null, session: inSession,
     campaign: c ? { name: c.name || "", callback: c.callback || null } : null };
   api("/api/voice/desktop/call", { method: "POST", body: JSON.stringify(body) })
     .then(() => toast("Calling " + (name || number) + " on the Karma Connect Dialer app…"))
@@ -12751,7 +12784,11 @@ function deskOnEvent(e) {
   if (!e.leadId) return;
   if (e.kind === "ended") return campaignCallEnded(e.leadId, e.outcome);
   if (e.kind === "wrapped") {
-    const w = CAMP.awaitDispo;
+    let w = CAMP.awaitDispo;
+    /* the "ended" never arrived (a dropped poll, a restart between the two):
+       the wrap-up for the lead this session is on still moves it on */
+    if (!w && !CAMP.busy && String(CAMP.s?.current?.lead?.id) === String(e.leadId))
+      w = CAMP.awaitDispo = { leadId: e.leadId, sdkOutcome: e.outcome || "no-answer" };
     if (!w || String(w.leadId) !== String(e.leadId)) return;
     if (e.note && $("camp-note")) $("camp-note").value = e.note;
     kdAfterWrap(e.label ? { label: e.label } : null);
@@ -12794,7 +12831,7 @@ async function deskTake(c) {
   let ok = false;
   try { ok = await callHoursOk(c.number, c.leadId || null); } catch (e) { ok = false; }
   if (!ok) return deskSay("refused", { ...ref, reason: DESK.hoursWhy || "Not dialled — it's outside calling hours where this number is" });
-  DESK.taking = { ref: c.id, leadId: c.leadId || null, campaign: c.campaign || null };
+  DESK.taking = { ref: c.id, leadId: c.leadId || null, campaign: c.campaign || null, session: !!c.session };
   DESK.wrapFor = null;
   deskSay("accepted", ref);
   if (!dialNow(c.number, c.name || "", c.leadId || null)) {
@@ -12802,13 +12839,14 @@ async function deskTake(c) {
     deskSay("refused", { ...ref, reason: "Not dialled — calling isn't set up in the dialer app" });
   }
 }
-/* A handed-over call ended. A campaign call always gets its wrap-up sheet
-   here, even when the line failed (only a normal hang-up opens it by itself),
-   or the browser's session would wait for a sheet that never comes. */
+/* A handed-over call ended. A session call (a campaign's or the rep's own
+   list's) always gets its wrap-up sheet here, even when the line failed (only
+   a normal hang-up opens it by itself), or the browser's session would wait
+   for a sheet that never comes. */
 function deskEnded(c, outcome) {
   deskSay("ended", { ref: c.relay.ref, leadId: c.leadId || null, outcome });
-  if (!c.relay.campaign || !c.leadId) return;
-  DESK.wrapFor = { ref: c.relay.ref, leadId: c.leadId };
+  if (!(c.relay.session || c.relay.campaign) || !c.leadId) return;
+  DESK.wrapFor = { ref: c.relay.ref, leadId: c.leadId, outcome };
   DESK.wrapNote = "";
   setTimeout(() => {
     if (DESK.wrapFor && kdEl("kd-wrap")?.classList.contains("hidden") && !kdActive()) kdOpenWrap();
@@ -12818,7 +12856,7 @@ function deskWrapped(picked) {
   const w = DESK.wrapFor;
   if (!w || !kcInDesktopApp()) return;
   DESK.wrapFor = null;
-  deskSay("wrapped", { ref: w.ref, leadId: w.leadId, label: picked?.label || null, note: DESK.wrapNote || "" });
+  deskSay("wrapped", { ref: w.ref, leadId: w.leadId, outcome: w.outcome, label: picked?.label || null, note: DESK.wrapNote || "" });
   DESK.wrapNote = "";
 }
 
