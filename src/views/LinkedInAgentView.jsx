@@ -360,7 +360,8 @@ function Pcs({ st, run, busy, showToast, open, onToggle, pairNow }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pairNow]);
 
-  const cmd = pair ? "npm run agent -- --pair " + pair.code : "";
+  // npm.cmd: in PowerShell plain "npm" is blocked ("running scripts is disabled on this system")
+  const cmd = pair ? "npm.cmd run agent -- --pair " + pair.code : "";
   const copy = (t) => { try { navigator.clipboard.writeText(t); showToast("Copied"); } catch (e) {} };
   async function getZip() {
     setDl(true);
@@ -405,7 +406,7 @@ function Pcs({ st, run, busy, showToast, open, onToggle, pairNow }) {
           </ol>
           <div className="lia-muted" style={{ fontSize: 12 }}>
             Code <b style={{ color: "var(--text)", letterSpacing: ".08em" }}>{pair.code}</b> · {left > 0 ? "works for " + Math.floor(left / 60) + ":" + String(left % 60).padStart(2, "0") : "expired"}.
-            {" "}No Karma Connect folder on that PC? Download the agent below, unzip it and run <code>npm run pair -- {pair.code}</code> in it.
+            {" "}No Karma Connect folder on that PC? Download the agent below, unzip it, and double-click <b>Connect-this-PC</b> in it: it installs everything and asks for this code.
           </div>
           <div className="mact" style={{ marginTop: 10 }}>
             {left <= 0 && <button className="btn primary sm" onClick={makeCode}>New code</button>}

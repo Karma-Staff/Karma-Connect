@@ -121,6 +121,8 @@ function packageJson({ baseUrl }) {
         description: "Local LinkedIn worker for Karma Connect — sends the messages you approved in the app.",
         scripts: {
           pair: "node run.cjs --url " + baseUrl + " --pair",
+          // the command the LinkedIn agent page shows works here too: npm run agent -- --pair CODE
+          agent: "node run.cjs --url " + baseUrl,
           login: "node run.cjs --login",
           start: "node run.cjs",
           "dry-run": "node run.cjs --dry-run",
@@ -151,21 +153,30 @@ pause, dry run, daily limits and hours, "check the inbox now", and signing in to
 
 Your server: **${baseUrl}**
 
-## 1. Install
+## The easy way (Windows)
 
-You need [Node.js 20+](https://nodejs.org). Then, in this folder:
+You need [Node.js 20+](https://nodejs.org). In Karma Connect open **LinkedIn agent → Connect a
+PC** to get a code like \`K7Q4-MZ2P\` (valid 15 minutes), then in this folder **double-click
+\`Connect-this-PC.bat\`**. It installs what it needs, asks for the code, and connects this PC.
+
+## 1. Install (by hand)
+
+In this folder, in a terminal:
 
 ${F}bash
-npm install
+npm.cmd install
 ${F}
 
-## 2. Connect this PC
+On Windows type \`npm.cmd\`, not \`npm\`: PowerShell blocks plain \`npm\` with "running scripts is
+disabled on this system". On macOS / Linux it's plain \`npm\`.
+
+## 2. Connect this PC (by hand)
 
 In Karma Connect open **LinkedIn agent → Connect a PC**. It shows a code like \`K7Q4-MZ2P\`
 (valid 15 minutes). Then here:
 
 ${F}bash
-npm run pair -- K7Q4-MZ2P
+npm.cmd run pair -- K7Q4-MZ2P
 ${F}
 
 On Windows that's all: the agent starts in the background now and every time Windows starts.
@@ -190,14 +201,48 @@ activity log on that page shows every step. Turn Dry run off when you're happy.
 
 - Approve messages in the app first. The agent only sends what a human approved, and it never
   writes or edits message content. Replies are drafted by AI in the app and still need your OK.
-- It only reports conversations with people you reached out to from Karma Connect. Everything
-  else in your LinkedIn inbox stays on this machine.
+- It reports every incoming LinkedIn conversation to Karma Connect, so each one can be answered
+  and researched there. (The server setting LI_INBOX_ALL=0 limits it to replies from your outreach.)
 - \`.profile/\` holds a **live logged-in LinkedIn session**, and \`.kc-agent.json\` this PC's
   key to Karma Connect. Don't copy either to another machine. To cut a PC off, press
   **Disconnect** next to it on the LinkedIn agent page.
 - \`agent.log\` is the log on this PC. \`README.md\` is the full reference.
 `;
 }
+
+// Double-click on Windows: installs, asks for the pairing code, connects this PC. It calls
+// npm.cmd, not npm: PowerShell's default policy refuses npm.ps1 ("running scripts is disabled
+// on this system"), which is how an employee's first try failed on 2026-10-20.
+const CONNECT_BAT = [
+  "@echo off",
+  "title Karma Connect LinkedIn agent - connect this PC",
+  "cd /d \"%~dp0\"",
+  "echo.",
+  "echo  Karma Connect LinkedIn agent - connect this PC",
+  "echo  ----------------------------------------------",
+  "where node >nul 2>nul",
+  "if errorlevel 1 (",
+  "  echo  Node.js is not installed. Install it from https://nodejs.org, then double-click this again.",
+  "  pause",
+  "  exit /b 1",
+  ")",
+  "if not exist \"node_modules\\playwright\" (",
+  "  echo  Installing - this takes a minute the first time...",
+  "  call npm.cmd install",
+  "  if errorlevel 1 (",
+  "    echo  The install failed - see the messages above.",
+  "    pause",
+  "    exit /b 1",
+  "  )",
+  ")",
+  "echo.",
+  "echo  In Karma Connect open LinkedIn agent, press Connect a PC. It shows a code like K7Q4-MZ2P.",
+  "set /p CODE= Type or paste the code here, then press Enter: ",
+  "call npm.cmd run pair -- %CODE%",
+  "echo.",
+  "pause",
+  "",
+].join("\r\n");
 
 // Builds the zip. Throws if the agent sources are missing from the deploy.
 function buildAgentZip({ baseUrl }) {
@@ -207,6 +252,7 @@ function buildAgentZip({ baseUrl }) {
   }));
   entries.unshift({ name: ROOT + "/SETUP.md", data: Buffer.from(setupMd({ baseUrl }), "utf8") });
   entries.push({ name: ROOT + "/package.json", data: Buffer.from(packageJson({ baseUrl }), "utf8") });
+  entries.push({ name: ROOT + "/Connect-this-PC.bat", data: Buffer.from(CONNECT_BAT, "utf8") });
   return zip(entries);
 }
 

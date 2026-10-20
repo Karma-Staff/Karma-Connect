@@ -151,7 +151,7 @@ describe("agent-bundle.buildAgentZip", () => {
     const count = zip.readUInt16LE(eocd + 10);
     const size = zip.readUInt32LE(eocd + 12);
     const offset = zip.readUInt32LE(eocd + 16);
-    expect(count).toBe(11);
+    expect(count).toBe(12);
     expect(offset + size).toBe(eocd);                    // directory ends where the EOCD starts
     expect(zip.readUInt32LE(offset)).toBe(0x02014b50);   // and starts on a central-dir header
     expect(zip.readUInt32LE(0)).toBe(0x04034b50);        // file begins with a local header
@@ -170,6 +170,7 @@ describe("agent-bundle.buildAgentZip", () => {
     expect(names).toContain("karma-connect-agent/inbox.cjs");
     expect(names).toContain("karma-connect-agent/capture.cjs");
     expect(names).toContain("karma-connect-agent/prospect.cjs");
+    expect(names).toContain("karma-connect-agent/Connect-this-PC.bat");
     expect(names).toContain("karma-connect-agent/SETUP.md");
     expect(names).toContain("karma-connect-agent/package.json");
   });
