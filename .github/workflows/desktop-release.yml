@@ -38,8 +38,8 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
-          cache: npm
-          cache-dependency-path: desktop/package-lock.json
+          # no `cache: npm` — a release build must not restore the cache shared
+          # with other workflows; npm ci checks every package against the lockfile
 
       - name: Install (exactly the lockfile)
         run: npm ci

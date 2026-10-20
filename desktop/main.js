@@ -69,6 +69,16 @@ const MIN_W = 300, MIN_H = 480, MAX_W = 560, MAX_H = 1000;
 // page loads and behind it, so the window edge is never see-through
 const SURFACE = "#0e1a30";
 
+/* An installed copy refuses Chromium's remote debugging. The fuses already
+   block --inspect, but --remote-debugging-port / --remote-debugging-pipe
+   would hand this signed-in, microphone-enabled window to whoever started it
+   (a shortcut or a script can add the switch). Dev runs keep it. */
+const DEBUG_SWITCHES = ["remote-debugging-port", "remote-debugging-pipe"];
+if (app.isPackaged && (DEBUG_SWITCHES.some((s) => app.commandLine.hasSwitch(s))
+  || process.argv.some((a) => DEBUG_SWITCHES.some((s) => a.toLowerCase().startsWith("--" + s))))) {
+  app.exit(1);
+}
+
 // call audio must play without a click, or the far end is silent
 app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 if (!app.requestSingleInstanceLock()) app.quit();
@@ -139,8 +149,20 @@ function forceEmbed(url) {
    in a lead, a redirect — opens in the person's browser instead: this window
    is always on top, holds the microphone, and should never become a general
    browser. */
+/* And only two of its pages: the dialer (/leads…) and the sign-in at "/",
+   which a signed-out dialer is sent to as /?next=/leads/ and which sends it
+   back. The rest of Karma Connect opens in the browser, so a bug anywhere
+   else on the site never runs in this window, next to the microphone. */
+const onDialerPath = (p) => p === "/leads" || p.startsWith("/leads/");
 function allowedInWindow(url) {
-  try { return new URL(url).origin === DIALER_ORIGIN; } catch (e) { return false; }
+  try {
+    const u = new URL(url);
+    return u.origin === DIALER_ORIGIN && (u.pathname === "/" || onDialerPath(u.pathname));
+  } catch (e) { return false; }
+}
+function onDialerPage(url) {
+  try { const u = new URL(url); return u.origin === DIALER_ORIGIN && onDialerPath(u.pathname); }
+  catch (e) { return false; }
 }
 /* A redirect sent out to the browser is usually a sign-in started here — the
    RingCentral "Reconnect" button (/api/voice/rc/connect) is one. It finishes
@@ -294,12 +316,16 @@ function showBubble() {
    check, and a real Quit (the window's close button only closes the window). */
 function showBubbleMenu() {
   const packaged = app.isPackaged;
+  // switched off in Task Manager → that is the rep's choice, and only Task Manager changes it
+  const blocked = packaged && autoStartBlocked();
   Menu.buildFromTemplate([
     { label: "Open dialer", click: openDialer },
     { type: "separator" },
-    { label: "Start with Windows", type: "checkbox", enabled: packaged,
-      checked: packaged && autoStartOn(),
-      click: (item) => setAutoStart(item.checked) },
+    blocked
+      ? { label: "Start with Windows: turned off in Task Manager", enabled: false }
+      : { label: "Start with Windows", type: "checkbox", enabled: packaged,
+        checked: packaged && autoStartOn(),
+        click: (item) => setAutoStart(item.checked) },
     { label: "Check for updates", enabled: packaged, click: () => checkForUpdates(true) },
     { label: `Version ${app.getVersion()}`, enabled: false },
     { type: "separator" },
@@ -415,18 +441,18 @@ function regValue(key) {
       { stdio: "pipe", windowsHide: true }).toString();
   } catch (e) { return null; }
 }
-function autoStartOn() {
+// Task Manager's "Disabled" on our Run value. Never deleted from here: that
+// value is Windows' own record of the user's choice (KA-05).
+function autoStartBlocked() {
   if (!regValue(RUN_KEY)) return false;
   const m = /REG_BINARY\s+([0-9A-F]{2})/i.exec(regValue(APPROVED_KEY) || "");
-  return !(m && (parseInt(m[1], 16) & 1));
+  return !!(m && (parseInt(m[1], 16) & 1));
+}
+function autoStartOn() {
+  return !!regValue(RUN_KEY) && !autoStartBlocked();
 }
 function setAutoStart(on) {
   try { app.setLoginItemSettings({ ...LOGIN_ITEM, openAtLogin: !!on }); } catch (e) { /* not fatal */ }
-  // ticking it back on also lifts a Task Manager "Disabled", or Windows would still skip it
-  if (on) try {
-    require("node:child_process").execFileSync("reg", ["delete", APPROVED_KEY, "/v", LOGIN_ITEM.name, "/f"],
-      { stdio: "pipe", windowsHide: true });
-  } catch (e) { /* no such value — nothing to lift */ }
   writePrefs({ ...readPrefs(), autoStartChosen: true });
 }
 function autoStartFirstRun() {
@@ -473,15 +499,19 @@ app.whenReady().then(() => {
      DIALER_ORIGIN as a string always failed, so Chromium hid the device ids,
      the dialer asked for "exactly" a microphone with an empty id, and every
      call died at once with OverconstrainedError. Compare origins instead. */
+  /* Only while the window is ON the dialer page (/leads), not anywhere on
+     the origin: the sign-in page shares the origin and never needs the mic. */
   const allowed = new Set(["media", "microphone", "audioCapture", "speaker-selection"]);
   const fromDialer = (url) => { try { return new URL(url).origin === DIALER_ORIGIN; } catch (e) { return false; } };
   session.defaultSession.setPermissionRequestHandler((wc, permission, cb, details) => {
-    cb(allowed.has(permission) && fromDialer(wc.getURL())
+    cb(allowed.has(permission) && onDialerPage(wc.getURL())
       && !(details?.mediaTypes || []).includes("video"));
   });
   session.defaultSession.setPermissionCheckHandler((wc, permission, origin, details) =>
     allowed.has(permission) && details?.mediaType !== "video"
-      && (fromDialer(origin) || fromDialer(details?.requestingUrl)));
+      && (fromDialer(origin) || fromDialer(details?.requestingUrl))
+      // a check can come without a web contents; the request above still gates the mic itself
+      && (!wc || onDialerPage(wc.getURL())));
 
   createWindow();
   app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

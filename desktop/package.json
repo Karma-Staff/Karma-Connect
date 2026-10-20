@@ -1,6 +1,6 @@
 {
   "name": "karma-connect-dialer-desktop",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "description": "Karma Connect softphone as an always-on-top desktop app — floats over every application.",
   "author": "Karma Staff",
@@ -11,7 +11,7 @@
     "dist:publish": "electron-builder --config electron-builder.config.cjs --win --publish always"
   },
   "devDependencies": {
-    "electron": "44.7.2",
+    "electron": "44.9.1",
     "electron-builder": "26.15.3"
   },
   "dependencies": {
