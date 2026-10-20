@@ -21,7 +21,8 @@ const NAV_TIMEOUT = 45000;
 function loadPlaywright() {
   try { return require("playwright"); }
   catch (e) {
-    throw new Error("Playwright isn't installed. Run:  npm install playwright && npx playwright install chromium");
+    // One command per line and npm.cmd: Windows PowerShell rejects "&&" and blocks plain npm.
+    throw new Error("Playwright isn't installed on this PC. In the agent's folder run  npm.cmd install  and then  npx.cmd playwright install chromium  (one at a time), then press Sign in to LinkedIn again.");
   }
 }
 

@@ -22,7 +22,7 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { spawn } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const { open, isSignedIn, login, whoAmI, PROFILE_DIR } = require("./session.cjs");
 const { sendOne, replyOne } = require("./send.cjs");
 const { inviteOne } = require("./invite.cjs");
@@ -164,11 +164,32 @@ function startInBackground() {
   return true;
 }
 
+/* The part that drives the browser. Pairing used to succeed without it, and the agent then
+   started in the background unable to open anything ("Playwright isn't installed"). So pairing
+   installs it when it's missing — only in a folder that is its own npm project (the download),
+   never by running npm install in some other directory. */
+function hasPlaywright() { try { require.resolve("playwright"); return true; } catch (e) { return false; } }
+function ensurePlaywright() {
+  if (hasPlaywright()) return true;
+  const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+  if (!fs.existsSync(path.join(__dirname, "package.json"))) {
+    console.log("\nPlaywright isn't installed. In the Karma Connect folder run:  " + npm + " install");
+    return false;
+  }
+  console.log("\nInstalling Playwright (it drives the browser) — about a minute the first time…");
+  // one command string: npm.cmd needs a shell on Windows, and Node warns about args + shell
+  const r = spawnSync(npm + " install --no-audit --no-fund", { cwd: __dirname, stdio: "inherit", shell: true });
+  if (r.status === 0 && hasPlaywright()) return true;
+  console.log("Couldn't install it. In this folder run:  " + npm + " install   then press Sign in to LinkedIn in Karma Connect.");
+  return false;
+}
+
 async function pair(code) {
   const url = argVal("--url");
   if (url) cfg.baseUrl = url.replace(/\/$/, "");
   const r = await api("/api/outreach/agent/pair/claim", { method: "POST", auth: false, body: { code, name: os.hostname() } });
   saveConfig({ baseUrl: cfg.baseUrl, token: r.token, email: r.email, pairedAt: new Date().toISOString() });
+  ensurePlaywright();
   console.log(`\nConnected this PC (${r.name}) to Karma Connect as ${r.email}.`);
   if (flag("--no-startup") || !installStartup()) {
     console.log("Start it with:  npm run agent");
