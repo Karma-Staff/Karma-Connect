@@ -1,7 +1,8 @@
 // The browser session the agent works in.
 //
 // The agent never handles your LinkedIn password. It drives a PERSISTENT browser profile stored
-// on this machine (agent/.profile by default): you sign in there by hand once, and the session
+// on this machine (agent/.profile for the first account, agent/.profile-<id> for the others): you
+// sign in there by hand once, and the session
 // cookie survives restarts, so every run after that is unattended. When the cookie eventually
 // expires the agent stops and asks you to sign in again — it does not try to log in for you.
 //
@@ -28,11 +29,11 @@ function loadPlaywright() {
 // checkpoint URL when the session is gone.
 const LOGGED_OUT_RE = /\/(login|uas\/login|checkpoint|authwall)/i;
 
-// Open the persistent profile. Headed by default — you want to see what it is doing, and a
+// Open a persistent profile (one per LinkedIn account; `dir` defaults to agent/.profile). Headed by default — you want to see what it is doing, and a
 // visible window is also how you complete the one-time sign-in.
-async function open() {
+async function open(dir = PROFILE_DIR) {
   const { chromium } = loadPlaywright();
-  fs.mkdirSync(PROFILE_DIR, { recursive: true });
+  fs.mkdirSync(dir, { recursive: true });
   // Which browser to drive: LI_AGENT_BROWSER = msedge | chrome | chromium (default msedge).
   // Edge is the default because it's what LinkedIn accepted a signed-in session in during
   // testing — Google's OAuth screen refuses automated browsers outright, and the saved session
@@ -57,7 +58,7 @@ async function open() {
   let used = "";
   for (const channel of order) {
     try {
-      ctx = await chromium.launchPersistentContext(PROFILE_DIR, channel ? { ...opts, channel } : opts);
+      ctx = await chromium.launchPersistentContext(dir, channel ? { ...opts, channel } : opts);
       used = channel || "chromium";
       console.log("Browser: " + (channel || "bundled Chromium"));
       break;
@@ -97,8 +98,8 @@ async function isSignedIn(page) {
 
 // One-time setup: open the profile and wait for the human to sign in. Called by `npm run
 // agent:login`. Polls until the feed loads, then closes — the cookie is now in the profile.
-async function login({ waitMinutes = 10 } = {}) {
-  const { ctx, page } = await open();
+async function login({ waitMinutes = 10, dir = PROFILE_DIR } = {}) {
+  const { ctx, page } = await open(dir);
   await page.goto("https://www.linkedin.com/login", { waitUntil: "domcontentloaded" });
   console.log("\nA browser window is open. Sign in to LinkedIn there with your email and");
   console.log("password — do NOT use \"Continue with Google\", which refuses automated browsers.");
@@ -109,7 +110,7 @@ async function login({ waitMinutes = 10 } = {}) {
     if (!LOGGED_OUT_RE.test(page.url())) {
       await page.waitForTimeout(2000);
       if (!LOGGED_OUT_RE.test(page.url())) {
-        console.log("Signed in. The session is saved in " + PROFILE_DIR);
+        console.log("Signed in. The session is saved in " + dir);
         await ctx.close();
         return true;
       }

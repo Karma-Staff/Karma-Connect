@@ -34,10 +34,30 @@ has, and it stalls on 2FA anyway.
 > `agent/.profile/` holds a **live logged-in session**. It's gitignored. Don't copy it around,
 > and delete it if the machine changes hands.
 
+## Up to four LinkedIn accounts
+
+One PC can run up to four LinkedIn accounts (`LI_AGENT_MAX_ACCOUNTS`). Add them on the LinkedIn
+agent page; each gets its own browser profile on the PC (`agent/.profile` for the first, which keeps
+any sign-in from before, and `agent/.profile-<id>` for the others), its own window, its own loop,
+and its own switch, dry run, limits, inbox and log. Every cap is counted **per account**.
+
+- In the Send Queue each LinkedIn item has a **From** picker. Left on Automatic, a message goes from
+  the account that invited that person, otherwise from the first account. A reply always goes from
+  the account whose conversation it is.
+- Two accounts signed in to the **same** LinkedIn would double the caps, so neither sends until one
+  is signed in to a different LinkedIn.
+- Removing an account sends its unsent items to the first account, skips its unanswered replies,
+  and the PC deletes that account's saved sign-in on its next check-in.
+- `npm run agent:login -- 2` signs account 2 in by hand (same as its **Sign in to LinkedIn** button).
+
+Four accounts from one PC share one office IP. LinkedIn can link accounts that way, so keep the
+limits low on all of them.
+
 ## Setup
 
-Everything after this is done from Karma Connect → **LinkedIn agent**: start and pause, dry run,
-limits and hours, "check the inbox / accepts now", signing in to LinkedIn, and the activity log.
+Everything after this is done from Karma Connect → **LinkedIn agent**: adding accounts, start and
+pause, dry run, limits and hours, "check the inbox / accepts now", signing in to LinkedIn, and the
+activity log.
 
 ```bash
 npm install                         # picks up playwright (optionalDependencies)
@@ -63,7 +83,7 @@ the agent in the background, with no console window. It logs to `agent/agent.log
 | `npm run agent -- --uninstall-startup` | stop it starting with Windows |
 | `--url http://localhost:8787` | with `--pair`, for a local server |
 
-Only one copy runs per PC (`agent/.agent.lock`). It checks in every 15 seconds: while paused it
+Only one copy runs per PC (`agent/.agent.lock`). It checks in every 3 seconds and acts on a command at once: while paused it
 closes its browser and waits; a command from the app is picked up on the next check-in.
 
 Try it safely first: turn on **Dry run** on the LinkedIn agent page and press **Start**.

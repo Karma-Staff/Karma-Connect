@@ -13,7 +13,7 @@
 // which read env at load — this module must be required AFTER the .env loader has run.
 const { dbOn, q, logActivity } = require("./db.cjs");
 const { sendOutreachEmail } = require("./email.cjs");
-const { WAITING_SQL } = require("./linkedin-agent.cjs");
+const { WAITING_SQL, EFF_SQL } = require("./linkedin-agent.cjs");
 
 const CHANNELS = ["email", "linkedin"];
 const TICK_MS = Math.max(10000, parseInt(process.env.OUTREACH_TICK_MS || "30000", 10)); // default 30s
@@ -105,7 +105,9 @@ async function listQueue(userId, { status = "", channel = "" } = {}) {
   if (channel) { params.push(channel); where += ` and o.channel = ${params.length}`; }
   // waiting: a LinkedIn message held until the invitation to the same person is accepted.
   const { rows } = await q(
-    `select o.*, ${WAITING_SQL("o")} as waiting from outreach_queue o where ${where} order by
+    `select o.*, ${WAITING_SQL("o")} as waiting,
+       case when o.channel = 'linkedin' then ${EFF_SQL("o")} end as li_account_eff
+       from outreach_queue o where ${where} order by
        case status when 'approved' then 0 when 'pending' then 1 when 'sent' then 2 else 3 end,
        coalesce(scheduled_at, created_at) desc limit 300`,
     params,

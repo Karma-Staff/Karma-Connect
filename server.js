@@ -1249,6 +1249,14 @@ async function requireAgent(req, res, next) {
     next();
   } catch (e) { res.status(503).json({ error: { message: "Sign-in is temporarily unavailable." } }); }
 }
+// The LinkedIn account a worker call acts for: body/query accountId, or the first account for an
+// agent from before accounts. 404 when it was removed — the worker stops running it.
+async function agentAccount(req, res) {
+  const id = (req.body && req.body.accountId) || req.query.accountId;
+  const a = await liAgent.accountFor(req.userId, id);
+  if (!a) { res.status(404).json({ error: { message: "That LinkedIn account isn't on the agent any more.", removed: true } }); return null; }
+  return a;
+}
 const pairLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, message: "Too many attempts. Please wait a few minutes and try again.", keyFn: (req) => "agentpair:" + req.ip });
 
 // Agent state for the Send Queue strip: on/off, caps, how many sent today, what's waiting.
@@ -1277,8 +1285,11 @@ app.get("/api/outreach/agent/download", requireUser, (req, res) => {
 // The kill switch. { enabled: true|false } — enabling also clears a previous halt.
 app.post("/api/outreach/agent/enable", requireUser, async (req, res) => {
   try {
-    const state = await liAgent.setEnabled(req.userId, !!(req.body || {}).enabled);
-    res.json({ enabled: !!state.enabled, status: await liAgent.status(req.userId) });
+    const b = req.body || {};
+    // { enabled, accountId? } — accountId "all" (or none, from an older page) means every account.
+    const r = await liAgent.setEnabled(req.userId, !!b.enabled, b.accountId || "all");
+    if (!r) return res.status(404).json({ error: { message: "That LinkedIn account isn't on the agent." } });
+    res.json({ enabled: !!b.enabled, status: await liAgent.status(req.userId) });
   } catch (e) { res.status(500).json({ error: { message: "Could not change the agent state." } }); }
 });
 
@@ -1290,7 +1301,8 @@ app.post("/api/outreach/agent/lease", requireAgent, async (req, res) => {
     const b = req.body || {};
     const hour = Number.isInteger(b.localHour) ? b.localHour : new Date().getHours();
     const day = Number.isInteger(b.localDay) ? b.localDay : new Date().getDay();
-    res.json(await liAgent.lease(req.userId, { leaseId: b.leaseId, localHour: hour, localDay: day }));
+    const a = await agentAccount(req, res); if (!a) return;
+    res.json(await liAgent.lease(req.userId, a, { leaseId: b.leaseId, localHour: hour, localDay: day }));
   } catch (e) { res.status(500).json({ error: { message: "Could not lease work." } }); }
 });
 
@@ -1319,7 +1331,8 @@ app.post("/api/outreach/agent/watch", requireAgent, async (req, res) => {
     const b = req.body || {};
     const hour = Number.isInteger(b.localHour) ? b.localHour : new Date().getHours();
     const day = Number.isInteger(b.localDay) ? b.localDay : new Date().getDay();
-    res.json(await liAgent.watch(req.userId, { localHour: hour, localDay: day }));
+    const a = await agentAccount(req, res); if (!a) return;
+    res.json(await liAgent.watch(req.userId, a, { localHour: hour, localDay: day }));
   } catch (e) { res.status(500).json({ error: { message: "Could not load the watch list." } }); }
 });
 
@@ -1327,21 +1340,24 @@ app.post("/api/outreach/agent/watch", requireAgent, async (req, res) => {
 // messages: [{ from: 'them'|'me', text }] }] }. Threads matching no prospect are dropped.
 app.post("/api/outreach/agent/inbox", requireAgent, async (req, res) => {
   try {
-    res.json(await liAgent.recordInbox(req.userId, (req.body || {}).threads));
+    const a = await agentAccount(req, res); if (!a) return;
+    res.json(await liAgent.recordInbox(req.userId, a, (req.body || {}).threads));
   } catch (e) { res.status(500).json({ error: { message: "Could not store the conversations." } }); }
 });
 
 // Invitations the worker saw accepted. Body: { handles: ["jane-doe-123", ...] }.
 app.post("/api/outreach/agent/accepted", requireAgent, async (req, res) => {
   try {
-    res.json(await liAgent.markAccepted(req.userId, (req.body || {}).handles));
+    const a = await agentAccount(req, res); if (!a) return;
+    res.json(await liAgent.markAccepted(req.userId, a, (req.body || {}).handles));
   } catch (e) { res.status(500).json({ error: { message: "Could not record the acceptances." } }); }
 });
 
 // The accepted person's whole profile page, copied by the worker. Body: { handle, text }.
 app.post("/api/outreach/agent/profile", requireAgent, async (req, res) => {
   try {
-    res.json(await liAgent.recordProfile(req.userId, req.body || {}));
+    const a = await agentAccount(req, res); if (!a) return;
+    res.json(await liAgent.recordProfile(req.userId, a, req.body || {}));
   } catch (e) { res.status(500).json({ error: { message: "Could not store the profile." } }); }
 });
 
@@ -1364,14 +1380,16 @@ app.get("/api/outreach/agent/copy-request/:id", requireUser, async (req, res) =>
 // The worker: profiles someone asked it to copy → { items: [{ id, handle }] }.
 app.post("/api/outreach/agent/copies", requireAgent, async (req, res) => {
   try {
-    res.json(await liAgent.leaseCopies(req.userId));
+    const a = await agentAccount(req, res); if (!a) return;
+    res.json(await liAgent.leaseCopies(req.userId, a));
   } catch (e) { res.status(500).json({ error: { message: "Could not load copy requests." } }); }
 });
 
 // The worker: one copied profile. Body: { text } or { error } or { halt }.
 app.post("/api/outreach/agent/copies/:id", requireAgent, async (req, res) => {
   try {
-    const r = await liAgent.finishCopy(req.userId, String(req.params.id), req.body || {});
+    const a = await agentAccount(req, res); if (!a) return;
+    const r = await liAgent.finishCopy(req.userId, a, String(req.params.id), req.body || {});
     if (!r) return res.status(404).json({ error: { message: "Not found." } });
     res.json(r);
   } catch (e) { res.status(500).json({ error: { message: "Could not store the copy." } }); }
@@ -1380,18 +1398,21 @@ app.post("/api/outreach/agent/copies/:id", requireAgent, async (req, res) => {
 // The worker hit a captcha / checkpoint / limit while reading (not sending). Body: { reason }.
 app.post("/api/outreach/agent/halt", requireAgent, async (req, res) => {
   try {
-    await liAgent.halt(req.userId, String((req.body || {}).reason || "LinkedIn asked for a human.").slice(0, 300));
+    const a = await agentAccount(req, res); if (!a) return;
+    await liAgent.halt(req.userId, a.id, String((req.body || {}).reason || "LinkedIn asked for a human.").slice(0, 300));
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: { message: "Could not stop the agent." } }); }
 });
 
-// The worker checks in about every 15 seconds. Body: { worker: { version, host, browser, state,
-// activity, linkedin: { name, handle }, lastInboxAt, lastAcceptAt, startedAt }, events: [{ at,
-// level, text }] } → { enabled, dryRun, haltReason, limits, command }.
+// The PC checks in every few seconds, for every account it runs. Body: { worker: { version,
+// host, browser, startedAt }, accounts: [{ id, state, activity, linkedin: { name, handle },
+// lastInboxAt, lastAcceptAt }], events: [{ accountId, at, level, text }] } → { accounts: [{ id,
+// slot, label, enabled, dryRun, haltReason, limits, command }], removed: [id] }. An agent from
+// before accounts sends no `accounts` and gets { enabled, dryRun, haltReason, limits, command }.
 app.post("/api/outreach/agent/heartbeat", requireAgent, async (req, res) => {
   try {
     const b = req.body || {};
-    res.json(await liAgent.heartbeat(req.userId, { worker: b.worker, events: b.events, device: req.agentDevice }));
+    res.json(await liAgent.heartbeat(req.userId, { worker: b.worker, accounts: b.accounts, events: b.events, device: req.agentDevice }));
   } catch (e) { res.status(500).json({ error: { message: "Could not record the check-in." } }); }
 });
 
@@ -1407,19 +1428,22 @@ app.post("/api/outreach/agent/pair/claim", pairLimiter, async (req, res) => {
 });
 
 // ─────────────── LinkedIn agent (controls, in Karma Connect) ────────
-// Settings and dry run. Body: { settings?: {...}, dryRun?: boolean } → status.
+// One account's settings and dry run. Body: { accountId, settings?: {...}, dryRun?: boolean } → status.
 app.put("/api/outreach/agent/settings", requireUser, async (req, res) => {
   try {
     const b = req.body || {};
-    res.json(await liAgent.saveSettings(req.userId, { settings: b.settings, dryRun: b.dryRun }));
+    const r = await liAgent.saveSettings(req.userId, b.accountId, { settings: b.settings, dryRun: b.dryRun });
+    if (!r) return res.status(404).json({ error: { message: "That LinkedIn account isn't on the agent." } });
+    res.json(r);
   } catch (e) { res.status(500).json({ error: { message: "Could not save the settings." } }); }
 });
 
-// Ask the worker to do something on its next check-in. Body: { command } — one of
-// check_inbox, check_accepts, linkedin_login → status.
+// Ask one account to do something on the PC's next check-in. Body: { accountId, command } — one
+// of check_inbox, check_accepts, linkedin_login → status.
 app.post("/api/outreach/agent/command", requireUser, async (req, res) => {
   try {
-    res.json(await liAgent.setCommand(req.userId, String((req.body || {}).command || "")));
+    const b = req.body || {};
+    res.json(await liAgent.setCommand(req.userId, b.accountId, String(b.command || "")));
   } catch (e) { res.status(400).json({ error: { message: (e && e.message) || "Could not send the command." } }); }
 });
 
@@ -1439,11 +1463,48 @@ app.post("/api/outreach/agent/devices/:id/revoke", requireUser, async (req, res)
   } catch (e) { res.status(500).json({ error: { message: "Could not disconnect the PC." } }); }
 });
 
-// The activity log, newest first → { events: [{ id, at, level, text }] }.
+// The activity log, newest first (?accountId= for one account) → { events: [{ id, at, level,
+// text, account_id, account_label }] }.
 app.get("/api/outreach/agent/events", requireUser, async (req, res) => {
   try {
-    res.json({ events: await liAgent.listEvents(req.userId, req.query.limit) });
+    res.json({ events: await liAgent.listEvents(req.userId, { limit: req.query.limit, accountId: req.query.accountId }) });
   } catch (e) { res.status(500).json({ error: { message: "Could not load the activity log." } }); }
+});
+
+// LinkedIn accounts on the agent (up to four). Add one → status. Body: { label? }.
+app.post("/api/outreach/agent/accounts", requireUser, async (req, res) => {
+  try {
+    const a = await liAgent.createAccount(req.userId, req.body || {});
+    res.json({ account: { id: a.id, slot: a.slot, label: a.label }, status: await liAgent.status(req.userId) });
+  } catch (e) { res.status(400).json({ error: { message: (e && e.message) || "Could not add the account." } }); }
+});
+
+// Rename an account, or pick the PC that runs it. Body: { label?, deviceId? } → status.
+app.patch("/api/outreach/agent/accounts/:id", requireUser, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const a = await liAgent.updateAccount(req.userId, String(req.params.id), { label: b.label, deviceId: b.deviceId });
+    if (!a) return res.status(404).json({ error: { message: "Account not found." } });
+    res.json({ status: await liAgent.status(req.userId) });
+  } catch (e) { res.status(400).json({ error: { message: (e && e.message) || "Could not change the account." } }); }
+});
+
+// Take an account off the agent → status. The PC deletes its saved LinkedIn sign-in.
+app.delete("/api/outreach/agent/accounts/:id", requireUser, async (req, res) => {
+  try {
+    const a = await liAgent.removeAccount(req.userId, String(req.params.id));
+    if (!a) return res.status(404).json({ error: { message: "Account not found." } });
+    res.json({ status: await liAgent.status(req.userId) });
+  } catch (e) { res.status(400).json({ error: { message: (e && e.message) || "Could not remove the account." } }); }
+});
+
+// Which account an unsent LinkedIn item goes from. Body: { accountId } (null = automatic).
+app.post("/api/outreach/queue/:id/account", requireUser, async (req, res) => {
+  try {
+    const item = await liAgent.setQueueAccount(req.userId, String(req.params.id), (req.body || {}).accountId || null);
+    if (!item) return res.status(404).json({ error: { message: "Item not found, or it can't change account now." } });
+    res.json({ item });
+  } catch (e) { res.status(400).json({ error: { message: (e && e.message) || "Could not change the account." } }); }
 });
 
 // ─────────────────────── LinkedIn replies (Send Queue) ──────────────

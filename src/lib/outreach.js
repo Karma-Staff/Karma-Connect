@@ -62,23 +62,43 @@ export async function agentStatus() {
   return api("/api/outreach/agent/status");
 }
 
-// Turn the agent on or off. Turning it on also clears a previous halt.
-export async function setAgentEnabled(enabled) {
-  const d = await api("/api/outreach/agent/enable", { method: "POST", body: { enabled: !!enabled } });
+// Turn one LinkedIn account on or off (accountId "all" for every account). Turning it on also
+// clears a previous halt.
+export async function setAgentEnabled(enabled, accountId = "all") {
+  const d = await api("/api/outreach/agent/enable", { method: "POST", body: { enabled: !!enabled, accountId } });
   return d.status;
 }
 
 // Your own limits and hours ({ perDay, perHour, invitesPerDay, invitesPerWeek, minGapSec,
 // maxGapSec, windowStart, windowEnd, weekdaysOnly, copiesPerDay, inboxEveryMin, acceptEveryMin })
-// and/or dry run. The server keeps each inside its safe range. Resolves with the new status.
-export async function saveAgentSettings({ settings, dryRun } = {}) {
-  return api("/api/outreach/agent/settings", { method: "PUT", body: { settings, dryRun } });
+// and/or dry run, for one account. The server keeps each inside its safe range. Resolves with
+// the new status.
+export async function saveAgentSettings({ accountId, settings, dryRun } = {}) {
+  return api("/api/outreach/agent/settings", { method: "PUT", body: { accountId, settings, dryRun } });
 }
 
-// Ask the agent's PC to do something on its next check-in (about 15 seconds):
+// Ask one account on the agent's PC to do something on its next check-in (a few seconds):
 // "check_inbox", "check_accepts" or "linkedin_login". Resolves with the new status.
-export async function agentCommand(command) {
-  return api("/api/outreach/agent/command", { method: "POST", body: { command } });
+export async function agentCommand(command, accountId) {
+  return api("/api/outreach/agent/command", { method: "POST", body: { command, accountId } });
+}
+
+// LinkedIn accounts on the agent (up to four). Each resolves with { status }.
+export async function addAgentAccount(label) {
+  return api("/api/outreach/agent/accounts", { method: "POST", body: { label } });
+}
+// { label } to rename, { deviceId } to pick the PC that runs it (null = any PC).
+export async function updateAgentAccount(id, patch) {
+  return api("/api/outreach/agent/accounts/" + encodeURIComponent(id), { method: "PATCH", body: patch });
+}
+export async function removeAgentAccount(id) {
+  return api("/api/outreach/agent/accounts/" + encodeURIComponent(id), { method: "DELETE" });
+}
+
+// Which account an unsent LinkedIn item goes from (null = automatic). Resolves with the item.
+export async function setQueueAccount(id, accountId) {
+  const d = await api("/api/outreach/queue/" + encodeURIComponent(id) + "/account", { method: "POST", body: { accountId } });
+  return d.item;
 }
 
 // A one-time code for connecting a PC → { code, expiresAt }.
@@ -90,9 +110,10 @@ export async function revokeAgentDevice(id) {
   return api("/api/outreach/agent/devices/" + encodeURIComponent(id) + "/revoke", { method: "POST" });
 }
 
-// The activity log, newest first: [{ id, at, level, text }].
-export async function agentEvents(limit = 150) {
-  const d = await api("/api/outreach/agent/events?limit=" + limit);
+// The activity log, newest first: [{ id, at, level, text, account_id, account_label }].
+// With an accountId: that account's lines and the general ones.
+export async function agentEvents(limit = 150, accountId = "") {
+  const d = await api("/api/outreach/agent/events?limit=" + limit + (accountId ? "&accountId=" + encodeURIComponent(accountId) : ""));
   return d.events || [];
 }
 

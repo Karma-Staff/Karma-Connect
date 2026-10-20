@@ -29,6 +29,12 @@
 //      out as an ordinary message (queueFollowup). followup_state on the invitation row:
 //        needs_profile → needs_draft → drafted → queued | skipped
 //
+// Accounts: one user can run up to MAX_ACCOUNTS LinkedIn accounts (linkedin_account), each
+// with its own browser profile on the PC, its own on/off switch, dry run, limits, inbox and
+// log. Every cap is counted per account. A queue row belongs to the account in li_account_id;
+// one with none goes from the account that invited that person, else from the first account
+// (EFF_SQL). Rows from before accounts existed were moved to the user's first account.
+//
 // Nothing here talks to LinkedIn — it only decides what the worker is allowed to do next.
 // Requires db.cjs, which reads env at load: require this AFTER the .env loader has run.
 const crypto = require("node:crypto");
@@ -90,6 +96,17 @@ function limitsFor(state) {
 }
 const ACTIONS = ["invite", "message", "reply"];
 const NOTE_MAX = 300; // LinkedIn's limit on an invitation note
+const MAX_ACCOUNTS = Math.min(10, num(process.env.LI_AGENT_MAX_ACCOUNTS, 4)); // LinkedIn accounts per user
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isUuid = (v) => UUID_RE.test(String(v || ""));
+
+// The account a queue row goes out from: its own, else the account that invited the same
+// person (a message after an invitation must come from the one they accepted), else the
+// user's first account. Shared by every query, so the queue, the caps and the lease agree.
+const EFF_SQL = (a) => `coalesce(${a}.li_account_id,
+  (select i.li_account_id from outreach_queue i where i.user_id = ${a}.user_id and i.prospect_id = ${a}.prospect_id
+      and i.channel = 'linkedin' and i.action = 'invite' and i.li_account_id is not null order by i.created_at desc limit 1),
+  (select x.id from linkedin_account x where x.user_id = ${a}.user_id and x.removed_at is null order by x.slot limit 1))`;
 
 // The /in/<handle> part of a profile URL, lower-cased and decoded — how two spellings of the
 // same profile URL (tracking params, trailing slash, %-encoding) are matched.
@@ -209,66 +226,208 @@ async function ensureAgentSchema() {
       level   text not null default 'info',
       text    text not null)`);
     await q("create index if not exists linkedin_agent_event_user_idx on linkedin_agent_event (user_id, at desc)");
+    // Several LinkedIn accounts per user. Each is its own agent: switch, dry run, limits, the
+    // worker's last check-in and one pending command. slot is its place on the page (1..4);
+    // device_id the PC that runs it. Removing one keeps the row (removed_at) so its sends still
+    // count as its own and never land on another account's caps.
+    await q(`create table if not exists linkedin_account (
+      id           uuid primary key default gen_random_uuid(),
+      user_id      uuid not null references users (id) on delete cascade,
+      slot         int not null,
+      label        text not null,
+      device_id    uuid,
+      enabled      boolean not null default false,
+      dry_run      boolean not null default false,
+      settings     jsonb not null default '{}'::jsonb,
+      halted_at    timestamptz,
+      halt_reason  text,
+      last_seen_at timestamptz,
+      last_sent_at timestamptz,
+      worker       jsonb,
+      command      text,
+      command_at   timestamptz,
+      removed_at   timestamptz,
+      created_at   timestamptz not null default now(),
+      updated_at   timestamptz not null default now())`);
+    await q("create unique index if not exists linkedin_account_slot_idx on linkedin_account (user_id, slot) where removed_at is null");
+    await q("alter table outreach_queue add column if not exists li_account_id uuid");
+    await q("create index if not exists outreach_li_account_idx on outreach_queue (li_account_id)");
+    await q("alter table linkedin_inbox add column if not exists li_account_id uuid");
+    await q("alter table linkedin_copy add column if not exists li_account_id uuid");
+    await q("alter table linkedin_agent_event add column if not exists li_account_id uuid");
+    await q("alter table linkedin_agent_device add column if not exists worker jsonb");
+    // Each user's single agent from before becomes their Account 1, with its settings, and
+    // everything it sent or read moves with it.
+    const { rows: moved } = await q(
+      `insert into linkedin_account (user_id, slot, label, enabled, dry_run, settings, halted_at, halt_reason,
+           last_seen_at, last_sent_at, worker)
+       select a.user_id, 1, coalesce(nullif(a.worker->'linkedin'->>'name', ''), 'Account 1'), a.enabled, a.dry_run,
+              a.settings, a.halted_at, a.halt_reason, a.last_seen_at, a.last_sent_at, a.worker
+         from linkedin_agent a
+        where not exists (select 1 from linkedin_account x where x.user_id = a.user_id)
+       returning id, user_id`);
+    for (const m of moved) await adoptUnassigned(m.user_id, m.id);
   } catch (e) { console.error("ensureAgentSchema:", e.message); }
 }
 
-// ── Agent state (kill switch) ───────────────────────────────────────
-async function getState(userId) {
-  const { rows } = await q("select * from linkedin_agent where user_id = $1", [userId]);
-  if (rows[0]) return rows[0];
-  const ins = await q("insert into linkedin_agent (user_id) values ($1) on conflict (user_id) do nothing returning *", [userId]);
-  return ins.rows[0] || (await q("select * from linkedin_agent where user_id = $1", [userId])).rows[0];
+// Rows with no account yet (from before accounts existed) become this account's.
+async function adoptUnassigned(userId, accountId) {
+  await q("update outreach_queue set li_account_id = $2 where user_id = $1 and channel = 'linkedin' and li_account_id is null", [userId, accountId]);
+  await q("update linkedin_inbox set li_account_id = $2 where user_id = $1 and li_account_id is null", [userId, accountId]);
 }
 
-// Turn the agent on/off. Enabling always clears a previous halt — the user has looked at it.
-async function setEnabled(userId, enabled) {
-  await getState(userId);
-  const { rows } = await q(
-    `update linkedin_agent set enabled = $2,
-       halted_at = case when $2 then null else halted_at end,
-       halt_reason = case when $2 then null else halt_reason end,
-       updated_at = now()
-     where user_id = $1 returning *`,
-    [userId, !!enabled],
-  );
-  logActivity(userId, enabled ? "li_agent_started" : "li_agent_stopped", {});
-  await addEvents(userId, [{ text: enabled ? "Started from Karma Connect." : "Paused from Karma Connect." }]);
+// ── Accounts ────────────────────────────────────────────────────────
+// This user's LinkedIn accounts, in slot order. There's always at least one.
+async function listAccounts(userId) {
+  const { rows } = await q("select * from linkedin_account where user_id = $1 and removed_at is null order by slot", [userId]);
+  if (rows.length) return rows;
+  const ins = await q(
+    `insert into linkedin_account (user_id, slot, label) values ($1, 1, 'Account 1')
+       on conflict (user_id, slot) where removed_at is null do nothing returning id`, [userId]);
+  if (ins.rows[0]) await adoptUnassigned(userId, ins.rows[0].id);
+  return (await q("select * from linkedin_account where user_id = $1 and removed_at is null order by slot", [userId])).rows;
+}
+
+// One account of this user's. No id (an older worker, an older page) means the first one;
+// an id that isn't theirs, or was removed, is null.
+async function accountFor(userId, accountId) {
+  if (accountId == null || accountId === "") return (await listAccounts(userId))[0];
+  if (!isUuid(accountId)) return null;
+  const { rows } = await q("select * from linkedin_account where id = $1 and user_id = $2 and removed_at is null", [accountId, userId]);
+  return rows[0] || null;
+}
+
+// Back-compat for code that asked for "the agent": the user's first account.
+const getState = (userId) => accountFor(userId);
+
+async function createAccount(userId, { label } = {}) {
+  const list = await listAccounts(userId);
+  if (list.length >= MAX_ACCOUNTS) throw new Error(`You can run up to ${MAX_ACCOUNTS} LinkedIn accounts.`);
+  const used = new Set(list.map((a) => a.slot));
+  let slot = 1;
+  while (used.has(slot)) slot++;
+  const name = String(label || "").trim().slice(0, 60) || "Account " + slot;
+  const { rows } = await q("insert into linkedin_account (user_id, slot, label) values ($1,$2,$3) returning *", [userId, slot, name]);
+  await addEvents(userId, [{ text: `Added LinkedIn account "${name}".` }], rows[0].id);
   return rows[0];
 }
 
-// Stop the agent and record why. Called when the worker reports a checkpoint/captcha, or when
-// LinkedIn says the sending limit is reached — we never try to work around it, we stop and
-// hand it back to the human.
-async function halt(userId, reason) {
-  await getState(userId);
+// Rename an account, or choose which PC runs it. Body: { label?, deviceId? (null = any PC) }.
+async function updateAccount(userId, id, { label, deviceId } = {}) {
+  const a = await accountFor(userId, id);
+  if (!a || !isUuid(id)) return null;
+  if (label !== undefined) {
+    const name = String(label || "").trim().slice(0, 60);
+    if (!name) throw new Error("Give the account a name.");
+    await q("update linkedin_account set label = $2, updated_at = now() where id = $1", [a.id, name]);
+  }
+  if (deviceId !== undefined) {
+    let dev = null;
+    if (deviceId) {
+      const d = await q("select id, name from linkedin_agent_device where id = $1 and user_id = $2 and paired_at is not null and revoked_at is null", [isUuid(deviceId) ? deviceId : null, userId]);
+      if (!d.rows[0]) throw new Error("That PC isn't connected.");
+      dev = d.rows[0];
+    }
+    await q("update linkedin_account set device_id = $2, updated_at = now() where id = $1", [a.id, dev ? dev.id : null]);
+    await addEvents(userId, [{ text: dev ? `Now runs on ${dev.name || "PC"}.` : "Runs on whichever connected PC picks it up first." }], a.id);
+  }
+  return accountFor(userId, a.id);
+}
+
+// Take an account off the agent. What it hadn't sent goes back to "any account" (the first),
+// except replies, which only make sense in that account's own conversation.
+async function removeAccount(userId, id) {
+  const a = await accountFor(userId, id);
+  if (!a || !isUuid(id)) return null;
+  if ((await listAccounts(userId)).length <= 1) throw new Error("Keep at least one account. Sign it in to a different LinkedIn instead.");
+  await q("update linkedin_account set removed_at = now(), enabled = false, command = null, updated_at = now() where id = $1", [a.id]);
+  await q(`update outreach_queue set status = 'skipped', error = 'Its LinkedIn account was removed from the agent.', lease_id = null,
+             leased_at = null, lease_expires_at = null, updated_at = now()
+            where li_account_id = $1 and action = 'reply' and status in ('pending','approved','sending','failed')`, [a.id]);
+  await q(`update outreach_queue set li_account_id = null, status = case when status = 'sending' then 'approved' else status end,
+             lease_id = null, leased_at = null, lease_expires_at = null, updated_at = now()
+            where li_account_id = $1 and status in ('pending','approved','sending','failed')`, [a.id]);
+  await addEvents(userId, [{ level: "warn", text: `Removed LinkedIn account "${a.label}". Its unsent messages go from the first account now.` }]);
+  return { id: a.id };
+}
+
+// Turn one account (or every account: accountId "all") on/off. Enabling clears a halt — the
+// user has looked at it.
+async function setEnabled(userId, enabled, accountId) {
+  const all = accountId === "all";
+  const target = all ? null : await accountFor(userId, accountId);
+  if (!all && !target) return null;
+  await listAccounts(userId);
   const { rows } = await q(
-    "update linkedin_agent set enabled = false, halted_at = now(), halt_reason = $2, updated_at = now() where user_id = $1 returning *",
-    [userId, String(reason || "Stopped").slice(0, 300)],
+    `update linkedin_account set enabled = $2,
+       halted_at = case when $2 then null else halted_at end,
+       halt_reason = case when $2 then null else halt_reason end,
+       updated_at = now()
+     where user_id = $1 and removed_at is null and ($3::uuid is null or id = $3) returning *`,
+    [userId, !!enabled, target ? target.id : null],
+  );
+  logActivity(userId, enabled ? "li_agent_started" : "li_agent_stopped", {});
+  for (const r of rows) await addEvents(userId, [{ text: enabled ? "Started from Karma Connect." : "Paused from Karma Connect." }], r.id);
+  return rows[0] || null;
+}
+
+// Stop one account and record why. Called when the worker reports a checkpoint/captcha, or when
+// LinkedIn says the sending limit is reached — we never try to work around it, we stop and
+// hand it back to the human. The other accounts carry on.
+async function halt(userId, accountId, reason) {
+  const a = await accountFor(userId, accountId);
+  if (!a) return null;
+  const { rows } = await q(
+    "update linkedin_account set enabled = false, halted_at = now(), halt_reason = $2, updated_at = now() where id = $1 returning *",
+    [a.id, String(reason || "Stopped").slice(0, 300)],
   );
   logActivity(userId, "li_agent_halted", { detail: String(reason || "").slice(0, 80) });
-  await addEvents(userId, [{ level: "error", text: "Stopped: " + String(reason || "Stopped") }]);
+  await addEvents(userId, [{ level: "error", text: "Stopped: " + String(reason || "Stopped") }], a.id);
   return rows[0];
 }
 
 // ── Caps ────────────────────────────────────────────────────────────
-// How many this user has actually sent recently, straight from the queue table (sent_at is the
-// source of truth — no separate counter to drift). Messages and replies share one budget;
-// invitations have their own.
-async function sentCounts(userId) {
+// What each account has sent recently and what's waiting for it, straight from the queue table
+// (sent_at is the source of truth — no separate counter to drift). Messages and replies share
+// one budget; invitations have their own. One pass, grouped by account.
+async function queueCounts(userId) {
   const { rows } = await q(
-    `select
-       count(*) filter (where action <> 'invite' and sent_at > now() - interval '24 hours') as day,
-       count(*) filter (where action <> 'invite' and sent_at > now() - interval '1 hour')   as hour,
-       count(*) filter (where action = 'invite' and sent_at > now() - interval '24 hours')  as inv_day,
-       count(*) filter (where action = 'invite' and sent_at > now() - interval '7 days')    as inv_week,
-       max(sent_at) as last_sent
-     from outreach_queue
-     where user_id = $1 and channel = 'linkedin' and status = 'sent'`,
+    `select x.acct,
+       count(*) filter (where x.status = 'sent' and x.action <> 'invite' and x.sent_at > now() - interval '24 hours') as day,
+       count(*) filter (where x.status = 'sent' and x.action <> 'invite' and x.sent_at > now() - interval '1 hour')   as hour,
+       count(*) filter (where x.status = 'sent' and x.action = 'invite' and x.sent_at > now() - interval '24 hours')  as inv_day,
+       count(*) filter (where x.status = 'sent' and x.action = 'invite' and x.sent_at > now() - interval '7 days')    as inv_week,
+       max(x.sent_at) filter (where x.status = 'sent') as last_sent,
+       count(*) filter (where x.status = 'approved' and not x.waiting) as ready,
+       count(*) filter (where x.status = 'approved' and x.waiting)     as waiting,
+       count(*) filter (where x.status = 'sending')                     as inflight
+     from (select ${EFF_SQL("o")} as acct, o.status, o.action, o.sent_at, ${WAITING_SQL("o")} as waiting
+             from outreach_queue o
+            where o.user_id = $1 and o.channel = 'linkedin' and o.status in ('sent','approved','sending')) x
+     group by x.acct`,
     [userId],
   );
-  const r = rows[0] || {};
-  return { day: Number(r.day || 0), hour: Number(r.hour || 0), invDay: Number(r.inv_day || 0),
-    invWeek: Number(r.inv_week || 0), lastSent: r.last_sent || null };
+  const m = new Map();
+  for (const r of rows) {
+    m.set(String(r.acct), { day: Number(r.day || 0), hour: Number(r.hour || 0), invDay: Number(r.inv_day || 0),
+      invWeek: Number(r.inv_week || 0), lastSent: r.last_sent || null,
+      ready: Number(r.ready || 0), waiting: Number(r.waiting || 0), inflight: Number(r.inflight || 0) });
+  }
+  return m;
+}
+const NO_COUNTS = { day: 0, hour: 0, invDay: 0, invWeek: 0, lastSent: null, ready: 0, waiting: 0, inflight: 0 };
+async function sentCounts(userId, accountId) {
+  return (await queueCounts(userId)).get(String(accountId)) || { ...NO_COUNTS };
+}
+
+// Two accounts signed in to the same LinkedIn would each get the full caps. Name the other one.
+async function sameLinkedIn(userId, acct) {
+  const h = acct && acct.worker && acct.worker.linkedin && acct.worker.linkedin.handle;
+  if (!h) return null;
+  const { rows } = await q(
+    `select label from linkedin_account where user_id = $1 and id <> $2 and removed_at is null
+        and lower(worker->'linkedin'->>'handle') = lower($3) limit 1`, [userId, acct.id, h]);
+  return rows[0] ? rows[0].label : null;
 }
 
 // Is `now` inside the allowed sending window? The worker passes its own local hour/day, because
@@ -324,43 +483,48 @@ const WAITING_SQL = (a) => `(${a}.wait_accept and not exists (
   select 1 from outreach_queue i where i.user_id = ${a}.user_id and i.prospect_id = ${a}.prospect_id
      and i.action = 'invite' and i.accepted_at is not null))`;
 
-// Claim up to `limit` approved, due items of the given actions. Replies first — someone is
-// waiting on those — then oldest scheduled.
-async function claim(userId, actions, limit, leaseId, expires) {
+// Claim up to `limit` approved, due items of the given actions for this account. Replies
+// first — someone is waiting on those — then oldest scheduled. A claimed row is pinned to the
+// account, so its report, its caps and any follow-up stay with it.
+async function claim(userId, accountId, actions, limit, leaseId, expires) {
   if (limit <= 0) return [];
   const { rows } = await q(
     `update outreach_queue set status = 'sending', lease_id = $2, leased_at = now(), lease_expires_at = $3,
-       attempts = attempts + 1, updated_at = now()
+       attempts = attempts + 1, li_account_id = $5, updated_at = now()
        where id in (
          select o.id from outreach_queue o
            where o.user_id = $1 and o.channel = 'linkedin' and o.status = 'approved' and o.action = any($4)
              and (o.scheduled_at is null or o.scheduled_at <= now())
              and not ${WAITING_SQL("o")}
+             and ${EFF_SQL("o")} = $5
            order by (o.action = 'reply') desc, o.scheduled_at nulls first
            limit ${Number(limit)} for update skip locked)
        returning id, prospect_id, lead_label, body, linkedin_url, step, action, thread_url`,
-    [userId, String(leaseId || "").slice(0, 64) || null, expires, actions],
+    [userId, String(leaseId || "").slice(0, 64) || null, expires, actions, accountId],
   );
   return rows;
 }
 
-// Hand the worker its next batch. Returns { items, wait, reason } — items may be empty with a
-// reason the worker shows the user, and `wait` is how many seconds to sleep before asking again.
-async function lease(userId, { leaseId, localHour, localDay } = {}) {
+// Hand the worker its next batch for one account. Returns { items, wait, reason } — items may be
+// empty with a reason the worker shows the user, and `wait` is how many seconds to sleep before
+// asking again.
+async function lease(userId, acct, { leaseId, localHour, localDay } = {}) {
   if (!dbOn) return { items: [], wait: 60, reason: "No database configured." };
   await reclaimStale();
-  const state = await getState(userId);
+  const state = acct;
   const L = limitsFor(state);
-  const counts = await sentCounts(userId);
+  const counts = await sentCounts(userId, acct.id);
+  const twin = state.enabled ? await sameLinkedIn(userId, acct) : null;
+  if (twin) return { items: [], wait: 300, reason: `Signed in to the same LinkedIn as "${twin}". Sign one of them in to a different account.`, limits: L, counts, dryRun: !!state.dry_run };
   const verdict = decide({ state, counts, localHour, localDay, limits: L });
   if (!verdict.ok) {
     return { items: [], wait: verdict.retryInSec || 300, reason: verdict.reason, limits: L, counts, dryRun: !!state.dry_run };
   }
   const expires = new Date(Date.now() + L.leaseMin * 60000);
-  const msgs = await claim(userId, ["reply", "message"], verdict.msg, leaseId, expires);
-  const invs = await claim(userId, ["invite"], Math.min(verdict.inv, verdict.allowed - msgs.length), leaseId, expires);
+  const msgs = await claim(userId, acct.id, ["reply", "message"], verdict.msg, leaseId, expires);
+  const invs = await claim(userId, acct.id, ["invite"], Math.min(verdict.inv, verdict.allowed - msgs.length), leaseId, expires);
   const rows = [...msgs, ...invs];
-  await q("update linkedin_agent set last_seen_at = now(), updated_at = now() where user_id = $1", [userId]);
+  await q("update linkedin_account set last_seen_at = now(), updated_at = now() where id = $1", [acct.id]);
   return {
     items: rows,
     wait: rows.length ? L.minGapSec : 300,
@@ -405,6 +569,7 @@ async function report(userId, id, { result, error, leaseId, scrape, connected, f
                       linkedin_url = coalesce($${n + 3}, linkedin_url)`;
   const scrapeArgs = [trim(s.title, 200), trim(s.company, 200), trim(s.companyUrl, 400), trim(s.profileUrl, 400)];
   const isInvite = row.action === "invite";
+  const acctId = row.li_account_id; // set when it was claimed; null → the first account
 
   if (result === "sent" || result === "unverified") {
     // An 'unverified' send — the click happened but the worker couldn't see it land — is marked
@@ -421,7 +586,8 @@ async function report(userId, id, { result, error, leaseId, scrape, connected, f
        where id = $1 and user_id = $2 returning *`,
       [id, userId, unverified ? String(error || "Send could not be confirmed.").slice(0, 300) : null, inviteState, ...scrapeArgs],
     );
-    await q("update linkedin_agent set last_sent_at = now(), last_seen_at = now(), updated_at = now() where user_id = $1", [userId]);
+    const a = await accountFor(userId, acctId);
+    if (a) await q("update linkedin_account set last_sent_at = now(), last_seen_at = now(), updated_at = now() where id = $1", [a.id]);
     const detail = (isInvite ? "linkedin_invite" : row.action === "reply" ? "linkedin_reply" : "linkedin_agent") + (unverified ? "_unconfirmed" : "");
     logActivity(userId, "outreach_sent", { prospectId: row.prospect_id, label: row.lead_label, detail });
     if (inviteState === "accepted") {
@@ -432,7 +598,7 @@ async function report(userId, id, { result, error, leaseId, scrape, connected, f
     if (row.action === "reply" && row.inbox_id) {
       await q("update linkedin_inbox set needs_reply = false, handled_at = coalesce(handled_at, now()), updated_at = now() where id = $1 and user_id = $2", [row.inbox_id, userId]);
     }
-    if (unverified) await halt(userId, "A send couldn't be confirmed — check that " + (isInvite ? "profile" : "thread") + " on LinkedIn before restarting.");
+    if (unverified) await halt(userId, acctId, "A send couldn't be confirmed — check that " + (isInvite ? "profile" : "thread") + " on LinkedIn before restarting.");
     return rows[0];
   }
 
@@ -442,7 +608,7 @@ async function report(userId, id, { result, error, leaseId, scrape, connected, f
          ${keepScrapeFrom(3)}, updated_at = now() where id = $1 and user_id = $2`,
       [id, userId, ...scrapeArgs],
     );
-    await halt(userId, error || "LinkedIn asked for a human (checkpoint or limit).");
+    await halt(userId, acctId, error || "LinkedIn asked for a human (checkpoint or limit).");
     return { id, status: "approved", halted: true };
   }
 
@@ -462,17 +628,19 @@ async function report(userId, id, { result, error, leaseId, scrape, connected, f
 // can pick their conversations out of the inbox and ignore everyone else's), and the
 // invitations still waiting (so it can spot them in the new-connections list). Reading pages
 // is activity too, so this answers only while the agent is on and inside the window.
-async function watch(userId, { localHour, localDay } = {}) {
+async function watch(userId, acct, { localHour, localDay } = {}) {
   if (!dbOn) return { ok: false, reason: "No database configured.", people: [], pendingInvites: [] };
-  const state = await getState(userId);
+  const state = acct;
   if (!state.enabled) return { ok: false, reason: state.halt_reason || "The agent is off.", people: [], pendingInvites: [], needProfile: [] };
   if (!inWindow(localHour, localDay, limitsFor(state))) return { ok: false, reason: "Outside the window.", people: [], pendingInvites: [], needProfile: [] };
+  if (await sameLinkedIn(userId, acct)) return { ok: false, reason: "Signed in to the same LinkedIn as another account.", people: [], pendingInvites: [], needProfile: [] };
   const { rows } = await q(
-    `select distinct on (coalesce(linkedin_url, lead_label)) linkedin_url, lead_label, action, invite_state
-       from outreach_queue
-      where user_id = $1 and channel = 'linkedin' and status = 'sent' and sent_at > now() - interval '120 days'
-      order by coalesce(linkedin_url, lead_label), sent_at desc limit 1000`,
-    [userId],
+    `select distinct on (coalesce(o.linkedin_url, o.lead_label)) o.linkedin_url, o.lead_label, o.action, o.invite_state
+       from outreach_queue o
+      where o.user_id = $1 and o.channel = 'linkedin' and o.status = 'sent' and o.sent_at > now() - interval '120 days'
+        and ${EFF_SQL("o")} = $2
+      order by coalesce(o.linkedin_url, o.lead_label), o.sent_at desc limit 1000`,
+    [userId, acct.id],
   );
   const people = [];
   const seen = new Set();
@@ -484,27 +652,28 @@ async function watch(userId, { localHour, localDay } = {}) {
     people.push({ handle, name: r.lead_label || "" });
   }
   const pend = await q(
-    `select linkedin_url from outreach_queue
-      where user_id = $1 and channel = 'linkedin' and action = 'invite' and status = 'sent'
-        and coalesce(invite_state, 'pending') = 'pending' and sent_at > now() - interval '60 days'`,
-    [userId],
+    `select o.linkedin_url from outreach_queue o
+      where o.user_id = $1 and o.channel = 'linkedin' and o.action = 'invite' and o.status = 'sent'
+        and coalesce(o.invite_state, 'pending') = 'pending' and o.sent_at > now() - interval '60 days'
+        and ${EFF_SQL("o")} = $2`,
+    [userId, acct.id],
   );
   const pendingInvites = [...new Set(pend.rows.map((r) => handleOf(r.linkedin_url)).filter(Boolean))];
-  await q("update linkedin_agent set last_seen_at = now(), updated_at = now() where user_id = $1", [userId]);
-  return { ok: true, reason: "", people, pendingInvites, needProfile: await needProfile(userId) };
+  await q("update linkedin_account set last_seen_at = now(), updated_at = now() where id = $1", [acct.id]);
+  return { ok: true, reason: "", people, pendingInvites, needProfile: await needProfile(userId, acct.id) };
 }
 
-// The worker saw these handles in the new-connections list: their invitations were accepted.
-// Marking the invitation accepted is what releases any message waiting on it.
-async function markAccepted(userId, handles) {
+// The worker saw these handles in this account's new-connections list: their invitations were
+// accepted. Marking the invitation accepted is what releases any message waiting on it.
+async function markAccepted(userId, acct, handles) {
   if (!dbOn) return { accepted: 0 };
   const want = new Set((Array.isArray(handles) ? handles : []).map((h) => handleOf("linkedin.com/in/" + h)).filter(Boolean).slice(0, 500));
   if (!want.size) return { accepted: 0 };
   const { rows } = await q(
-    `select id, prospect_id, lead_label, linkedin_url from outreach_queue
-      where user_id = $1 and channel = 'linkedin' and action = 'invite' and status = 'sent'
-        and coalesce(invite_state, 'pending') = 'pending'`,
-    [userId],
+    `select o.id, o.prospect_id, o.lead_label, o.linkedin_url from outreach_queue o
+      where o.user_id = $1 and o.channel = 'linkedin' and o.action = 'invite' and o.status = 'sent'
+        and coalesce(o.invite_state, 'pending') = 'pending' and ${EFF_SQL("o")} = $2`,
+    [userId, acct.id],
   );
   const hits = rows.filter((r) => want.has(handleOf(r.linkedin_url)));
   if (!hits.length) return { accepted: 0 };
@@ -514,7 +683,7 @@ async function markAccepted(userId, handles) {
     logActivity(userId, "li_invite_accepted", { prospectId: r.prospect_id, label: r.lead_label });
   }
   await wantFollowup(userId, hits);
-  return { accepted: hits.length, needProfile: await needProfile(userId) };
+  return { accepted: hits.length, needProfile: await needProfile(userId, acct.id) };
 }
 
 // ── First message after an accept ───────────────────────────────────
@@ -530,12 +699,13 @@ async function wantFollowup(userId, rows) {
   }
 }
 
-// Profiles the worker should go and copy, a few at a time (each is a page visit).
-async function needProfile(userId, limit = 5) {
+// Profiles this account should go and copy, a few at a time (each is a page visit).
+async function needProfile(userId, accountId, limit = 5) {
   const { rows } = await q(
-    `select linkedin_url from outreach_queue
-      where user_id = $1 and action = 'invite' and followup_state = 'needs_profile' and linkedin_url is not null
-      order by accepted_at nulls last limit ${Number(limit)}`, [userId]);
+    `select o.linkedin_url from outreach_queue o
+      where o.user_id = $1 and o.action = 'invite' and o.followup_state = 'needs_profile' and o.linkedin_url is not null
+        and ${EFF_SQL("o")} = $2
+      order by o.accepted_at nulls last limit ${Number(limit)}`, [userId, accountId]);
   return [...new Set(rows.map((r) => handleOf(r.linkedin_url)).filter(Boolean))];
 }
 
@@ -549,12 +719,13 @@ async function storeProfile(userId, inviteId, text) {
 }
 
 // The worker copied this person's profile page. Matched to their accepted invitation by handle.
-async function recordProfile(userId, { handle, text } = {}) {
+async function recordProfile(userId, acct, { handle, text } = {}) {
   if (!dbOn) return { stored: false };
   const h = handleOf("linkedin.com/in/" + String(handle || ""));
   if (!h) return { stored: false };
   const { rows } = await q(
-    "select id, linkedin_url from outreach_queue where user_id = $1 and action = 'invite' and followup_state = 'needs_profile'", [userId]);
+    `select o.id, o.linkedin_url from outreach_queue o where o.user_id = $1 and o.action = 'invite' and o.followup_state = 'needs_profile'
+        and ${EFF_SQL("o")} = $2`, [userId, acct.id]);
   const row = rows.find((r) => handleOf(r.linkedin_url) === h);
   if (!row) return { stored: false };
   return { stored: await storeProfile(userId, row.id, text) };
@@ -566,7 +737,7 @@ async function listFollowups(userId) {
   if (!dbOn) return [];
   const { rows } = await q(
     `select o.id, o.prospect_id, o.lead_label, o.linkedin_url, o.body as note, o.profile_text, o.profile_at,
-            o.followup_state, o.followup_draft, o.accepted_at,
+            o.followup_state, o.followup_draft, o.accepted_at, ${EFF_SQL("o")} as li_account_id,
             p.label as p_label, p.sub as p_sub, p.status as p_status, p.data as p_data
        from outreach_queue o left join prospects p on p.id = o.prospect_id and p.user_id = o.user_id
       where o.user_id = $1 and o.action = 'invite' and o.followup_state in ('needs_profile','needs_draft','drafted')
@@ -586,15 +757,16 @@ async function saveFollowupDraft(userId, id, { body } = {}) {
 async function queueFollowup(userId, id, { body, approvedBy } = {}) {
   const text = String(body || "").trim().slice(0, 4000);
   if (!text) throw new Error("Write the message first.");
-  const { rows: r } = await q("select * from outreach_queue where id = $1 and user_id = $2 and action = 'invite'", [id, userId]);
+  const { rows: r } = await q(`select o.*, ${EFF_SQL("o")} as eff_account from outreach_queue o where o.id = $1 and o.user_id = $2 and o.action = 'invite'`, [id, userId]);
   const inv = r[0];
   if (!inv) return null;
   if (inv.followup_state === "queued") throw new Error("This first message is already queued.");
+  // From the account they accepted: on any other, they aren't a connection yet.
   const { rows } = await q(
     `insert into outreach_queue (user_id, prospect_id, lead_label, channel, step, body, linkedin_url, status,
-        scheduled_at, approved_by, approved_at, action)
-     values ($1,$2,$3,'linkedin','relationship',$4,$5,'approved', now(), $6, now(), 'message') returning *`,
-    [userId, inv.prospect_id, inv.lead_label, text, inv.linkedin_url, approvedBy || null]);
+        scheduled_at, approved_by, approved_at, action, li_account_id)
+     values ($1,$2,$3,'linkedin','relationship',$4,$5,'approved', now(), $6, now(), 'message', $7) returning *`,
+    [userId, inv.prospect_id, inv.lead_label, text, inv.linkedin_url, approvedBy || null, inv.eff_account || null]);
   await q("update outreach_queue set followup_state = 'queued', followup_draft = $3, updated_at = now() where id = $1 and user_id = $2", [id, userId, text]);
   logActivity(userId, "outreach_queued", { prospectId: inv.prospect_id, label: inv.lead_label, detail: "linkedin_first_message" });
   return rows[0];
@@ -611,14 +783,17 @@ async function skipFollowup(userId, id) {
 // dropped, never stored. A thread whose last message is theirs needs a reply; it's flagged,
 // and the prospect moves to 'replied'.
 //   threads: [{ threadKey, threadUrl, name, profileUrl, messages: [{ from: 'them'|'me', text }] }]
-async function recordInbox(userId, threads) {
+async function recordInbox(userId, acct, threads) {
   if (!dbOn) return { stored: 0, needReply: 0 };
   const list = (Array.isArray(threads) ? threads : []).slice(0, 40);
   if (!list.length) return { stored: 0, needReply: 0 };
+  // Only people THIS account reached out to: the same prospect may be in two accounts' queues,
+  // and each account's conversation is its own thread.
   const { rows: sent } = await q(
-    `select prospect_id, lead_label, linkedin_url from outreach_queue
-      where user_id = $1 and channel = 'linkedin' and status = 'sent' order by sent_at desc limit 3000`,
-    [userId],
+    `select o.prospect_id, o.lead_label, o.linkedin_url from outreach_queue o
+      where o.user_id = $1 and o.channel = 'linkedin' and o.status = 'sent' and ${EFF_SQL("o")} = $2
+      order by o.sent_at desc limit 3000`,
+    [userId, acct.id],
   );
   const byHandle = new Map(), byName = new Map();
   for (const r of sent) {
@@ -649,9 +824,10 @@ async function recordInbox(userId, threads) {
     const threadUrl = /^https:\/\/www\.linkedin\.com\/messaging\/thread\//i.test(String(t.threadUrl || "")) ? String(t.threadUrl).slice(0, 400) : null;
     const { rows } = await q(
       `insert into linkedin_inbox (user_id, thread_key, thread_url, name, profile_url, prospect_id, lead_label,
-          messages, last_text, last_from, last_at, needs_reply)
-       values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10, now(), $11)
+          messages, last_text, last_from, last_at, needs_reply, li_account_id)
+       values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10, now(), $11, $12)
        on conflict (user_id, thread_key) do update set
+         li_account_id = excluded.li_account_id,
          thread_url = coalesce(excluded.thread_url, linkedin_inbox.thread_url),
          name = excluded.name,
          profile_url = coalesce(excluded.profile_url, linkedin_inbox.profile_url),
@@ -663,7 +839,7 @@ async function recordInbox(userId, threads) {
          last_text = excluded.last_text, last_from = excluded.last_from, updated_at = now()
        returning needs_reply`,
       [userId, key, threadUrl, String(t.name || match.lead_label || "").slice(0, 200), handle ? "https://www.linkedin.com/in/" + encodeURIComponent(handle) + "/" : null,
-       match.prospect_id, match.lead_label, JSON.stringify(msgs), last.text, last.from, last.from === "them"],
+       match.prospect_id, match.lead_label, JSON.stringify(msgs), last.text, last.from, last.from === "them", acct.id],
     );
     stored++;
     if (rows[0] && rows[0].needs_reply) needReply++;
@@ -676,9 +852,10 @@ async function recordInbox(userId, threads) {
 async function listInbox(userId) {
   if (!dbOn) return [];
   const { rows } = await q(
-    `select i.*, exists (select 1 from outreach_queue o where o.inbox_id = i.id and o.user_id = i.user_id
+    `select i.*, a.label as account_label, exists (select 1 from outreach_queue o where o.inbox_id = i.id and o.user_id = i.user_id
               and o.status in ('pending', 'approved', 'sending')) as reply_queued
-       from linkedin_inbox i where i.user_id = $1
+       from linkedin_inbox i left join linkedin_account a on a.id = i.li_account_id
+      where i.user_id = $1 and a.removed_at is null
       order by i.needs_reply desc, i.last_at desc nulls last limit 60`,
     [userId],
   );
@@ -712,11 +889,12 @@ async function queueReply(userId, id, { body, approvedBy } = {}) {
   const th = t[0];
   if (!th) return null;
   if (!th.thread_url) throw new Error("This conversation has no LinkedIn link yet — wait for the agent's next inbox check.");
+  // A reply goes from the account whose conversation it is.
   const { rows } = await q(
     `insert into outreach_queue (user_id, prospect_id, lead_label, channel, step, body, linkedin_url, status,
-        scheduled_at, approved_by, approved_at, action, thread_url, inbox_id)
-     values ($1,$2,$3,'linkedin','reply',$4,$5,'approved', now(), $6, now(), 'reply', $7, $8) returning *`,
-    [userId, th.prospect_id || "li-thread:" + th.thread_key, th.lead_label || th.name, text, th.profile_url, approvedBy || null, th.thread_url, th.id],
+        scheduled_at, approved_by, approved_at, action, thread_url, inbox_id, li_account_id)
+     values ($1,$2,$3,'linkedin','reply',$4,$5,'approved', now(), $6, now(), 'reply', $7, $8, $9) returning *`,
+    [userId, th.prospect_id || "li-thread:" + th.thread_key, th.lead_label || th.name, text, th.profile_url, approvedBy || null, th.thread_url, th.id, th.li_account_id || null],
   );
   await q("update linkedin_inbox set needs_reply = false, handled_at = now(), draft = $3, updated_at = now() where id = $1 and user_id = $2", [id, userId, text]);
   logActivity(userId, "outreach_queued", { prospectId: th.prospect_id, label: th.lead_label || th.name, detail: "linkedin_reply" });
@@ -735,7 +913,7 @@ async function sendWithoutWaiting(userId, id) {
 // ── Copy a profile on request ───────────────────────────────────────
 // The Deep LinkedIn paste panel's "Copy it with the agent": instead of a person opening the
 // profile and pressing Ctrl+A, Ctrl+C, the worker opens it and sends the page text back. The
-// worker picks requests up within about 15 seconds while it's running. A person asked for this
+// worker picks requests up within a few seconds while it's running. A person asked for this
 // one profile right now, so it isn't held to the sending window — but it is capped per day,
 // and it needs the agent switched on.
 const COPY_WAIT_MIN = 10; // a request nobody picks up in this long fails, saying why
@@ -761,34 +939,41 @@ async function getCopy(userId, id) {
   const { rows } = await q("select id, url, status, text, error from linkedin_copy where id = $1 and user_id = $2", [id, userId]);
   const r = rows[0];
   if (!r) return null;
-  const state = await getState(userId);
-  return { ...r, agentOn: !!state.enabled, agentSeen: state.last_seen_at };
+  // Any running account can copy a profile.
+  const on = (await listAccounts(userId)).filter((a) => a.enabled);
+  const seen = on.map((a) => a.last_seen_at).filter(Boolean).sort().pop() || null;
+  return { ...r, agentOn: on.length > 0, agentSeen: seen };
 }
 
-// The worker asks for copy requests. Ones it took but never answered go back after 5 minutes.
-async function leaseCopies(userId) {
+// An account asks for copy requests: whichever running account asks first takes one, within its
+// own daily cap. Ones it took but never answered go back after 5 minutes.
+async function leaseCopies(userId, acct) {
   if (!dbOn) return { items: [] };
-  const state = await getState(userId);
+  const state = acct;
   if (!state.enabled) return { items: [], reason: state.halt_reason || "The agent is off." };
   await q("update linkedin_copy set status = 'pending', started_at = null where user_id = $1 and status = 'copying' and started_at < now() - interval '5 minutes'", [userId]);
   const L = limitsFor(state);
-  const { rows: c } = await q("select count(*) as n from linkedin_copy where user_id = $1 and status = 'done' and done_at > now() - interval '24 hours'", [userId]);
+  const { rows: c } = await q("select count(*) as n from linkedin_copy where user_id = $1 and li_account_id = $2 and status = 'done' and done_at > now() - interval '24 hours'", [userId, acct.id]);
   if (Number(c[0].n) >= L.copiesPerDay) {
-    await q(`update linkedin_copy set status = 'failed', done_at = now(), error = $2 where user_id = $1 and status = 'pending'`,
-      [userId, `Daily limit of ${L.copiesPerDay} profile copies reached — paste this one by hand, or try tomorrow.`]);
+    // Fail them only if no other running account could take them.
+    const others = (await listAccounts(userId)).filter((a) => a.enabled && a.id !== acct.id);
+    if (!others.length) {
+      await q(`update linkedin_copy set status = 'failed', done_at = now(), error = $2 where user_id = $1 and status = 'pending'`,
+        [userId, `Daily limit of ${L.copiesPerDay} profile copies reached — paste this one by hand, or try tomorrow.`]);
+    }
     return { items: [], reason: "Daily copy limit reached." };
   }
   const { rows } = await q(
-    `update linkedin_copy set status = 'copying', started_at = now()
+    `update linkedin_copy set status = 'copying', started_at = now(), li_account_id = $2
        where id in (select id from linkedin_copy where user_id = $1 and status = 'pending' order by created_at limit 2 for update skip locked)
-     returning id, url`, [userId]);
-  await q("update linkedin_agent set last_seen_at = now(), updated_at = now() where user_id = $1", [userId]);
+     returning id, url`, [userId, acct.id]);
+  await q("update linkedin_account set last_seen_at = now(), updated_at = now() where id = $1", [acct.id]);
   return { items: rows.map((r) => ({ id: r.id, handle: handleOf(r.url) })) };
 }
 
-async function finishCopy(userId, id, { text, error, halt: haltMsg } = {}) {
+async function finishCopy(userId, acct, id, { text, error, halt: haltMsg } = {}) {
   const t = String(text || "").trim().slice(0, 60000);
-  if (haltMsg) await halt(userId, String(haltMsg).slice(0, 300));
+  if (haltMsg) await halt(userId, acct.id, String(haltMsg).slice(0, 300));
   const ok = !haltMsg && t.length >= 200;
   const { rows } = await q(
     `update linkedin_copy set status = $3, text = $4, error = $5, done_at = now()
@@ -799,22 +984,23 @@ async function finishCopy(userId, id, { text, error, halt: haltMsg } = {}) {
 }
 
 // ── Run from Karma Connect: settings, dry run, commands, heartbeat ──
-// Settings the user saves on the LinkedIn agent page. Only known keys inside BOUNDS are kept.
-async function saveSettings(userId, { settings, dryRun } = {}) {
-  await getState(userId);
+// Settings saved on the LinkedIn agent page, for one account. Only known keys inside BOUNDS are kept.
+async function saveSettings(userId, accountId, { settings, dryRun } = {}) {
+  const a = await accountFor(userId, accountId);
+  if (!a) return null;
   if (settings !== undefined) {
     const clean = cleanSettings(settings);
-    await q("update linkedin_agent set settings = $2::jsonb, updated_at = now() where user_id = $1", [userId, JSON.stringify(clean)]);
-    await addEvents(userId, [{ text: "Settings changed in Karma Connect." }]);
+    await q("update linkedin_account set settings = $2::jsonb, updated_at = now() where id = $1", [a.id, JSON.stringify(clean)]);
+    await addEvents(userId, [{ text: "Settings changed in Karma Connect." }], a.id);
   }
   if (typeof dryRun === "boolean") {
-    await q("update linkedin_agent set dry_run = $2, updated_at = now() where user_id = $1", [userId, dryRun]);
-    await addEvents(userId, [{ text: dryRun ? "Dry run on: the agent types everything but never presses Send." : "Dry run off: the agent sends for real." }]);
+    await q("update linkedin_account set dry_run = $2, updated_at = now() where id = $1", [a.id, dryRun]);
+    await addEvents(userId, [{ text: dryRun ? "Dry run on: the agent types everything but never presses Send." : "Dry run off: the agent sends for real." }], a.id);
   }
   return status(userId);
 }
 
-// One thing for the worker to do on its next check-in (about every 15 seconds). A newer
+// One thing for an account to do on the PC's next check-in (every few seconds). A newer
 // command replaces an older one that hasn't been picked up; a stale one is ignored.
 const COMMANDS = {
   check_inbox: "Check the LinkedIn inbox now.",
@@ -822,59 +1008,110 @@ const COMMANDS = {
   linkedin_login: "Open LinkedIn on the PC to sign in.",
 };
 const COMMAND_TTL_MIN = 10;
-async function setCommand(userId, command) {
+async function setCommand(userId, accountId, command) {
   if (!COMMANDS[command]) throw new Error("Unknown command.");
-  await getState(userId);
-  await q("update linkedin_agent set command = $2, command_at = now(), updated_at = now() where user_id = $1", [userId, command]);
-  await addEvents(userId, [{ text: "Asked from Karma Connect: " + COMMANDS[command] }]);
+  const a = await accountFor(userId, accountId);
+  if (!a) throw new Error("That LinkedIn account isn't on the agent any more.");
+  await q("update linkedin_account set command = $2, command_at = now(), updated_at = now() where id = $1", [a.id, command]);
+  await addEvents(userId, [{ text: "Asked from Karma Connect: " + COMMANDS[command] }], a.id);
   return status(userId);
 }
 
-// The worker checks in. It tells us about itself (which PC, which LinkedIn account, what it's
-// doing) and any log lines since last time; we tell it whether to work, whether it's a dry run,
-// the limits, and any pending command — handed over once, then cleared.
+// What the PC tells us about itself, and about each account it runs.
 const WORKER_STATES = ["idle", "working", "paused", "signing_in", "signed_out", "starting"];
+const s_ = (v, n) => (v == null ? null : String(v).slice(0, n));
+function cleanPc(w) {
+  return { version: s_(w && w.version, 20), host: s_(w && w.host, 80), browser: s_(w && w.browser, 30), startedAt: s_(w && w.startedAt, 40) };
+}
 function cleanWorker(w) {
-  const s = (v, n) => (v == null ? null : String(v).slice(0, n));
   const li = (w && w.linkedin) || {};
   return {
-    version: s(w && w.version, 20),
-    host: s(w && w.host, 80),
-    browser: s(w && w.browser, 30),
+    ...cleanPc(w),
     state: WORKER_STATES.includes(w && w.state) ? w.state : "idle",
-    activity: s(w && w.activity, 200),
-    linkedin: li.handle || li.name ? { name: s(li.name, 120), handle: s(li.handle, 120) } : null,
-    lastInboxAt: s(w && w.lastInboxAt, 40),
-    lastAcceptAt: s(w && w.lastAcceptAt, 40),
-    startedAt: s(w && w.startedAt, 40),
+    activity: s_(w && w.activity, 200),
+    linkedin: li.handle || li.name ? { name: s_(li.name, 120), handle: s_(li.handle, 120) } : null,
+    lastInboxAt: s_(w && w.lastInboxAt, 40),
+    lastAcceptAt: s_(w && w.lastAcceptAt, 40),
   };
 }
-async function heartbeat(userId, { worker, events, device } = {}) {
-  if (!dbOn) return { enabled: false, dryRun: false, limits: LIMITS, command: null };
-  await getState(userId);
-  const info = { ...cleanWorker(worker), device: device ? { id: device.id, name: device.name } : null };
+
+// Record one account's check-in and hand over its pending command, once.
+async function beatAccount(acct, info) {
   const { rows } = await q(
-    `with prev as (select command, command_at from linkedin_agent where user_id = $1 for update)
-     update linkedin_agent a set worker = $2::jsonb, last_seen_at = now(), command = null, command_at = null, updated_at = now()
-       from prev where a.user_id = $1
+    `with prev as (select command, command_at from linkedin_account where id = $1 for update)
+     update linkedin_account a set worker = coalesce($2::jsonb, a.worker),
+         last_seen_at = case when $2::jsonb is null then a.last_seen_at else now() end,
+         command = null, command_at = null, updated_at = now()
+       from prev where a.id = $1
      returning a.*, prev.command as old_command, prev.command_at as old_command_at`,
-    [userId, JSON.stringify(info)],
+    [acct.id, info ? JSON.stringify(info) : null],
   );
   const st = rows[0];
-  await addEvents(userId, events);
   const fresh = st.old_command && st.old_command_at && Date.now() - new Date(st.old_command_at).getTime() < COMMAND_TTL_MIN * 60000;
-  return {
-    enabled: !!st.enabled,
-    dryRun: !!st.dry_run,
-    haltReason: st.halt_reason || null,
-    limits: limitsFor(st),
-    command: fresh ? st.old_command : null,
-  };
+  return { st, command: fresh ? st.old_command : null };
+}
+const controlFor = (st, command) => ({
+  id: st.id, slot: st.slot, label: st.label, enabled: !!st.enabled, dryRun: !!st.dry_run,
+  haltReason: st.halt_reason || null, limits: limitsFor(st), command,
+});
+
+// The PC checks in. Body:
+//   { worker: { version, host, browser, startedAt },
+//     accounts: [{ id, state, activity, linkedin: { name, handle }, lastInboxAt, lastAcceptAt }],
+//     events: [{ accountId?, at, level, text }] }
+// → { accounts: [{ id, slot, label, enabled, dryRun, haltReason, limits, command }], removed: [id] }
+// `accounts` is what this PC should run: the ones set to it, and any not set to a PC yet (it
+// takes those). An agent from before accounts (no `accounts` in the body) runs the first one
+// and gets the old single-agent answer.
+async function heartbeat(userId, { worker, accounts, events, device } = {}) {
+  if (!dbOn) return { enabled: false, dryRun: false, limits: LIMITS, command: null, accounts: [], removed: [] };
+  const all = await listAccounts(userId);
+  if (device) {
+    await q("update linkedin_agent_device set worker = $2::jsonb, last_used_at = now() where id = $1", [device.id, JSON.stringify(cleanPc(worker))]);
+  }
+
+  if (!Array.isArray(accounts)) {
+    const first = all[0];
+    if (device && !first.device_id) await q("update linkedin_account set device_id = $2 where id = $1", [first.id, device.id]);
+    const info = { ...cleanWorker(worker), device: device ? { id: device.id, name: device.name } : null };
+    const { st, command } = await beatAccount(first, info);
+    await addEvents(userId, events, first.id);
+    return { enabled: !!st.enabled, dryRun: !!st.dry_run, haltReason: st.halt_reason || null, limits: limitsFor(st), command };
+  }
+
+  let mine = all;
+  if (device) {
+    const free = all.filter((a) => !a.device_id).map((a) => a.id);
+    if (free.length) await q("update linkedin_account set device_id = $2 where id = any($1::uuid[]) and device_id is null", [free, device.id]);
+    mine = all.filter((a) => !a.device_id || a.device_id === device.id);
+  }
+  const reported = new Map(accounts.filter((x) => x && isUuid(x.id)).map((x) => [x.id, x]));
+  const out = [];
+  for (const a of mine) {
+    const rep = reported.get(a.id);
+    const info = rep ? { ...cleanWorker({ ...worker, ...rep }), device: device ? { id: device.id, name: device.name } : null } : null;
+    const { st, command } = await beatAccount(a, info);
+    out.push(controlFor(st, command));
+  }
+  // Log lines: each goes to the account it names, if this PC runs it; otherwise to the user.
+  const ids = new Set(mine.map((a) => a.id));
+  const list = Array.isArray(events) ? events.slice(0, 100) : [];
+  const general = list.filter((e) => !(e && ids.has(e.accountId)));
+  if (general.length) await addEvents(userId, general);
+  for (const id of ids) {
+    const own = list.filter((e) => e && e.accountId === id);
+    if (own.length) await addEvents(userId, own, id);
+  }
+  // Accounts taken off this PC's list in the last 30 days: the PC deletes their saved sign-in.
+  const { rows: gone } = await q(
+    `select id from linkedin_account where user_id = $1 and removed_at > now() - interval '30 days'
+        and ($2::uuid is null or device_id = $2 or device_id is null)`, [userId, device ? device.id : null]);
+  return { accounts: out, removed: gone.map((r) => r.id) };
 }
 
 // ── Activity log ────────────────────────────────────────────────────
 const EVENT_KEEP_DAYS = 14;
-async function addEvents(userId, events) {
+async function addEvents(userId, events, accountId = null) {
   const list = (Array.isArray(events) ? events : []).slice(0, 50)
     .map((e) => ({ level: ["info", "warn", "error", "success"].includes(e && e.level) ? e.level : "info",
       text: String((e && e.text) || "").trim().slice(0, 400), at: e && e.at && !isNaN(Date.parse(e.at)) ? new Date(e.at) : new Date() }))
@@ -883,22 +1120,45 @@ async function addEvents(userId, events) {
     .map((e) => (Math.abs(e.at.getTime() - Date.now()) > 3600000 ? { ...e, at: new Date() } : e));
   if (!list.length || !dbOn) return 0;
   await q(
-    `insert into linkedin_agent_event (user_id, at, level, text)
-       select $1, x.at, x.level, x.text from jsonb_to_recordset($2::jsonb) as x(at timestamptz, level text, text text)`,
-    [userId, JSON.stringify(list)],
+    `insert into linkedin_agent_event (user_id, li_account_id, at, level, text)
+       select $1, $3, x.at, x.level, x.text from jsonb_to_recordset($2::jsonb) as x(at timestamptz, level text, text text)`,
+    [userId, JSON.stringify(list), isUuid(accountId) ? accountId : null],
   );
   if (Math.random() < 0.05) {
     await q(`delete from linkedin_agent_event where user_id = $1 and at < now() - interval '${EVENT_KEEP_DAYS} days'`, [userId]).catch(() => {});
   }
   return list.length;
 }
-async function listEvents(userId, limit = 150) {
+// Newest first. With an account: its lines and the general ones (PCs connecting, and so on).
+async function listEvents(userId, { limit = 150, accountId } = {}) {
   if (!dbOn) return [];
+  const one = isUuid(accountId) ? accountId : null;
   const { rows } = await q(
-    `select id, at, level, text from linkedin_agent_event where user_id = $1 order by at desc, id desc limit ${Math.min(500, Math.max(1, Number(limit) || 150))}`,
-    [userId],
+    `select e.id, e.at, e.level, e.text, e.li_account_id as account_id, a.label as account_label
+       from linkedin_agent_event e left join linkedin_account a on a.id = e.li_account_id
+      where e.user_id = $1 and ($2::uuid is null or e.li_account_id = $2 or e.li_account_id is null)
+      order by e.at desc, e.id desc limit ${Math.min(500, Math.max(1, Number(limit) || 150))}`,
+    [userId, one],
   );
   return rows;
+}
+
+// ── Queue rows: which account sends them ────────────────────────────
+// Pick the account an unsent LinkedIn item goes from (null = automatic). A reply stays with the
+// account whose conversation it is.
+async function setQueueAccount(userId, id, accountId) {
+  let target = null;
+  if (accountId) {
+    target = await accountFor(userId, accountId);
+    if (!target || !isUuid(accountId)) throw new Error("That LinkedIn account isn't on the agent.");
+  }
+  const { rows } = await q(
+    `update outreach_queue set li_account_id = $3, updated_at = now()
+      where id = $1 and user_id = $2 and channel = 'linkedin' and action <> 'reply' and status in ('pending','approved','failed')
+      returning id`, [id, userId, target ? target.id : null]);
+  if (!rows[0]) return null;
+  const { rows: r } = await q(`select o.*, ${WAITING_SQL("o")} as waiting, ${EFF_SQL("o")} as li_account_eff from outreach_queue o where o.id = $1`, [id]);
+  return r[0];
 }
 
 // ── Pairing a PC ────────────────────────────────────────────────────
@@ -954,23 +1214,25 @@ async function deviceForToken(token) {
   const t = String(token || "");
   if (!dbOn || !t.startsWith("kca_") || t.length < 40) return null;
   const { rows } = await q(
-    `select d.id, d.name, d.user_id, d.last_used_at, u.* from linkedin_agent_device d join users u on u.id = d.user_id
+    // Device columns are aliased: u.* has an `id` too, and it would win over d.id.
+    `select u.*, d.id as device_id, d.name as device_name, d.user_id, d.last_used_at as device_used_at
+       from linkedin_agent_device d join users u on u.id = d.user_id
       where d.token_hash = $1 and d.revoked_at is null and d.paired_at is not null`,
     [sha(t)],
   );
   const r = rows[0];
   if (!r) return null;
-  if (!r.last_used_at || Date.now() - new Date(r.last_used_at).getTime() > 60000) {
-    q("update linkedin_agent_device set last_used_at = now() where id = $1", [r.id]).catch(() => {});
+  if (!r.device_used_at || Date.now() - new Date(r.device_used_at).getTime() > 60000) {
+    q("update linkedin_agent_device set last_used_at = now() where id = $1", [r.device_id]).catch(() => {});
   }
-  const { id: deviceId, name, user_id, last_used_at, ...user } = r;
-  return { device: { id: deviceId, name }, user: { ...user, id: user_id } };
+  const { device_id: deviceId, device_name: name, device_used_at, ...user } = r; // eslint-disable-line no-unused-vars
+  return { device: { id: deviceId, name }, user: { ...user, id: r.user_id } };
 }
 
 async function listDevices(userId) {
   if (!dbOn) return [];
   const { rows } = await q(
-    `select id, name, paired_at, last_used_at from linkedin_agent_device
+    `select id, name, paired_at, last_used_at, worker from linkedin_agent_device
       where user_id = $1 and paired_at is not null and revoked_at is null order by paired_at desc`,
     [userId],
   );
@@ -982,53 +1244,66 @@ async function revokeDevice(userId, id) {
     "update linkedin_agent_device set revoked_at = now(), token_hash = null where id = $1 and user_id = $2 and revoked_at is null returning id, name",
     [id, userId],
   );
-  if (rows[0]) await addEvents(userId, [{ level: "warn", text: `PC "${rows[0].name || "PC"}" disconnected from Karma Connect.` }]);
+  if (rows[0]) {
+    // Its accounts go to whichever PC checks in next.
+    await q("update linkedin_account set device_id = null, updated_at = now() where user_id = $1 and device_id = $2", [userId, rows[0].id]);
+    await addEvents(userId, [{ level: "warn", text: `PC "${rows[0].name || "PC"}" disconnected from Karma Connect.` }]);
+  }
   return rows[0] || null;
 }
 
-// What the Send Queue strip and the LinkedIn agent page show.
+// What the Send Queue strip and the LinkedIn agent page show: every account with its own state,
+// counts and limits, plus the PCs. The top-level fields sum the accounts up.
 async function status(userId) {
-  if (!dbOn) return { enabled: false, limits: LIMITS, counts: { day: 0, hour: 0, invDay: 0, invWeek: 0 }, queued: 0 };
-  const state = await getState(userId);
-  const L = limitsFor(state);
-  const counts = await sentCounts(userId);
-  const { rows } = await q(
-    `select count(*) filter (where status = 'approved' and not ${WAITING_SQL("o")}) as ready,
-            count(*) filter (where status = 'approved' and ${WAITING_SQL("o")})     as waiting,
-            count(*) filter (where status = 'sending')  as inflight
-       from outreach_queue o where user_id = $1 and channel = 'linkedin'`,
-    [userId],
-  );
-  const inbox = await q("select count(*) filter (where needs_reply) as n from linkedin_inbox where user_id = $1", [userId]);
-  const fu = await q("select count(*) as n from outreach_queue where user_id = $1 and action = 'invite' and followup_state in ('needs_draft','drafted')", [userId]);
-  const cp = await q("select count(*) as n from linkedin_copy where user_id = $1 and status = 'done' and done_at > now() - interval '24 hours'", [userId]);
   const defaults = {};
   for (const k of [...Object.keys(BOUNDS), "weekdaysOnly"]) defaults[k] = LIMITS[k];
+  if (!dbOn) return { accounts: [], devices: [], maxAccounts: MAX_ACCOUNTS, defaults, bounds: BOUNDS, enabled: false, needReply: 0, firstMessages: 0 };
+  const accounts = await listAccounts(userId);
+  const counts = await queueCounts(userId);
+  const inbox = await q("select li_account_id as a, count(*) filter (where needs_reply) as n from linkedin_inbox where user_id = $1 group by li_account_id", [userId]);
+  const fu = await q(
+    `select x.a, count(*) as n from (select ${EFF_SQL("o")} as a from outreach_queue o
+        where o.user_id = $1 and o.action = 'invite' and o.followup_state in ('needs_draft','drafted')) x group by x.a`, [userId]);
+  const cp = await q("select li_account_id as a, count(*) as n from linkedin_copy where user_id = $1 and status = 'done' and done_at > now() - interval '24 hours' group by li_account_id", [userId]);
+  const by = (res) => new Map(res.rows.map((r) => [String(r.a), Number(r.n || 0)]));
+  const inboxBy = by(inbox), fuBy = by(fu), cpBy = by(cp);
+  const handles = new Map();
+  for (const a of accounts) {
+    const h = a.worker && a.worker.linkedin && a.worker.linkedin.handle;
+    if (h) handles.set(h.toLowerCase(), [...(handles.get(h.toLowerCase()) || []), a.label]);
+  }
+  const list = accounts.map((a) => {
+    const c = counts.get(String(a.id)) || NO_COUNTS;
+    const h = a.worker && a.worker.linkedin && a.worker.linkedin.handle;
+    const twins = h ? (handles.get(h.toLowerCase()) || []).filter((l) => l !== a.label) : [];
+    return {
+      id: a.id, slot: a.slot, label: a.label, deviceId: a.device_id,
+      enabled: !!a.enabled, haltedAt: a.halted_at, haltReason: a.halt_reason,
+      lastSeenAt: a.last_seen_at, lastSentAt: a.last_sent_at, dryRun: !!a.dry_run,
+      worker: a.worker || null, pendingCommand: a.command || null,
+      settings: cleanSettings(a.settings), limits: limitsFor(a),
+      counts: { day: c.day, hour: c.hour, invDay: c.invDay, invWeek: c.invWeek, copies: cpBy.get(String(a.id)) || 0 },
+      ready: c.ready, waiting: c.waiting, inflight: c.inflight,
+      needReply: inboxBy.get(String(a.id)) || 0, firstMessages: fuBy.get(String(a.id)) || 0,
+      sameLinkedInAs: twins[0] || null,
+    };
+  });
+  const sum = (k) => list.reduce((n, a) => n + (a[k] || 0), 0);
   return {
-    enabled: !!state.enabled,
-    haltedAt: state.halted_at,
-    haltReason: state.halt_reason,
-    lastSeenAt: state.last_seen_at,
-    lastSentAt: state.last_sent_at,
-    dryRun: !!state.dry_run,
-    worker: state.worker || null,
-    pendingCommand: state.command || null,
-    settings: cleanSettings(state.settings),
+    accounts: list,
+    maxAccounts: MAX_ACCOUNTS,
+    devices: await listDevices(userId),
     defaults,
     bounds: BOUNDS,
-    devices: await listDevices(userId),
-    limits: L,
-    counts: { day: counts.day, hour: counts.hour, invDay: counts.invDay, invWeek: counts.invWeek, copies: Number((cp.rows[0] || {}).n || 0) },
-    ready: Number((rows[0] || {}).ready || 0),
-    waiting: Number((rows[0] || {}).waiting || 0),
-    inflight: Number((rows[0] || {}).inflight || 0),
-    needReply: Number((inbox.rows[0] || {}).n || 0),
-    firstMessages: Number((fu.rows[0] || {}).n || 0),
+    enabled: list.some((a) => a.enabled),
+    ready: sum("ready"), waiting: sum("waiting"), inflight: sum("inflight"),
+    needReply: sum("needReply") + (inboxBy.get("null") || 0), firstMessages: sum("firstMessages"),
   };
 }
 
 module.exports = {
   ensureAgentSchema, getState, setEnabled, halt, status,
+  listAccounts, accountFor, createAccount, updateAccount, removeAccount, setQueueAccount, MAX_ACCOUNTS, EFF_SQL,
   lease, report, reclaimStale, sentCounts, decide, inWindow, LIMITS,
   watch, markAccepted, recordInbox, listInbox, setHandled, saveDraft, queueReply, sendWithoutWaiting,
   recordProfile, listFollowups, saveFollowupDraft, queueFollowup, skipFollowup, needProfile,

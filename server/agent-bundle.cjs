@@ -177,6 +177,9 @@ On the LinkedIn agent page press **Sign in to LinkedIn**. Edge opens on this PC:
 LinkedIn **email and password**, not "Continue with Google", which refuses automated browsers.
 The window closes itself when you're done, and the session is reused for weeks.
 
+Running more than one LinkedIn account (up to four)? Press **Add a LinkedIn account** on that page,
+then **Sign in to LinkedIn** on the new account. Each one gets its own browser window on this PC.
+
 ## 4. Try it, then run it
 
 Turn on **Dry run** on the LinkedIn agent page and press **Start**. The agent opens each profile,

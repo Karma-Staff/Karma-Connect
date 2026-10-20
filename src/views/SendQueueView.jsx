@@ -4,7 +4,7 @@
 // at the top with an AI draft that a person edits and approves before anything is sent.
 import { useState, useEffect, useRef } from "react";
 import { listQueue, approveQueued, sendQueuedNow, markQueuedSent, skipQueued, agentStatus, setAgentEnabled,
-  listInbox, saveThreadDraft, approveReply, setThreadHandled, sendWithoutWaiting } from "../lib/outreach.js";
+  listInbox, saveThreadDraft, approveReply, setThreadHandled, sendWithoutWaiting, setQueueAccount } from "../lib/outreach.js";
 import { draftReply } from "../lib/replies.js";
 import { listFollowups, prepareFollowup, saveFollowupDraft, approveFollowup, skipFollowup } from "../lib/followups.js";
 import { SENDERS } from "../lib/senders.js";
@@ -39,7 +39,27 @@ function linkedinUrlFor(it) {
   return m ? "https://www.linkedin.com/messaging/compose/?recipient=" + encodeURIComponent(m[1]) : (profile || search);
 }
 
-function QueueItem({ item, onChange, showToast }) {
+// Which LinkedIn account an item goes from, when the agent runs more than one. Unsent
+// invitations and messages can be moved; a reply stays in its own account's conversation.
+function FromAccount({ item, accounts, busy, run }) {
+  if (!accounts || accounts.length < 2 || item.channel !== "linkedin") return null;
+  const label = (id) => (accounts.find((a) => a.id === id) || {}).label;
+  const eff = item.li_account_eff || item.li_account_id;
+  const movable = item.action !== "reply" && ["pending", "approved", "failed"].includes(item.status);
+  if (!movable) return label(eff) ? <span className="chip idx" title="LinkedIn account" style={{ alignSelf: "flex-start" }}>{(item.status === "sent" ? "Sent from " : "From ") + label(eff)}</span> : null;
+  return (
+    <label style={{ fontSize: 12, color: "var(--muted)", display: "inline-flex", alignItems: "center", gap: 6, alignSelf: "flex-start" }}>From
+      <select value={item.li_account_id || ""} disabled={busy} aria-label="Send from which LinkedIn account"
+        onChange={(e) => run(() => setQueueAccount(item.id, e.target.value || null), "It goes from " + (label(e.target.value) || label(eff) || "the first account") + " now")}
+        style={{ padding: "4px 7px", borderRadius: 8, fontSize: 12 }}>
+        <option value="">Automatic{!item.li_account_id && label(eff) ? " (" + label(eff) + ")" : ""}</option>
+        {accounts.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
+      </select>
+    </label>
+  );
+}
+
+function QueueItem({ item, onChange, showToast, accounts }) {
   const [busy, setBusy] = useState(false);
   const [to, setTo] = useState(item.to_email || "");
   const [err, setErr] = useState("");
@@ -93,6 +113,7 @@ function QueueItem({ item, onChange, showToast }) {
 
       {item.subject && <div className="msubj"><span className="msubj-l">Subject</span>{item.subject}</div>}
       <div className="mbody" style={{ maxHeight: 168, overflow: "auto" }}>{item.body}</div>
+      <FromAccount item={item} accounts={accounts} busy={busy} run={run} />
 
       {item.status === "sent" && <div className="hint" style={{ color: "var(--muted)" }}>Sent {fmt(item.sent_at)}{item.channel === "email" && item.to_email ? " · " + item.to_email : ""}</div>}
       {/* A sent row carrying an error is an UNCONFIRMED agent send — it's marked sent so it can
@@ -158,7 +179,7 @@ function QueueItem({ item, onChange, showToast }) {
 // One LinkedIn conversation that needs an answer. The AI drafts a reply as soon as the card
 // appears (once per new message from them — the draft is saved with the thread, so it isn't
 // paid for again); the person edits it and approves. Nothing is sent before that.
-function ThreadCard({ thread, sender, onChanged, showToast }) {
+function ThreadCard({ thread, sender, onChanged, showToast, multi }) {
   const fresh = thread.draft && thread.draft_for === thread.last_text ? thread.draft : "";
   const [text, setText] = useState(fresh);
   const [drafting, setDrafting] = useState(false);
@@ -198,6 +219,7 @@ function ThreadCard({ thread, sender, onChanged, showToast }) {
       <div className="mctop">
         <span className="chip" style={{ background: "rgba(74,134,200,.16)", borderColor: "rgba(74,134,200,.34)", color: "var(--ice)" }}>LinkedIn</span>
         <span style={{ fontWeight: 700, fontSize: 13.5, color: "var(--text)" }}>{thread.name || thread.lead_label}</span>
+        {multi && thread.account_label && <span className="chip idx" title="The LinkedIn account this conversation is on; the reply goes from it">{thread.account_label}</span>}
         <span className="chip" style={{ marginLeft: "auto", background: "transparent",
           borderColor: (open ? "#E7B74B" : "#52d39e") + "66", color: open ? "#E7B74B" : "#52d39e" }}>
           {thread.reply_queued ? "Reply queued" : open ? "Needs a reply" : "Answered"}
@@ -325,7 +347,7 @@ function SenderPick({ senderId, onPick }) {
   );
 }
 
-function RepliesPanel({ threads, sender, onChanged, showToast }) {
+function RepliesPanel({ threads, sender, onChanged, showToast, multi }) {
   const [showAll, setShowAll] = useState(false);
   if (!threads || !threads.length) return null;
   const needs = threads.filter((t) => t.needs_reply && !t.reply_queued);
@@ -336,60 +358,77 @@ function RepliesPanel({ threads, sender, onChanged, showToast }) {
         <div className="sect-title" style={{ margin: 0 }}>LinkedIn replies <span style={{ color: "var(--faint)", fontWeight: 600 }}>· {needs.length} to answer</span></div>
       </div>
       {needs.length > 0
-        ? <div className="grid2">{needs.map((t) => <ThreadCard key={t.id} thread={t} sender={sender} onChanged={onChanged} showToast={showToast} />)}</div>
+        ? <div className="grid2">{needs.map((t) => <ThreadCard key={t.id} thread={t} sender={sender} onChanged={onChanged} showToast={showToast} multi={multi} />)}</div>
         : <div className="hint" style={{ color: "var(--muted)" }}>No replies waiting. The agent checks your LinkedIn inbox about every 15 minutes while it's running.</div>}
       {rest.length > 0 && (
         <div style={{ marginTop: 10 }}>
           <button className="iconbtn" onClick={() => setShowAll(!showAll)}>{showAll ? "Hide" : "Show"} {rest.length} answered conversation{rest.length === 1 ? "" : "s"}</button>
-          {showAll && <div className="grid2" style={{ marginTop: 10 }}>{rest.map((t) => <ThreadCard key={t.id} thread={t} sender={sender} onChanged={onChanged} showToast={showToast} />)}</div>}
+          {showAll && <div className="grid2" style={{ marginTop: 10 }}>{rest.map((t) => <ThreadCard key={t.id} thread={t} sender={sender} onChanged={onChanged} showToast={showToast} multi={multi} />)}</div>}
         </div>
       )}
     </div>
   );
 }
 
-// Status strip for the LinkedIn agent: whether it's on, how much of today's cap it has used,
-// and why it stopped if it stopped. Pause is the kill switch — the next time the worker checks
-// in it closes its browser. Everything else (PCs, dry run, limits, the log) is on the LinkedIn
-// agent page.
+// Status strip for the LinkedIn agent: each account, whether it's on, how much of today's cap it
+// has used, and why it stopped if it stopped. Pause all is the kill switch — the next time the
+// PC checks in it closes every browser. Everything else (one account at a time, PCs, dry run,
+// limits, the log) is on the LinkedIn agent page.
 function AgentStrip({ status, onToggle, busy, onOpenAgent }) {
-  if (!status) return null;
-  const { enabled, haltReason, lastSeenAt, dryRun, worker, counts = {}, limits = {}, ready = 0, inflight = 0, waiting = 0, needReply = 0, firstMessages = 0 } = status;
-  // "Live" means the worker has actually checked in recently (it does every 15 seconds) —
-  // switched on with no PC answering is a common and confusing state, so name it.
-  const seenAgo = lastSeenAt ? (Date.now() - new Date(lastSeenAt).getTime()) / 1000 : Infinity;
-  const online = seenAgo < 90 && !!worker;
-  const live = enabled && online;
-  const tone = haltReason ? "#e24a4a" : live ? (dryRun ? "#7C5CFF" : "#52d39e") : enabled ? "#E7B74B" : "var(--faint)";
-  const label = haltReason ? "Stopped" : live ? (dryRun ? "Running · dry run" : "Running") : enabled ? "On · PC offline" : "Paused";
+  if (!status || !Array.isArray(status.accounts)) return null;
+  const { accounts, enabled, ready = 0, waiting = 0, inflight = 0, needReply = 0, firstMessages = 0 } = status;
+  // "Live" means the PC has actually checked in for that account recently (it does every 15
+  // seconds) — switched on with no PC answering is a common and confusing state, so name it.
+  const stateOf = (a) => {
+    const online = !!a.worker && !!a.lastSeenAt && (Date.now() - new Date(a.lastSeenAt).getTime()) / 1000 < 90;
+    if (a.haltReason) return { tone: "#e24a4a", label: "Stopped", online };
+    if (a.enabled && online) return a.dryRun ? { tone: "#7C5CFF", label: "Dry run", online } : { tone: "#52d39e", label: "Running", online };
+    if (a.enabled) return { tone: "#E7B74B", label: "PC offline", online };
+    return { tone: "var(--faint)", label: "Paused", online };
+  };
+  const states = accounts.map(stateOf);
+  const running = accounts.filter((a, i) => a.enabled && states[i].online).length;
+  const stopped = accounts.filter((a) => a.haltReason);
+  const offline = accounts.filter((a, i) => a.enabled && !states[i].online && !a.haltReason);
+  const tone = stopped.length ? "#e24a4a" : running ? "#52d39e" : enabled ? "#E7B74B" : "var(--faint)";
+  const one = accounts.length === 1;
 
   return (
     <div className="panel" style={{ marginBottom: 16, borderColor: tone + "44" }}>
       <div className="toprow" style={{ margin: 0, flexWrap: "wrap", gap: 10 }}>
         <span className="chip" style={{ background: "transparent", borderColor: tone + "66", color: tone }}>
-          LinkedIn agent · {label}
+          LinkedIn agent · {one ? states[0].label : running + " of " + accounts.length + " running"}
         </span>
         <span style={{ color: "var(--muted)", fontSize: 12.5 }}>
-          {counts.day ?? 0}/{limits.perDay ?? "?"} messages · {counts.invDay ?? 0}/{limits.invitesPerDay ?? "?"} invitations today
-          {" "}({counts.invWeek ?? 0}/{limits.invitesPerWeek ?? "?"} this week)
-          {ready ? " · " + ready + " ready" : ""}{waiting ? " · " + waiting + " waiting for accept" : ""}{inflight ? " · " + inflight + " in flight" : ""}
+          {ready ? ready + " ready" : "Nothing ready"}{waiting ? " · " + waiting + " waiting for accept" : ""}{inflight ? " · " + inflight + " in flight" : ""}
           {needReply ? " · " + needReply + (needReply === 1 ? " reply" : " replies") + " to answer" : ""}
           {firstMessages ? " · " + firstMessages + " new connection" + (firstMessages === 1 ? "" : "s") + " to welcome" : ""}
         </span>
         <button className="btn sm ghost" onClick={onOpenAgent} style={{ marginLeft: "auto" }}>Agent controls →</button>
         <button className={"btn sm " + (enabled ? "ghost" : "primary")} disabled={busy}
           onClick={() => onToggle(!enabled)}>
-          {busy ? "…" : enabled ? "Pause" : haltReason ? "Clear & start" : "Start"}
+          {busy ? "…" : enabled ? (one ? "Pause" : "Pause all") : stopped.length ? "Clear & start" + (one ? "" : " all") : one ? "Start" : "Start all"}
         </button>
       </div>
-      {haltReason && (
-        <div className="err" style={{ marginTop: 10 }}>
-          {haltReason} The agent stopped itself. Check LinkedIn on that PC, then start it again.
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+        {accounts.map((a, i) => {
+          const c = a.counts || {}, L = a.limits || {};
+          return (
+            <span key={a.id} className="chip" title={(a.worker && a.worker.linkedin && a.worker.linkedin.name) || ""}
+              style={{ background: "transparent", borderColor: states[i].tone + "55", color: "var(--text)", fontWeight: 500 }}>
+              <span style={{ color: states[i].tone }}>●</span>&nbsp;{a.label} · {states[i].label} · {c.day ?? 0}/{L.perDay ?? "?"} msgs · {c.invDay ?? 0}/{L.invitesPerDay ?? "?"} invites
+            </span>
+          );
+        })}
+      </div>
+      {stopped.map((a) => (
+        <div key={a.id} className="err" style={{ marginTop: 10 }}>
+          {one ? "" : a.label + ": "}{a.haltReason} It stopped itself. Check LinkedIn for that account on its PC, then start it again.
         </div>
-      )}
-      {enabled && !online && !haltReason && (
+      ))}
+      {offline.length > 0 && (
         <div className="hint" style={{ marginTop: 10, color: "var(--muted)" }}>
-          No PC is answering. Make sure the agent's PC is on, or connect one in <b>Agent controls</b>.
+          No PC is answering{one ? "" : " for " + offline.map((a) => a.label).join(", ")}. Make sure the agent's PC is on, or connect one in <b>Agent controls</b>.
         </div>
       )}
     </div>
@@ -408,6 +447,7 @@ export function SendQueueView({ showToast, onOpenAgent }) {
   const [senderId, setSenderId] = useState(() => { try { return localStorage.getItem(SENDER_KEY) || SENDERS[0].id; } catch (e) { return SENDERS[0].id; } });
   const sender = SENDERS.find((x) => x.id === senderId) || SENDERS[0];
   const pickSender = (id) => { setSenderId(id); try { localStorage.setItem(SENDER_KEY, id); } catch (e) {} };
+  const accounts = (agent && agent.accounts) || []; // the LinkedIn accounts on the agent
 
   function load() {
     listQueue().then(({ items, sendingOn }) => { setItems(items); setSendingOn(sendingOn); })
@@ -425,7 +465,7 @@ export function SendQueueView({ showToast, onOpenAgent }) {
   async function toggleAgent(next) {
     setAgentBusy(true);
     try {
-      setAgent(await setAgentEnabled(next));
+      setAgent(await setAgentEnabled(next, "all"));
       showToast(next ? "Agent on. It sends the ready LinkedIn invitations and messages" : "Agent paused");
     } catch (e) { setErr((e && e.message) || "Could not change the agent."); }
     setAgentBusy(false);
@@ -486,7 +526,7 @@ export function SendQueueView({ showToast, onOpenAgent }) {
         <div className="toprow" style={{ marginBottom: 10, justifyContent: "flex-end" }}><SenderPick senderId={sender.id} onPick={pickSender} /></div>
       )}
       <FollowupsPanel followups={followups} sender={sender} onChanged={load} showToast={showToast} />
-      <RepliesPanel threads={threads} sender={sender} onChanged={load} showToast={showToast} />
+      <RepliesPanel threads={threads} sender={sender} onChanged={load} showToast={showToast} multi={accounts.length > 1} />
 
       {/* Blitz launcher: rip through all Ready LinkedIn items, one paste-and-send at a time. */}
       {!session && readyLinked.length > 0 && (
@@ -524,7 +564,7 @@ export function SendQueueView({ showToast, onOpenAgent }) {
           <div key={key} style={{ marginBottom: 20 }}>
             <div className="sect-title">{title} <span style={{ color: "var(--faint)", fontWeight: 600 }}>· {rows.length}</span></div>
             <div className="grid2">
-              {rows.map((it) => <QueueItem key={it.id} item={it} onChange={patch} showToast={showToast} />)}
+              {rows.map((it) => <QueueItem key={it.id} item={it} onChange={patch} showToast={showToast} accounts={accounts} />)}
             </div>
           </div>
         );
