@@ -38,6 +38,8 @@
 // Nothing here talks to LinkedIn — it only decides what the worker is allowed to do next.
 // Requires db.cjs, which reads env at load: require this AFTER the .env loader has run.
 const crypto = require("node:crypto");
+// the agent finding prospects by itself (searching LinkedIn, inviting decision-makers)
+const prospecting = require("./li-prospecting.cjs");
 const { dbOn, q, logActivity } = require("./db.cjs");
 
 // ── Caps ────────────────────────────────────────────────────────────
@@ -267,6 +269,7 @@ async function ensureAgentSchema() {
         where not exists (select 1 from linkedin_account x where x.user_id = a.user_id)
        returning id, user_id`);
     for (const m of moved) await adoptUnassigned(m.user_id, m.id);
+    await prospecting.ensureProspectingSchema();
   } catch (e) { console.error("ensureAgentSchema:", e.message); }
 }
 
@@ -313,9 +316,15 @@ async function createAccount(userId, { label } = {}) {
 }
 
 // Rename an account, or choose which PC runs it. Body: { label?, deviceId? (null = any PC) }.
-async function updateAccount(userId, id, { label, deviceId } = {}) {
+async function updateAccount(userId, id, { label, deviceId, prospectOn, senderId } = {}) {
   const a = await accountFor(userId, id);
   if (!a || !isUuid(id)) return null;
+  // "Find prospects for me" on or off, and who the AI writes as for this account
+  if (prospectOn !== undefined) {
+    await q("update linkedin_account set prospect_on = $2, updated_at = now() where id = $1", [a.id, !!prospectOn]);
+    await addEvents(userId, [{ text: prospectOn ? "Finding prospects: on — it searches LinkedIn for restoration decision-makers and invites them." : "Finding prospects: off." }], a.id);
+  }
+  if (senderId !== undefined) await q("update linkedin_account set sender_id = $2, updated_at = now() where id = $1", [a.id, senderId ? String(senderId).slice(0, 40) : null]);
   if (label !== undefined) {
     const name = String(label || "").trim().slice(0, 60);
     if (!name) throw new Error("Give the account a name.");
@@ -499,7 +508,7 @@ async function claim(userId, accountId, actions, limit, leaseId, expires) {
              and ${EFF_SQL("o")} = $5
            order by (o.action = 'reply') desc, o.scheduled_at nulls first
            limit ${Number(limit)} for update skip locked)
-       returning id, prospect_id, lead_label, body, linkedin_url, step, action, thread_url`,
+       returning id, prospect_id, lead_label, body, linkedin_url, step, action, thread_url, note_optional`,
     [userId, String(leaseId || "").slice(0, 64) || null, expires, actions, accountId],
   );
   return rows;
@@ -552,7 +561,7 @@ async function bumpProspect(userId, prospectId, to) {
 //                      attempts — or at once when `final` says retrying can't help.
 //   result 'halted'  → LinkedIn pushed back (checkpoint, captcha, limit notice). Release the
 //                      item AND stop the whole agent for this user — a human looks at it next.
-async function report(userId, id, { result, error, leaseId, scrape, connected, final, profileText } = {}) {
+async function report(userId, id, { result, error, leaseId, scrape, connected, final, profileText, noteDropped } = {}) {
   if (!dbOn) return null;
   const cur = await q("select * from outreach_queue where id = $1 and user_id = $2", [id, userId]);
   const row = cur.rows[0];
@@ -570,6 +579,8 @@ async function report(userId, id, { result, error, leaseId, scrape, connected, f
   const scrapeArgs = [trim(s.title, 200), trim(s.company, 200), trim(s.companyUrl, 400), trim(s.profileUrl, 400)];
   const isInvite = row.action === "invite";
   const acctId = row.li_account_id; // set when it was claimed; null → the first account
+  // LinkedIn's free notes for the month are used up: the rest go without one
+  if (isInvite && noteDropped) await prospecting.notesUsedUp(acctId).catch(() => {});
 
   if (result === "sent" || result === "unverified") {
     // An 'unverified' send — the click happened but the worker couldn't see it land — is marked
@@ -624,8 +635,13 @@ async function report(userId, id, { result, error, leaseId, scrape, connected, f
 }
 
 // ── Inbox and acceptances (the worker's reading side) ───────────────
+/* Every incoming conversation is read and kept, not only replies from people this user reached
+   out to — chosen by the owner on 2026-10-20 (the accounts are work LinkedIns, and a message
+   from someone new is often new business). LI_INBOX_ALL=0 goes back to outreach replies only. */
+const INBOX_ALL = process.env.LI_INBOX_ALL !== "0";
+
 // What the worker should look out for: the people this user has messaged or invited (so it
-// can pick their conversations out of the inbox and ignore everyone else's), and the
+// can tell their conversations apart in the inbox), and the
 // invitations still waiting (so it can spot them in the new-connections list). Reading pages
 // is activity too, so this answers only while the agent is on and inside the window.
 async function watch(userId, acct, { localHour, localDay } = {}) {
@@ -660,7 +676,8 @@ async function watch(userId, acct, { localHour, localDay } = {}) {
   );
   const pendingInvites = [...new Set(pend.rows.map((r) => handleOf(r.linkedin_url)).filter(Boolean))];
   await q("update linkedin_account set last_seen_at = now(), updated_at = now() where id = $1", [acct.id]);
-  return { ok: true, reason: "", people, pendingInvites, needProfile: await needProfile(userId, acct.id) };
+  return { ok: true, reason: "", people, readAll: INBOX_ALL, pendingInvites, needProfile: await needProfile(userId, acct.id),
+    search: await prospecting.nextSearch(userId, acct, limitsFor(acct)).catch(() => null) };
 }
 
 // The worker saw these handles in this account's new-connections list: their invitations were
@@ -779,9 +796,9 @@ async function skipFollowup(userId, id) {
 }
 
 // Store the conversations the worker read. Each thread is matched to a prospect this user
-// reached out to — by profile handle, else by exact name — and one that matches nobody is
-// dropped, never stored. A thread whose last message is theirs needs a reply; it's flagged,
-// and the prospect moves to 'replied'.
+// reached out to — by profile handle, else by exact name. One that matches nobody is kept as
+// an incoming message with no prospect (INBOX_ALL), or dropped when that's off. A thread whose
+// last message is theirs needs a reply; it's flagged, and a matched prospect moves to 'replied'.
 //   threads: [{ threadKey, threadUrl, name, profileUrl, messages: [{ from: 'them'|'me', text }] }]
 async function recordInbox(userId, acct, threads) {
   if (!dbOn) return { stored: 0, needReply: 0 };
@@ -814,7 +831,7 @@ async function recordInbox(userId, acct, threads) {
     const named = byName.get(nk) || (w.length > 2 ? byName.get(w[0] + " " + w[1]) || byName.get(w[0] + " " + w[w.length - 1]) : null);
     const match = (handle && byHandle.get(handle))
       || (named && (!handle || !handleOf(named.linkedin_url)) ? named : null);
-    if (!match) continue;
+    if (!match && !INBOX_ALL) continue;
     const msgs = (Array.isArray(t.messages) ? t.messages : [])
       .filter((m) => m && (m.from === "them" || m.from === "me") && String(m.text || "").trim())
       .slice(-30)
@@ -838,12 +855,12 @@ async function recordInbox(userId, acct, threads) {
          handled_at = case when linkedin_inbox.last_text is distinct from excluded.last_text then null else linkedin_inbox.handled_at end,
          last_text = excluded.last_text, last_from = excluded.last_from, updated_at = now()
        returning needs_reply`,
-      [userId, key, threadUrl, String(t.name || match.lead_label || "").slice(0, 200), handle ? "https://www.linkedin.com/in/" + encodeURIComponent(handle) + "/" : null,
-       match.prospect_id, match.lead_label, JSON.stringify(msgs), last.text, last.from, last.from === "them", acct.id],
+      [userId, key, threadUrl, String(t.name || (match && match.lead_label) || "").slice(0, 200), handle ? "https://www.linkedin.com/in/" + encodeURIComponent(handle) + "/" : null,
+       match ? match.prospect_id : null, match ? match.lead_label : null, JSON.stringify(msgs), last.text, last.from, last.from === "them", acct.id],
     );
     stored++;
     if (rows[0] && rows[0].needs_reply) needReply++;
-    if (msgs.some((m) => m.from === "them")) await bumpProspect(userId, match.prospect_id, "replied");
+    if (match && msgs.some((m) => m.from === "them")) await bumpProspect(userId, match.prospect_id, "replied");
   }
   return { stored, needReply };
 }
@@ -856,7 +873,7 @@ async function listInbox(userId) {
               and o.status in ('pending', 'approved', 'sending')) as reply_queued
        from linkedin_inbox i left join linkedin_account a on a.id = i.li_account_id
       where i.user_id = $1 and a.removed_at is null
-      order by i.needs_reply desc, i.last_at desc nulls last limit 60`,
+      order by i.needs_reply desc, i.last_at desc nulls last limit 150`,
     [userId],
   );
   return rows;
@@ -1286,6 +1303,7 @@ async function status(userId) {
       ready: c.ready, waiting: c.waiting, inflight: c.inflight,
       needReply: inboxBy.get(String(a.id)) || 0, firstMessages: fuBy.get(String(a.id)) || 0,
       sameLinkedInAs: twins[0] || null,
+      ...prospecting.statusFields(a),
     };
   });
   const sum = (k) => list.reduce((n, a) => n + (a[k] || 0), 0);

@@ -10,7 +10,7 @@ const path = require("node:path");
 const zlib = require("node:zlib");
 
 const AGENT_DIR = path.join(__dirname, "..", "agent");
-const FILES = ["README.md", "run.cjs", "scrape.cjs", "send.cjs", "session.cjs", "invite.cjs", "inbox.cjs", "capture.cjs"];
+const FILES = ["README.md", "run.cjs", "scrape.cjs", "send.cjs", "session.cjs", "invite.cjs", "inbox.cjs", "capture.cjs", "prospect.cjs"];
 const ROOT = "karma-connect-agent"; // everything sits under one folder, so unzipping is tidy
 
 // ── Minimal zip writer (deflate) ──────────────────────────────────────────────

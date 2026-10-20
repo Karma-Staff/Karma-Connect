@@ -25,3 +25,6 @@ agent/agent.log.old
 
 # intermediate for scripts/build-docs-pdf.mjs
 docs/.reference.html
+
+# built by scripts/build-server-lib.mjs (npm run build) from src/lib — the server's copy of the AI pipeline
+server/gen/

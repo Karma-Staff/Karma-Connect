@@ -545,8 +545,8 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
 
   // The same as Ctrl+A / Ctrl+C / paste, done by the LinkedIn agent: it opens the profile on the
   // computer it runs on, copies the page, and the text lands in the box and is parsed.
-  async function copyWithAgent() {
-    const url = (prospect.linkedinUrl || "").trim();
+  async function copyWithAgent(urlOverride) {
+    const url = (typeof urlOverride === "string" ? urlOverride : prospect.linkedinUrl || "").trim();
     if (!/linkedin\.com\/in\//i.test(url)) { setParseErr("Add their LinkedIn profile link first (linkedin.com/in/…)."); return; }
     setParseErr(""); setParseMsg(""); setAgentCopy("Asking the agent…");
     try {
@@ -560,6 +560,49 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
       setParseErr((e && e.message) || "The agent couldn't copy that profile.");
     }
   }
+
+  /* Research, from an incoming LinkedIn message (the LinkedIn agent page). Someone already saved
+     opens as they are, their message in the reply box. Anyone else becomes a new prospect: the
+     agent copies their profile, and the AI analysis runs once it's in (the effect below). */
+  const [autoAnalyze, setAutoAnalyze] = useState(false);
+  async function researchFromInbox(t) {
+    const said = (t.messages || []).filter((m) => m.from === "them").slice(-3).map((m) => m.text).join("\n\n");
+    const name = String(t.lead_label || t.name || "").trim();
+    if (t.prospect_id && !String(t.prospect_id).startsWith("li-thread:")) {
+      try {
+        const hits = await listHistory(userEmail, 0, { q: name });
+        const entry = hits.find((h) => h.id === t.prospect_id);
+        if (entry) {
+          loadFromHistory(entry);
+          if (said) setProspectReply(said);
+          return;
+        }
+      } catch (e) { /* not found: research them as new */ }
+    }
+    const [first, ...rest] = String(t.name || name).split(/\s+/);
+    setProspect({ ...EMPTY_PROSPECT, firstName: first || "", lastName: rest.join(" "), linkedinUrl: t.profile_url || "",
+      context: said ? "They messaged us on LinkedIn: " + said.slice(0, 1500) : "" });
+    setAnalysis(null); setResults({ ...EMPTY_RESULTS }); setFavs({}); setCoUrl(""); setRawPaste("");
+    setProspectReply(said); setTranscript("");
+    setEnrichMsg(""); setEnrichErr(""); setParseMsg(""); setParseErr("");
+    setCurrentEntryId(null); setAnchorIdentity("");
+    setView("hub");
+    if (t.profile_url) {
+      showToast("Researching " + (first || "them") + ": the agent is copying their LinkedIn profile");
+      setAutoAnalyze(true);
+      copyWithAgent(t.profile_url).catch(() => setAutoAnalyze(false));
+    } else {
+      showToast("No profile link on this conversation yet: paste their LinkedIn profile below, then press AI Analysis");
+    }
+  }
+  // The profile is in and parsed: analyse once (and only if the copy worked).
+  useEffect(() => {
+    if (!autoAnalyze || parsing || agentCopy) return;
+    setAutoAnalyze(false);
+    if (parseErr || !(prospect.headline || prospect.title || prospect.company || prospect.about)) return;
+    runAnalysis();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoAnalyze, parsing, agentCopy, parseErr]);
 
   // Zero-token duplicate guard: before spending AI credits, warn if this person is already saved.
   async function runAnalysis() {
@@ -1436,7 +1479,7 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
           {view === "reminders" && <RemindersView onChanged={loadRemindersDue} />}
           {view === "coach" && <CoachView />}
           {view === "queue" && <SendQueueView showToast={showToast} onOpenAgent={() => setView("liagent")} />}
-          {view === "liagent" && <LinkedInAgentView showToast={showToast} onOpenQueue={() => setView("queue")} />}
+          {view === "liagent" && <LinkedInAgentView showToast={showToast} onOpenQueue={() => setView("queue")} onResearch={researchFromInbox} />}
 
           {view === "usage" && <UsageView />}
 

@@ -1,10 +1,11 @@
 // The agent's reading side: the LinkedIn inbox (who has replied) and the new-connections list
 // (whose invitation was accepted). Nothing here types or clicks Send.
 //
-// Privacy, by construction: the server hands over a watch list — the people this user messaged
-// or invited — and only conversations with THOSE people are opened or reported. Everything else
-// in the inbox (friends, recruiters, colleagues) is skipped right here on the machine and never
-// reaches Karma Connect. Same for connections: only handles with an invitation pending go back.
+// What it reports: the server hands over a watch list — the people this user messaged or
+// invited — and says whether to read everything (readAll, on since 2026-10-20: these are work
+// LinkedIns, and the owner wants every incoming message in Karma Connect). With readAll off,
+// only conversations with the watched people are opened; everything else is skipped here on the
+// machine and never reaches Karma Connect. Connections: only handles with an invitation pending go back.
 //
 // LinkedIn's messaging page still uses readable msg-* class names; the selectors below lean on
 // those first and on link shapes (/messaging/thread/, /in/) second. If LinkedIn changes them,
@@ -77,7 +78,7 @@ async function readThread(page, theirName) {
 // Read the inbox. `people` is the server's watch list ([{ handle, name }]); `memo` (a Map kept
 // for the life of the process) skips threads whose preview hasn't changed since last time.
 // Returns { threads, halt, note }.
-async function readInbox(page, people, memo, { maxOpen = 8 } = {}) {
+async function readInbox(page, people, memo, { maxOpen = 8, readAll = false } = {}) {
   // Full name, and first + last word too: LinkedIn shows "Jane Doe, CR" where we saved "Jane Doe".
   const short = (k) => { const w = k.split(" "); return w.length > 2 ? w[0] + " " + w[w.length - 1] : k; };
   const byName = new Map();
@@ -92,7 +93,7 @@ async function readInbox(page, people, memo, { maxOpen = 8 } = {}) {
     const w = k.split(" ");
     return w.length > 2 ? byName.get(w[0] + " " + w[1]) || byName.get(short(k)) : null;
   };
-  if (!byName.size) return { threads: [], halt: "", note: "nobody to watch for yet" };
+  if (!byName.size && !readAll) return { threads: [], halt: "", note: "nobody to watch for yet" };
 
   await page.goto("https://www.linkedin.com/messaging/", { waitUntil: "domcontentloaded" });
   await jitter(2500, 4500);
@@ -105,8 +106,8 @@ async function readInbox(page, people, memo, { maxOpen = 8 } = {}) {
   const threads = [];
   let opened = 0;
   for (const c of convs) {
-    const who = find(c.name);
-    if (!who) continue;                          // not someone we reached out to: never opened
+    let who = find(c.name);
+    if (!who && !readAll) continue;              // not someone we reached out to: never opened
     if (memo.get(c.key) === c.snippet) continue; // unchanged since we last read it
     if (opened >= maxOpen) break;
     opened++;
@@ -117,11 +118,14 @@ async function readInbox(page, people, memo, { maxOpen = 8 } = {}) {
     const t = await readThread(page, c.name).catch(() => null);
     if (!t || !t.messages.length) continue;
     const handle = handleOf(t.profile);
-    if (handle && who.handle && handle !== who.handle) { memo.set(c.key, c.snippet); continue; } // same name, someone else
+    if (who && handle && who.handle && handle !== who.handle) {   // same name, someone else
+      if (!readAll) { memo.set(c.key, c.snippet); continue; }
+      who = null;
+    }
     threads.push({ threadKey: c.key, threadUrl: c.url, name: c.name, profileUrl: t.profile || null, messages: t.messages });
     memo.set(c.key, c.snippet);
   }
-  return { threads, halt: "", note: `${convs.length} conversations, ${threads.length} with prospects read` };
+  return { threads, halt: "", note: `${convs.length} conversations, ${threads.length} ${readAll ? "" : "with prospects "}read` };
 }
 
 // Whose invitation was accepted: the newest connections, intersected with `pending` (handles of

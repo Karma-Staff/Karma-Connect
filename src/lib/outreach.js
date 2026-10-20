@@ -117,6 +117,13 @@ export async function agentEvents(limit = 150, accountId = "") {
   return d.events || [];
 }
 
+// Everything the agent did today: { since, found, invited, accepted, researched, messages, replies,
+// incoming, problems, searches }. The day starts at midnight in this browser's time zone.
+export async function agentToday(accountId = "") {
+  const d = new Date(); d.setHours(0, 0, 0, 0);
+  return api("/api/outreach/agent/today?since=" + encodeURIComponent(d.toISOString()) + (accountId ? "&accountId=" + encodeURIComponent(accountId) : ""));
+}
+
 // Download the agent as a zip. The endpoint needs the Bearer token, so a plain <a download>
 // can't fetch it — we pull the blob here and click a temporary link at it instead.
 export async function downloadAgent() {
@@ -154,7 +161,8 @@ export async function copyProfileWithAgent(url, prospectId, onWait = () => {}) {
 }
 
 // ── LinkedIn replies ────────────────────────────────────────────────
-// Conversations the agent read from LinkedIn — only ones with people you reached out to.
+// Conversations the agent read from LinkedIn — every incoming one (LI_INBOX_ALL on the server),
+// prospect_id set for people you reached out to.
 export async function listInbox() {
   const d = await api("/api/outreach/inbox");
   return d.threads || [];

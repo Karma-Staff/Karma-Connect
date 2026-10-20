@@ -155,7 +155,8 @@ async function inviteOne(page, item, { dryRun = false } = {}) {
   if (!/linkedin\.com\/in\//i.test(url)) {
     return { result: "failed", error: "No LinkedIn profile URL on this invitation.", scrape: null, final: true };
   }
-  const note = String(item.body || "").trim();
+  let note = String(item.body || "").trim();
+  let noteDropped = false;   // the note couldn't go (free monthly allowance used up) and it went without
   if (note.length > NOTE_MAX) {
     return { result: "failed", error: `The note is ${note.length} characters — LinkedIn allows ${NOTE_MAX}. Shorten it and approve it again.`, scrape: null, final: true };
   }
@@ -182,29 +183,30 @@ async function inviteOne(page, item, { dryRun = false } = {}) {
       : { result: "sent", error: null, scrape };
   }
 
-  let connect = await ownControl(page, CONNECT, who);
-  if (!connect) {
-    const more = await ownControl(page, MORE, who);
-    if (more) {
-      await more.click({ timeout: 10000 }).catch(() => more.click({ force: true }));
-      await jitter(700, 1500);
-      // The menu's own entry still has to be this person's ("Invite Jane Doe to connect").
-      if (await firstVisible(page, MENU_CONNECT, 3000)) connect = await ownControl(page, MENU_CONNECT, who);
-      if (!connect) await page.keyboard.press("Escape").catch(() => {});
+  // Press this person's Connect and wait for the invitation window. null when it opened,
+  // otherwise the outcome to return.
+  const openInvite = async () => {
+    let connect = await ownControl(page, CONNECT, who);
+    if (!connect) {
+      const more = await ownControl(page, MORE, who);
+      if (more) {
+        await more.click({ timeout: 10000 }).catch(() => more.click({ force: true }));
+        await jitter(700, 1500);
+        // The menu's own entry still has to be this person's ("Invite Jane Doe to connect").
+        if (await firstVisible(page, MENU_CONNECT, 3000)) connect = await ownControl(page, MENU_CONNECT, who);
+        if (!connect) await page.keyboard.press("Escape").catch(() => {});
+      }
     }
-  }
-  if (!connect) {
-    return { result: "failed", error: "No Connect option on this profile (they may only allow Follow).", scrape };
-  }
-
-  await connect.click({ timeout: 15000 }).catch(() => connect.click({ force: true }));
-  await jitter(1200, 2500);
-
-  halt = await haltReason(page);
-  if (halt) return { result: "halted", error: halt, scrape };
-
-  const dialog = await firstVisible(page, DIALOG, 8000);
-  if (!dialog) return { result: "failed", error: "The invitation window didn't open.", scrape };
+    if (!connect) return { result: "failed", error: "No Connect option on this profile (they may only allow Follow).", scrape };
+    await connect.click({ timeout: 15000 }).catch(() => connect.click({ force: true }));
+    await jitter(1200, 2500);
+    const h = await haltReason(page);
+    if (h) return { result: "halted", error: h, scrape };
+    if (!(await firstVisible(page, DIALOG, 8000))) return { result: "failed", error: "The invitation window didn't open.", scrape };
+    return null;
+  };
+  const opened = await openInvite();
+  if (opened) return opened;
 
   let text = await dialogText(page);
   if (/email address/.test(text) || /how do you know/.test(text)) {
@@ -223,13 +225,22 @@ async function inviteOne(page, item, { dryRun = false } = {}) {
     if (!box) {
       text = await dialogText(page);
       await closeDialog(page);
-      if (/premium|personali[sz]ed invitation|free plan/.test(text)) {
+      const usedUp = /premium|personali[sz]ed invitation|free plan/.test(text);
+      // A note "when possible" (the agent's own finds): the free notes are used up, so it goes
+      // without one — the window is opened again and sent plain.
+      if (item.note_optional && usedUp) {
+        await jitter(800, 1800);
+        const again = await openInvite();
+        if (again) return again;
+        note = ""; noteDropped = true;
+      } else if (usedUp) {
         return { result: "failed", error: "LinkedIn's free plan has used up this month's invitations with a note. Send it by hand without one, or wait for next month.", scrape, final: true };
-      }
-      return { result: "failed", error: "Couldn't find the note box in the invitation window.", scrape };
+      } else return { result: "failed", error: "Couldn't find the note box in the invitation window.", scrape };
     }
-    await typeNote(box, note);
-    await jitter(600, 1500);
+    if (box) {
+      await typeNote(box, note);
+      await jitter(600, 1500);
+    }
   }
 
   halt = await haltReason(page);
@@ -262,15 +273,15 @@ async function inviteOne(page, item, { dryRun = false } = {}) {
     await closeDialog(page);
     return { result: "failed", error: "The invitation didn't go — the window was still open afterwards.", scrape };
   }
-  if (await ownControl(page, PENDING, who)) return { result: "sent", error: null, scrape };
+  if (await ownControl(page, PENDING, who)) return { result: "sent", error: null, scrape, noteDropped };
   try {
     const body = norm(await page.locator("body").innerText({ timeout: 2000 }));
-    if (/invitation sent/.test(body)) return { result: "sent", error: null, scrape };
+    if (/invitation sent/.test(body)) return { result: "sent", error: null, scrape, noteDropped };
   } catch (e) { /* fall through */ }
   return {
     result: "unverified",
     error: "Pressed Send but couldn't see the invitation pending. Check their profile before sending again.",
-    scrape,
+    scrape, noteDropped,
   };
 }
 

@@ -608,3 +608,185 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
 .kc .atable th{text-align:left; color:var(--muted); font-weight:600; font-size:10.5px; text-transform:uppercase; letter-spacing:.04em; padding:6px 10px; border-bottom:1px solid var(--border); white-space:nowrap}
 .kc .atable td{padding:7px 10px; border-bottom:1px solid var(--border); color:var(--text)}
 .kc .atable tr:last-child td{border-bottom:none}
+/* ═══════════════ LinkedIn agent (LinkedInAgentView.jsx) ═══════════════
+   Tabs per account, one status card with one main button, setup steps until
+   the PC is ready, today's numbers, and folded sections for the rest. */
+.kc .lia{max-width:980px}
+.kc .lia-muted{color:var(--muted)}
+.kc .lia-h{font-size:15px; font-weight:700; color:var(--text); margin-bottom:12px}
+.kc .lia-dot{width:9px; height:9px; border-radius:50%; flex:0 0 9px; display:inline-block}
+.kc .lia-dot.pulse{animation:liaPulse 1.8s ease-out infinite}
+@keyframes liaPulse{0%{box-shadow:0 0 0 0 rgba(82,211,158,.55)}100%{box-shadow:0 0 0 9px rgba(82,211,158,0)}}
+
+.kc .lia-tabs{display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:14px}
+.kc .lia-tab{display:inline-flex; align-items:center; gap:9px; padding:9px 15px; border-radius:999px; cursor:pointer;
+  border:1px solid var(--border); background:var(--panel); color:var(--muted); font:inherit; font-size:13px; transition:all .18s ease}
+.kc .lia-tab:hover{border-color:var(--border2); color:var(--text)}
+.kc .lia-tab.on{border-color:rgba(124,92,255,.65); background:rgba(124,92,255,.14); color:var(--text)}
+.kc .lia-tab-n{font-weight:700}
+.kc .lia-tab-s{font-size:12px; color:var(--faint)}
+.kc .lia-tab.on .lia-tab-s{color:var(--muted)}
+.kc .lia-tab.add{border-style:dashed; font-weight:700}
+.kc .lia-tab:focus-visible{outline:2px solid var(--ai2); outline-offset:2px}
+.kc .lia-tabs-all{margin-left:auto}
+
+.kc .lia-hero{padding:24px 26px}
+.kc .lia-hero-top{display:flex; gap:18px; align-items:flex-start; justify-content:space-between; flex-wrap:wrap}
+.kc .lia-hero-k{font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--faint); font-weight:700; margin-bottom:8px}
+.kc .lia-state{display:flex; align-items:center; gap:12px; font-family:Lora,serif; font-size:24px; font-weight:700; color:var(--text); line-height:1.25}
+.kc .lia-state .lia-dot{width:12px; height:12px; flex-basis:12px}
+.kc .lia-line{color:var(--muted); font-size:14px; line-height:1.55; margin:8px 0 0; max-width:620px}
+.kc .lia-hero-act{display:flex; flex-direction:column; gap:8px; align-items:stretch; min-width:170px}
+.kc .lia-hero-act .btn:not(.sm){padding:13px 26px; font-size:14.5px}
+
+.kc .lia-mode{margin-top:18px; padding-top:16px; border-top:1px solid var(--border)}
+.kc .lia-switch{display:flex; align-items:center; gap:12px; cursor:pointer; font-size:13.5px; color:var(--text); line-height:1.45; position:relative}
+.kc .lia-switch input{position:absolute; opacity:0; width:1px; height:1px}
+.kc .lia-switch-ui{width:40px; height:23px; flex:0 0 40px; border-radius:23px; background:rgba(255,255,255,.12); border:1px solid var(--border2); position:relative; transition:background .2s ease}
+.kc .lia-switch-ui:after{content:""; position:absolute; top:2px; left:2px; width:17px; height:17px; border-radius:50%; background:#fff; transition:transform .2s ease}
+.kc .lia-switch input:checked + .lia-switch-ui{background:var(--ai); border-color:var(--ai)}
+.kc .lia-switch input:checked + .lia-switch-ui:after{transform:translateX(17px)}
+.kc .lia-switch input:focus-visible + .lia-switch-ui{outline:2px solid var(--ai2); outline-offset:2px}
+.kc .lia-switch input:disabled + .lia-switch-ui{opacity:.5}
+
+.kc .lia-approve{display:flex; width:100%; align-items:center; gap:12px; flex-wrap:wrap; margin-top:16px; padding:14px 16px; border-radius:14px; cursor:pointer;
+  border:1px solid rgba(124,92,255,.45); background:rgba(124,92,255,.12); color:var(--text); font:inherit; font-size:14px; text-align:left}
+.kc .lia-approve:hover{background:rgba(124,92,255,.2)}
+.kc .lia-approve-go{margin-left:auto; font-weight:700; color:var(--ai2); white-space:nowrap}
+
+.kc .lia-steps{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px}
+.kc .lia-step{display:flex; align-items:center; gap:13px; padding:12px 14px; border-radius:14px; border:1px solid var(--border); background:rgba(0,0,0,.16)}
+.kc .lia-step .n{width:27px; height:27px; flex:0 0 27px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+  font-weight:800; font-size:12.5px; border:1px solid var(--border2); color:var(--muted)}
+.kc .lia-step .t{font-weight:700; font-size:14px; color:var(--text)}
+.kc .lia-step .d{font-size:12.5px; color:var(--muted); margin-top:2px; line-height:1.45}
+.kc .lia-step.done{opacity:.7}
+.kc .lia-step.done .n{background:#52d39e; border-color:#52d39e; color:#071226}
+.kc .lia-step.done .t{color:var(--muted); font-weight:600}
+.kc .lia-step.now{border-color:rgba(255,207,0,.5); background:rgba(255,207,0,.05)}
+.kc .lia-step.now .n{border-color:var(--yellow); color:var(--yellow)}
+
+.kc .lia-today{display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:12px; margin:14px 0}
+.kc .lia-stat{display:block; text-align:left; font:inherit; padding:16px 18px; border-radius:16px; border:1px solid var(--border); background:var(--panel); color:inherit}
+.kc .lia-stat.link{cursor:pointer}
+.kc .lia-stat.link:hover{border-color:var(--border2)}
+.kc .lia-stat-l{font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--faint); font-weight:700}
+.kc .lia-stat-v{font-size:26px; font-weight:700; color:var(--text); margin-top:6px; font-variant-numeric:tabular-nums}
+.kc .lia-stat-v span{font-size:15px; color:var(--muted); font-weight:600}
+.kc .lia-stat-s{font-size:12px; color:var(--muted); margin-top:8px; line-height:1.4}
+.kc .lia-meter{height:6px; border-radius:6px; background:rgba(255,255,255,.08); overflow:hidden; margin-top:10px}
+.kc .lia-meter i{display:block; height:100%; border-radius:6px; background:var(--steel); transition:width .4s ease}
+
+.kc .lia-sec{padding:0; margin-top:12px}
+.kc .lia-sec>summary{list-style:none; cursor:pointer; display:flex; align-items:center; gap:14px; padding:17px 22px; border-radius:18px}
+.kc .lia-sec>summary::-webkit-details-marker{display:none}
+.kc .lia-sec>summary:after{content:""; flex:none; margin-left:auto; width:8px; height:8px; border-right:2px solid var(--faint); border-bottom:2px solid var(--faint); transform:rotate(45deg); transition:transform .2s ease}
+.kc .lia-sec[open]>summary:after{transform:rotate(-135deg)}
+.kc .lia-sec>summary:focus-visible{outline:2px solid var(--ai2); outline-offset:-2px}
+.kc .lia-sec-t{font-size:15px; font-weight:700; color:var(--text); flex:none}
+.kc .lia-sec-s{font-size:13px; color:var(--muted); min-width:0; flex:1 1 auto}
+.kc .lia-sec-b{padding:2px 22px 20px}
+
+.kc .lia-field{display:flex; flex-direction:column; gap:6px; font-size:12.5px; color:var(--muted); min-width:0}
+.kc .lia-field input,.kc .lia-field select{width:100%; box-sizing:border-box; padding:9px 11px; border-radius:10px; font-size:13.5px}
+.kc .lia-field>span{font-size:11px; color:var(--faint)}
+.kc .lia-val{font-size:13.5px; color:var(--text); padding:8px 0; overflow:hidden; text-overflow:ellipsis}
+.kc .lia-hours{display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end}
+.kc .lia-hours .lia-field{width:150px}
+.kc .lia-more{margin-top:14px}
+.kc .lia-more>summary{cursor:pointer; font-size:13px; font-weight:700; color:var(--ice); width:max-content}
+
+.kc .lia-row{display:flex; align-items:center; gap:12px; padding:11px 13px; border-radius:13px; border:1px solid var(--border); background:rgba(0,0,0,.14)}
+.kc .lia-pair{padding:16px; border-radius:14px; border:1px solid rgba(124,92,255,.45); background:rgba(124,92,255,.07)}
+.kc .lia-howto{margin:0 0 12px; padding-left:20px; color:var(--text); font-size:13.5px; line-height:1.6}
+.kc .lia-howto li{margin-bottom:6px}
+.kc .lia-code{display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:6px}
+.kc .lia-code code{font-size:14px; padding:8px 11px; border-radius:9px; background:rgba(0,0,0,.35); color:var(--text); user-select:all; word-break:break-all}
+
+.kc .lia-ev{display:flex; gap:11px; align-items:baseline; padding:9px 0; border-top:1px solid var(--border); font-size:13.5px}
+.kc .lia-ev .lia-dot{width:7px; height:7px; flex-basis:7px; transform:translateY(-1px)}
+.kc .lia-ev-t{flex:1; min-width:0; color:var(--text); word-break:break-word; line-height:1.45}
+.kc .lia-ev-at{flex:0 0 auto; font-size:12px; color:var(--faint); white-space:nowrap}
+
+@media(max-width:720px){
+  .kc .lia-today{gap:8px}
+  .kc .lia-stat{padding:12px}
+  .kc .lia-stat-l{font-size:9.5px; letter-spacing:.08em}
+  .kc .lia-stat-v{font-size:20px}
+  .kc .lia-stat-v span{font-size:12px}
+  .kc .lia-stat-s{display:none}
+  .kc .lia-sec>summary{padding:15px 18px; gap:10px}
+  .kc .lia-sec-b{padding:2px 18px 18px}
+  .kc .lia-hero{padding:20px}
+  .kc .lia-hero-act{width:100%}
+  .kc .lia-tabs-all{margin-left:0}
+}
+@media (prefers-reduced-motion: reduce){ .kc .lia-dot.pulse{animation:none} }
+/* Incoming messages (IncomingMessages.jsx) */
+.kc .lia-count{display:inline-block; margin-left:10px; padding:2px 9px; border-radius:20px; font-size:11.5px; font-weight:700; vertical-align:2px;
+  background:rgba(231,183,75,.16); border:1px solid rgba(231,183,75,.45); color:#E7B74B}
+.kc .lia-msgs{display:flex; flex-direction:column; gap:6px}
+.kc .lia-msg{border:1px solid var(--border); border-radius:14px; background:rgba(0,0,0,.14); transition:border-color .18s ease}
+.kc .lia-msg:hover{border-color:var(--border2)}
+.kc .lia-msg.open{border-color:rgba(124,92,255,.5); background:rgba(124,92,255,.06)}
+.kc .lia-msg-row{display:flex; align-items:center; gap:12px; width:100%; padding:11px 13px; background:none; border:0; color:inherit; font:inherit; text-align:left; cursor:pointer; border-radius:14px}
+.kc .lia-msg-row:focus-visible{outline:2px solid var(--ai2); outline-offset:-2px}
+.kc .lia-av{width:36px; height:36px; flex:0 0 36px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+  font-size:12.5px; font-weight:800; color:var(--ice); background:rgba(74,134,200,.2); border:1px solid rgba(74,134,200,.35)}
+.kc .lia-msg.unread .lia-av{background:rgba(231,183,75,.18); border-color:rgba(231,183,75,.5); color:#ffe2a1}
+.kc .lia-msg-main{display:flex; flex-direction:column; gap:3px; min-width:0; flex:1}
+.kc .lia-msg-top{display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:13.5px; color:var(--text)}
+.kc .lia-msg-text{font-size:13px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.kc .lia-msg.unread .lia-msg-text{color:var(--text)}
+.kc .lia-msg-side{display:flex; flex-direction:column; align-items:flex-end; gap:5px; flex:0 0 auto}
+.kc .lia-msg-at{font-size:12px; color:var(--faint); white-space:nowrap}
+.kc .lia-tag{font-size:10.5px; font-weight:700; padding:2px 8px; border-radius:20px; border:1px solid var(--border2); color:var(--muted); white-space:nowrap}
+.kc .lia-tag.out{border-color:rgba(74,134,200,.45); color:var(--ice)}
+.kc .lia-tag.new{border-color:rgba(82,211,158,.45); color:#9ff0cd}
+.kc .lia-tag.need{border-color:rgba(231,183,75,.5); color:#E7B74B}
+
+.kc .lia-thread{padding:4px 14px 14px}
+.kc .lia-convo{display:flex; flex-direction:column; gap:8px; max-height:340px; overflow:auto; padding:10px; border-radius:12px; background:rgba(0,0,0,.2)}
+.kc .lia-bubble{max-width:82%; padding:8px 12px; border-radius:14px; font-size:13.5px; line-height:1.5; white-space:pre-wrap; word-break:break-word; color:var(--text)}
+.kc .lia-bubble.them{align-self:flex-start; background:rgba(255,255,255,.07); border-bottom-left-radius:4px}
+.kc .lia-bubble.me{align-self:flex-end; background:rgba(74,134,200,.22); border-bottom-right-radius:4px}
+.kc .lia-bubble-who{font-size:10.5px; font-weight:700; letter-spacing:.04em; color:var(--faint); margin-bottom:2px}
+.kc .lia-thread-act{display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:12px}
+.kc .lia-reply{margin-top:12px}
+.kc .lia-reply textarea{width:100%; box-sizing:border-box; padding:10px 12px; font-size:13.5px; border-radius:10px; resize:vertical; margin-bottom:10px}
+@media(max-width:720px){
+  .kc .lia-msg-side .lia-tag{display:none}
+  .kc .lia-bubble{max-width:92%}
+}
+/* Today (AgentToday.jsx): right now, and everything done since midnight */
+.kc .lia-now{display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:12px 14px; border-radius:14px;
+  background:rgba(0,0,0,.2); border:1px solid var(--border)}
+.kc .lia-now-k{font-size:10.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--faint); font-weight:700}
+.kc .lia-now-t{font-size:14.5px; font-weight:600; color:var(--text); min-width:0; flex:1 1 220px}
+.kc .lia-now-s{font-size:12px; color:var(--faint); white-space:nowrap}
+.kc .lia-tiles{display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:10px; margin-top:12px}
+.kc .lia-tile{display:flex; flex-direction:column; gap:3px; text-align:left; padding:13px 14px; border-radius:14px; cursor:pointer;
+  border:1px solid var(--border); background:var(--panel); color:inherit; font:inherit; transition:border-color .18s ease, background .18s ease}
+.kc .lia-tile:hover{border-color:var(--border2)}
+.kc .lia-tile.on{border-color:rgba(124,92,255,.6); background:rgba(124,92,255,.12)}
+.kc .lia-tile.bad{border-color:rgba(226,74,74,.5)}
+.kc .lia-tile.bad .lia-tile-v{color:#ff9d9d}
+.kc .lia-tile:focus-visible{outline:2px solid var(--ai2); outline-offset:2px}
+.kc .lia-tile-l{font-size:10.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--faint); font-weight:700}
+.kc .lia-tile-v{font-size:24px; font-weight:700; color:var(--text); font-variant-numeric:tabular-nums; line-height:1.15}
+.kc .lia-tile-s{font-size:11.5px; color:var(--muted); line-height:1.35}
+.kc .lia-tlist{margin-top:12px; padding:6px 14px; border-radius:14px; background:rgba(0,0,0,.16); border:1px solid var(--border)}
+.kc .lia-trow{display:flex; align-items:baseline; gap:10px; padding:9px 0; border-top:1px solid var(--border); font-size:13.5px}
+.kc .lia-trow:first-child{border-top:0}
+.kc .lia-trow .lia-dot{width:7px; height:7px; flex-basis:7px; transform:translateY(-1px)}
+.kc .lia-trow-main{flex:1; min-width:0; color:var(--text); line-height:1.45; word-break:break-word}
+.kc .lia-trow-main a{color:var(--ice); font-weight:700; text-decoration:none}
+.kc .lia-trow-main a:hover{text-decoration:underline}
+.kc .lia-trow-at{flex:0 0 auto; font-size:12px; color:var(--faint); white-space:nowrap}
+.kc .lia-link{background:none; border:0; padding:0; font:inherit; color:var(--ice); cursor:pointer}
+.kc .lia-link:hover{text-decoration:underline}
+@media(max-width:720px){
+  .kc .lia-tiles{grid-template-columns:repeat(2, minmax(0,1fr)); gap:8px}
+  .kc .lia-tile{padding:11px 12px}
+  .kc .lia-tile-v{font-size:20px}
+}

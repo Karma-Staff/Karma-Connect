@@ -7,7 +7,7 @@
     "dev:server": "node server.js --dev",
     "dev:server:watch": "node --watch server.js --dev",
     "dev:client": "vite",
-    "build": "vite build",
+    "build": "vite build && node scripts/build-server-lib.mjs",
     "start": "node scripts/leads-migrate.mjs && node server.js",
     "db:init": "node scripts/db-init.mjs",
     "agent": "node agent/run.cjs",

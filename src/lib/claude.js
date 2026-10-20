@@ -35,11 +35,16 @@ export async function anthropicMsg(system, user, { maxTokens = 1000, useSearch =
   // means far fewer input tokens, since each search pulls fetched page content into context.
   if (useSearch) body.tools = [{ type: "web_search_20250305", name: "web_search", max_uses: useSearch === "deep" ? 4 : useSearch === "light" ? 1 : 2 }];
 
-  const doFetch = () => fetch("/api/claude", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  /* On the server (server/li-prep.cjs, which runs this file bundled as server/gen/prep.cjs) there
+     is no /api/claude to fetch: it installs globalThis.__kcClaude, which calls the same proxy
+     handler directly and answers like a fetch Response. In the browser it is never set. */
+  const doFetch = () => (typeof globalThis.__kcClaude === "function"
+    ? globalThis.__kcClaude(body)
+    : fetch("/api/claude", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }));
 
   const res = await enqueue(() => withRetry(doFetch, { retries: 4 }));
   if (!res.ok) {

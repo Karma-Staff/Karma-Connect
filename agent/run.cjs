@@ -26,6 +26,7 @@ const { spawn } = require("node:child_process");
 const { open, isSignedIn, login, whoAmI, PROFILE_DIR } = require("./session.cjs");
 const { sendOne, replyOne } = require("./send.cjs");
 const { inviteOne } = require("./invite.cjs");
+const { searchPeople } = require("./prospect.cjs");
 const { readInbox, readAccepted } = require("./inbox.cjs");
 const { captureProfile } = require("./capture.cjs");
 
@@ -340,7 +341,8 @@ class Account {
         await this.call("/api/outreach/agent/report/" + encodeURIComponent(item.id), {
           method: "POST",
           body: { result: outcome.result, error: outcome.error, leaseId: this.leaseId, scrape: outcome.scrape,
-            connected: !!outcome.connected, final: !!outcome.final, profileText: outcome.profileText || undefined },
+            connected: !!outcome.connected, final: !!outcome.final, profileText: outcome.profileText || undefined,
+            noteDropped: !!outcome.noteDropped },
         });
       } catch (e) { this.log("could not report " + who + ": " + e.message, "warn"); }
 
@@ -403,12 +405,22 @@ class Account {
       this.lastInbox = Date.now();
       this.me.lastInboxAt = new Date().toISOString();
       this.doing("working", "Reading the LinkedIn inbox");
-      const r = await readInbox(page, w.people, this.memo);
+      const r = await readInbox(page, w.people, this.memo, { readAll: !!w.readAll });
       if (r.halt) return stop(r.halt);
       if (r.threads.length) {
         const saved = await this.call("/api/outreach/agent/inbox", { method: "POST", body: { threads: r.threads } });
         this.log(`inbox: ${saved.stored} conversation${saved.stored === 1 ? "" : "s"} updated, ${saved.needReply} waiting for a reply in Karma Connect`, saved.needReply ? "success" : "info");
       } else this.log("inbox: " + (r.note || "nothing new"));
+    }
+    // Finding prospects: the server says when (spaced out, a few a day) and what to search.
+    if (w.search && w.search.url) {
+      this.doing("working", "Looking for prospects: " + w.search.label);
+      const s = await searchPeople(page, w.search.url);
+      if (s.halt) return stop(s.halt);
+      const r = await this.call("/api/outreach/agent/prospects", { method: "POST",
+        body: { cursor: w.search.cursor, candidates: s.candidates, limit: !!s.limit } }).catch(() => ({}));
+      const q = r.queued || 0;
+      this.log(`prospects (${w.search.label}): ${s.note}; ${q ? q + " new decision-maker" + (q === 1 ? "" : "s") + " saved and queued to invite" : "nobody new to invite"}`, q ? "success" : "info");
     }
     return true;
   }

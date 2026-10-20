@@ -1337,12 +1337,23 @@ app.post("/api/outreach/agent/watch", requireAgent, async (req, res) => {
 });
 
 // Conversations the worker read. Body: { threads: [{ threadKey, threadUrl, name, profileUrl,
-// messages: [{ from: 'them'|'me', text }] }] }. Threads matching no prospect are dropped.
+// messages: [{ from: 'them'|'me', text }] }] }. Threads matching no prospect are kept as
+// incoming messages (LI_INBOX_ALL, on by default) or dropped when that's off.
 app.post("/api/outreach/agent/inbox", requireAgent, async (req, res) => {
   try {
     const a = await agentAccount(req, res); if (!a) return;
     res.json(await liAgent.recordInbox(req.userId, a, (req.body || {}).threads));
   } catch (e) { res.status(500).json({ error: { message: "Could not store the conversations." } }); }
+});
+
+// What the worker saw on a people search it was asked to run (watch() → search). Body:
+// { cursor, candidates: [{ handle, name, headline, location, degree }], halt? }. Decision-makers at
+// restoration companies nobody has contacted are saved as leads and invited (li-prospecting.cjs).
+app.post("/api/outreach/agent/prospects", requireAgent, async (req, res) => {
+  try {
+    const a = await agentAccount(req, res); if (!a) return;
+    res.json(await require("./server/li-prospecting.cjs").recordProspects(req.userId, a, req.body || {}));
+  } catch (e) { res.status(500).json({ error: { message: "Could not store what the search found." } }); }
 });
 
 // Invitations the worker saw accepted. Body: { handles: ["jane-doe-123", ...] }.
@@ -1471,6 +1482,14 @@ app.get("/api/outreach/agent/events", requireUser, async (req, res) => {
   } catch (e) { res.status(500).json({ error: { message: "Could not load the activity log." } }); }
 });
 
+// Everything the agent did today (?since= the start of the day in the viewer's time zone,
+// ?accountId= one account): found, invited, accepted, researched, sent, replied, incoming, problems.
+app.get("/api/outreach/agent/today", requireUser, async (req, res) => {
+  try {
+    res.json(await require("./server/li-today.cjs").today(req.userId, { since: req.query.since, accountId: req.query.accountId }));
+  } catch (e) { res.status(500).json({ error: { message: "Could not load today's activity." } }); }
+});
+
 // LinkedIn accounts on the agent (up to four). Add one → status. Body: { label? }.
 app.post("/api/outreach/agent/accounts", requireUser, async (req, res) => {
   try {
@@ -1483,7 +1502,7 @@ app.post("/api/outreach/agent/accounts", requireUser, async (req, res) => {
 app.patch("/api/outreach/agent/accounts/:id", requireUser, async (req, res) => {
   try {
     const b = req.body || {};
-    const a = await liAgent.updateAccount(req.userId, String(req.params.id), { label: b.label, deviceId: b.deviceId });
+    const a = await liAgent.updateAccount(req.userId, String(req.params.id), { label: b.label, deviceId: b.deviceId, prospectOn: b.prospectOn, senderId: b.senderId });
     if (!a) return res.status(404).json({ error: { message: "Account not found." } });
     res.json({ status: await liAgent.status(req.userId) });
   } catch (e) { res.status(400).json({ error: { message: (e && e.message) || "Could not change the account." } }); }
@@ -1667,6 +1686,8 @@ ensureSchema(); // apply idempotent column migrations on boot
 outreach.ensureOutreachSchema()
   .then(() => liAgent.ensureAgentSchema())
   .then(() => outreach.startTick())
+  /* new LinkedIn connections researched and drafted on the server, ready to approve */
+  .then(() => { if (process.env.KARMA_NO_SWEEP !== "1") require("./server/li-prep.cjs").startPrep({ handleClaude, recordUsage: writeUsageRow }); })
   .catch((e) => console.error("outreach boot:", e.message));
 
 const server = app.listen(PORT, () => {
