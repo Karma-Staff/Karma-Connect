@@ -21,7 +21,7 @@
 const express = require("express");
 const { query, tx } = require("./db");
 const { requireUser, requireAdmin, rankOf, RANK } = require("./auth");
-const { STATUSES } = require("./dedupe");
+const { STATUSES, pk } = require("./dedupe");
 const activity = require("./activity");
 const calltime = require("./calltime");
 /* Uploaded campaigns (a spreadsheet, not the lead base) are a call_sessions row
@@ -104,16 +104,38 @@ async function openSession(actor) {
    when the soonest opens (callTime.waiting), so auto-dial holds instead of
    ringing someone at 7am. */
 const LOOK = 200;
-async function servable(s) {
+/* A lead that went on Do Not Contact (or into the bin) after the session was
+   built is never served: the session steps past it, counted as skipped. */
+const GONE = (l, b) => `(${l}.id IS NULL OR ${l}.deleted_at IS NOT NULL OR ${l}.removed
+   OR EXISTS (SELECT 1 FROM blocklist ${b} WHERE ${b}.phone_key = ${l}.phone_key))`;
+async function servable(s, depth = 0) {
   if (!s || s.cur_id == null) return { s, callTime: null };
   const rows = (await query(
-    `SELECT u.ord::int AS ord, l.state, l.phone
+    `SELECT u.ord::int AS ord, l.state, l.phone, ${GONE("l", "b")} AS gone
        FROM call_sessions cs
             CROSS JOIN LATERAL unnest(cs.lead_ids[cs.pos + 1 : cs.pos + ${LOOK}]) WITH ORDINALITY u(id, ord)
             LEFT JOIN leads l ON l.id = u.id
       WHERE cs.id = $1 ORDER BY u.ord`, [s.id])).rows;
+  // DNC'd or binned leads at the front: step past them, then look again
+  let k = 0;
+  while (k < rows.length && rows[k].gone) k++;
+  if (k > 0 && depth < 5) {
+    const past = (await query(
+      `UPDATE call_sessions SET pos = pos + $2, skipped = skipped + $2
+        WHERE id = $1 AND ended_at IS NULL RETURNING ${COLS}`, [s.id, k])).rows[0];
+    if (past && past.cur_id == null) {
+      await query(
+        `UPDATE call_sessions SET ended_at = now(),
+                filters = CASE WHEN filters->>'kind' = 'campaign'
+                               THEN filters || '{"status":"completed"}'::jsonb ELSE filters END
+          WHERE id = $1`, [s.id]);
+      return { s: past, callTime: null };
+    }
+    return past ? servable(past, depth + 1) : { s, callTime: null };
+  }
   const now = new Date();
-  const checks = rows.map((r) => calltime.check(r, now));
+  // one further down the list is never the one brought forward
+  const checks = rows.map((r) => (r.gone ? { open: false, dnc: true } : calltime.check(r, now)));
   const j = checks.findIndex((c) => c.open);
   if (j === 0) return { s, callTime: checks[0] };
   if (j < 0) {
@@ -232,7 +254,17 @@ router.get("/api/calltime", requireUser, async (req, res, next) => {
       ? (await query("SELECT state FROM leads WHERE id = $1", [id])).rows[0]?.state
       : id < 0 ? (await query("SELECT state FROM campaign_leads WHERE id = $1", [-id])).rows[0]?.state
         : null;
-    res.json({ ...calltime.check({ state, phone: String(req.query.phone || "") }), hours: calltime.HOURS, lunchHours: calltime.LUNCH });
+    /* Do Not Contact: the number is on the blocklist, or this lead was removed.
+       Every dial path asks this before it rings (the browser, the dialer app,
+       the dial pad, the power dialer), so a banned number is never called. */
+    const phone = String(req.query.phone || "");
+    const key = pk(phone);
+    const ban = key ? (await query("SELECT reason FROM blocklist WHERE phone_key = $1", [key])).rows[0] : null;
+    const removed = id > 0 && !ban
+      ? (await query("SELECT 1 FROM leads WHERE id = $1 AND removed", [id])).rowCount > 0 : false;
+    if (ban || removed)
+      return res.json({ open: false, dnc: true, reason: (ban && ban.reason) || "", hours: calltime.HOURS, lunchHours: calltime.LUNCH });
+    res.json({ ...calltime.check({ state, phone }), hours: calltime.HOURS, lunchHours: calltime.LUNCH });
   } catch (e) { next(e); }
 });
 
@@ -1107,4 +1139,4 @@ router.post("/api/dialer/campaigns/:id/unassign", requireAdmin, express.json({ l
   } catch (e) { next(e); }
 });
 
-module.exports = { router, MAX_SESSION, OPEN_STATUSES, callbackTargets };
+module.exports = { router, MAX_SESSION, OPEN_STATUSES, callbackTargets, _test: { servable } };

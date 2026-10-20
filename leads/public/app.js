@@ -6174,6 +6174,11 @@ async function callHoursOk(number, leadId) {
     return false;
   }
   if (ct.open) return true;
+  // on Do Not Contact (campaign.js /api/calltime): never rung, whatever the hour
+  if (ct.dnc) {
+    say("Not dialled — this number is on Do Not Contact" + (ct.reason ? ` (${ct.reason})` : "") + ". Calls to it are blocked.");
+    return false;
+  }
   const [o, c] = ct.hours || [8, 21];
   const at = ct.opensAt ? new Date(ct.opensAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
   if (ct.lunch) {
