@@ -66,7 +66,7 @@ async function leadCard(id, actor) {
             ORDER BY created_at DESC LIMIT 3`, [id]),
     /* what happened last time anyone rang them — a rep should not open with
        "is this a good time" to somebody who said no on Tuesday */
-    query(`SELECT at, actor, to_value, (coalesce(meta, '{}'::jsonb) ? 'session') AS in_session FROM activity_log
+    query(`SELECT at, actor, to_value, meta->>'disposition' AS disposition, (coalesce(meta, '{}'::jsonb) ? 'session') AS in_session FROM activity_log
             WHERE lead_id = $1 AND action = 'call'
             ORDER BY at DESC LIMIT 1`, [id]),
     /* worked in Zoho since the campaign was built (the scan saw a call
@@ -280,7 +280,8 @@ router.post("/api/campaign/outcome", requireUser, express.json({ limit: "8kb" })
             WHERE action = 'call' AND lead_id = $1 AND actor = $2
               AND at > now() - interval '30 minutes'
               AND NOT (coalesce(meta, '{}'::jsonb) ? 'session')
-              AND coalesce(meta->>'outcome', to_value) IN ('connected', 'no-answer', 'busy')
+              AND (coalesce(meta->>'outcome', to_value) IN ('connected', 'no-answer', 'busy')
+                   OR coalesce(meta, '{}'::jsonb) ? 'disposition')
             ORDER BY at DESC LIMIT 1`, [lead.id, me(req)])).rows[0] || null;
         if (recent) { skip = false; outcome = recent.outcome; }
       }

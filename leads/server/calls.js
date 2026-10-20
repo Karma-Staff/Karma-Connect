@@ -184,6 +184,24 @@ const DISPOSITIONS = new Set([
   "Wrong Number", "Not in Service", "Email Captured", "Call Back Later", "Converted", "Do Not Contact",
 ]);
 
+/* The SET for stamping a disposition onto its call ($3 = the stamp). A wrong
+   number that picked up reached nobody, so it is not a connected call: its
+   outcome becomes "failed" — the value that disposition has always stood for
+   (KD_DISPOS in app.js) — and every count of connected calls, which all read
+   the outcome, leaves it out. What the line said is kept in line_outcome, and
+   a later change of disposition puts it back. */
+const DISPO_SET = `
+  meta = coalesce(meta, '{}'::jsonb) || $3::jsonb || CASE
+    WHEN $3::jsonb->>'disposition' ILIKE 'wrong number' AND meta->>'outcome' = 'connected'
+      THEN '{"outcome": "failed", "line_outcome": "connected"}'::jsonb
+    WHEN $3::jsonb->>'disposition' NOT ILIKE 'wrong number' AND meta->>'line_outcome' = 'connected' AND meta->>'outcome' = 'failed'
+      THEN '{"outcome": "connected"}'::jsonb
+    ELSE '{}'::jsonb END,
+  to_value = CASE
+    WHEN $3::jsonb->>'disposition' ILIKE 'wrong number' AND meta->>'outcome' = 'connected' THEN 'failed'
+    WHEN $3::jsonb->>'disposition' NOT ILIKE 'wrong number' AND meta->>'line_outcome' = 'connected' AND meta->>'outcome' = 'failed' THEN 'connected'
+    ELSE to_value END`;
+
 router.post("/api/leads/:id/disposition", requireUser, express.json({ limit: "4kb" }),
   async (req, res, next) => {
     try {
@@ -200,7 +218,7 @@ router.post("/api/leads/:id/disposition", requireUser, express.json({ limit: "4k
 
       const stamp = { disposition, dispo_note: note, dispo_at: new Date().toISOString() };
       const hit = (await query(
-        `UPDATE activity_log SET meta = coalesce(meta, '{}'::jsonb) || $3::jsonb
+        `UPDATE activity_log SET ${DISPO_SET}
           WHERE id = (SELECT id FROM activity_log
                        WHERE action = 'call' AND lead_id = $1 AND actor = $2
                          AND at > now() - interval '3 hours'
@@ -252,7 +270,7 @@ router.post("/api/calls/disposition", requireUser, express.json({ limit: "4kb" }
 
       const stamp = { disposition, dispo_note: note, dispo_at: new Date().toISOString() };
       const hit = (await query(
-        `UPDATE activity_log SET meta = coalesce(meta, '{}'::jsonb) || $3::jsonb
+        `UPDATE activity_log SET ${DISPO_SET}
           WHERE id = (SELECT id FROM activity_log
                        WHERE action = 'call' AND lead_id IS NULL AND actor = $2
                          AND right(regexp_replace(coalesce(meta->>'number', ''), '\\D', '', 'g'), 10) = $1

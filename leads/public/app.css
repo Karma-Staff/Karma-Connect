@@ -3573,6 +3573,8 @@ body.kc-desktop .kd-win { display: flex; align-items: center; gap: 2px; margin-l
 .kd-hint { margin: 0; font-size: 11px; color: var(--kd-ink3); }
 .kd-saverow { display: flex; flex-direction: column; gap: 6px; }
 .kd-saverow .kd-secondary { background: transparent; color: var(--kd-ink2); }
+/* a call just ended: the disposition must be saved — no close, no skip */
+.kd-must .kd-wraphead .kd-x, .kd-must #kd-skip { display: none; }
 
 .kd-toast { position: absolute; z-index: 40; left: 12px; right: 12px; bottom: 68px;
   display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 8px 14px;

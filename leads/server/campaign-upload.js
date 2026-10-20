@@ -390,7 +390,8 @@ async function outcomeUpload(s, b) {
           WHERE action = 'call' AND lead_id IS NULL AND actor = $2
             AND right(regexp_replace(coalesce(meta->>'number', ''), '\\D', '', 'g'), 10) = $1
             AND at > now() - interval '30 minutes'
-            AND coalesce(meta->>'outcome', to_value) IN ('connected', 'no-answer', 'busy')
+            AND (coalesce(meta->>'outcome', to_value) IN ('connected', 'no-answer', 'busy')
+                   OR coalesce(meta, '{}'::jsonb) ? 'disposition')
           ORDER BY at DESC LIMIT 1`, [ten, s.actor])).rows[0];
       if (recent) { skip = false; called = recent.outcome; }
     }

@@ -3324,6 +3324,43 @@ const kdSvg = (d, cls) =>
 
 function kdEl(id) { return document.getElementById(id); }
 function kdShow(id, on) { kdEl(id)?.classList.toggle("hidden", !on); }
+/* Closing the dialer before the disposition is saved: refused. In the
+   desktop app a refused unload cancels the close (the header's X, Alt+F4, the
+   bubble's Quit) without a dialog; a browser asks "Leave site?". */
+window.addEventListener("beforeunload", (e) => {
+  if (!KD.mustWrap) return;
+  e.preventDefault();
+  e.returnValue = "";
+  kdWrapBlocked();
+});
+/* The save failed. The sheet stays, to try again — but a second failure (the
+   server is down) unlocks the dialer rather than trap the rep behind it. */
+function kdWrapFailed(e) {
+  const why = describeErr(e) || "unknown";
+  if (KD.mustWrap && (KD.wrapFails = (KD.wrapFails || 0) + 1) >= 2) {
+    kdWrapDone();
+    kdToast("Could not save the disposition — " + why);
+    toast("Couldn't save the disposition (" + why + "). The dialer is unlocked; add what happened as a note on the lead.", 12000);
+    return;
+  }
+  kdToast("Could not save — " + why + ". Try Save again");
+}
+// the disposition is saved: the dialer is free again
+function kdWrapDone() {
+  KD.mustWrap = false;
+  KD.wrapFails = 0;
+  kdEl("kd-wrap")?.classList.remove("kd-must");
+}
+/* A call ended and its disposition isn't saved yet: say so, put the sheet
+   back in front, and answer true so the caller stops. */
+function kdWrapBlocked() {
+  if (!KD.mustWrap) return false;
+  if (!kcInDesktopApp() && VOICE.provider !== "desktop") rcPanelToggle(true);
+  if (kdEl("kd-wrap")?.classList.contains("hidden")) kdOpenWrap();
+  kdToast("Pick a disposition and save it first");
+  toast("Pick a disposition for the last call and save it first", 5000);
+  return true;
+}
 
 /* 212 → (212), 2125551234 → (212) 555-1234. Anything with a + or an
    extension is left exactly as typed: reformatting an international number
@@ -3760,7 +3797,7 @@ async function kdVmDrop() {
        hanging up the line — finish() resets the UI but never kills the RTC,
        so the call above keeps carrying the voicemail until it ends itself. */
     if (typeof VOICE.endCall === "function") VOICE.endCall("no-answer");
-    else { reportCall(null, "no-answer"); kdLive("ended"); kdStopClock(); KD.phase = "ended"; KD.session = null; kdRender(); kdOpenWrap(); }
+    else { reportCall(null, "no-answer"); kdLive("ended"); kdStopClock(); KD.phase = "ended"; KD.session = null; kdRender(); kdOpenWrap(true); }
   } catch (e) {
     console.warn("[karma] voicemail drop:", e);
     try { pc.getReceivers?.().forEach((r) => { if (r.track && r.track.kind === "audio") r.track.enabled = true; }); } catch (_) { /* fine */ }
@@ -4084,6 +4121,7 @@ function rcPanelToggle(show) {
   const el = kdEl("rc-call");
   if (!el) return;
   const open = show === undefined ? el.classList.contains("hidden") : show;
+  if (!open && KD.mustWrap && !el.classList.contains("hidden")) { kdWrapBlocked(); return; }
   el.classList.toggle("hidden", !open);
   kdEl("rc-launch")?.setAttribute("aria-expanded", String(open));
   if (!open) return;
@@ -4838,8 +4876,8 @@ function rcWireBar() {
   on("rc-launch", "click", () => rcPanelToggle());
   on("kd-close", "click", () => rcPanelToggle(false));
   // the desktop app's window controls (desktop/dialer-preload.js); no-ops elsewhere
-  on("kd-win-min", "click", () => window.kcDesktop?.minimize?.());
-  on("kd-win-close", "click", () => window.kcDesktop?.close?.());
+  on("kd-win-min", "click", () => { if (!kdWrapBlocked()) window.kcDesktop?.minimize?.(); });
+  on("kd-win-close", "click", () => { if (!kdWrapBlocked()) window.kcDesktop?.close?.(); });
   on("kd-retry", "click", () => rcRetry());
   kdWireDrag(root);
 
@@ -4863,7 +4901,7 @@ function rcWireBar() {
     if ((b = t("[data-tab]"))) { KD.ptab = b.dataset.tab; return kdRender(); }
     if ((b = t("[data-filter]"))) { KD.filter = b.dataset.filter; return kdRender(); }
     if ((b = t("[data-sec]"))) { KD.open[b.dataset.sec] = !KD.open[b.dataset.sec]; return kdRender(); }
-    if ((b = t("[data-close]"))) return kdShow(b.dataset.close, false);
+    if ((b = t("[data-close]"))) { if (b.dataset.close === "kd-wrap" && kdWrapBlocked()) return; return kdShow(b.dataset.close, false); }
     if ((b = t("[data-k]"))) return kdKey(b.dataset.k);
     if ((b = t("[data-lead]"))) return kdPickLead(+b.dataset.lead);
     if ((b = t("[data-ctl]"))) return kdControl(b.dataset.ctl);
@@ -4885,9 +4923,9 @@ function rcWireBar() {
     if (e.target.closest("#kd-decline")) return kdDecline();
     if (e.target.closest("#kd-resume")) return kdControl("hold");
     if (e.target.closest("#kd-save")) return kdSaveDispo();
-    if (e.target.closest("#kd-skip")) { kdShow("kd-wrap", false); return kdAfterWrap(null); }
+    if (e.target.closest("#kd-skip")) { if (kdWrapBlocked()) return; kdShow("kd-wrap", false); return kdAfterWrap(null); }
     /* Tapping the dimmed area behind a sheet closes it, as every sheet does. */
-    if (e.target.classList.contains("kd-scrim")) return e.target.classList.add("hidden");
+    if (e.target.classList.contains("kd-scrim")) { if (e.target.id === "kd-wrap" && kdWrapBlocked()) return; return e.target.classList.add("hidden"); }
   });
 
   kdEl("kd-num")?.addEventListener("input", (e) => {
@@ -4927,7 +4965,7 @@ function rcWireBar() {
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape" || kdEl("rc-call")?.classList.contains("hidden")) return;
     for (const id of ["kd-wrap", "kd-menu"]) {
-      if (!kdEl(id)?.classList.contains("hidden")) return kdShow(id, false);
+      if (!kdEl(id)?.classList.contains("hidden")) { if (id === "kd-wrap" && kdWrapBlocked()) return; return kdShow(id, false); }
     }
     rcPanelToggle(false);
   });
@@ -5017,6 +5055,7 @@ async function kdDial(fromPad) {
   const num = fromPad ? KD.number : KD.lead?.phone || KD.number;
   if (!num) return kdToast("Type a number first");
   if (kdActive() || KD.lookingUp) return;
+  if (kdWrapBlocked()) return;
   /* A typed number is often a lead's. Without the lead the call is neither
      logged (reportCall needs one) nor offered a wrap-up, so a keypad call
      left no trace and no disposition. Ask the same whois the incoming pop-up
@@ -5204,8 +5243,13 @@ const KD_DISPO_NO_LEAD = new Set(["outcome", "log", "prospect", "dnc"]);
 const kdNoLeadRow = () => !KD.lead || KD.lead.id < 0;
 const kdDispoChoices = () => KD.lead ? KD_DISPOS : KD_DISPOS.filter((d) => KD_DISPO_NO_LEAD.has(d.kind));
 
-function kdOpenWrap() {
+/* must: opened because a call just ended. Until a disposition is saved the
+   sheet cannot be closed or skipped, the dialer cannot be closed or
+   minimised, and nothing else can be dialled (kdWrapBlocked). */
+function kdOpenWrap(must) {
   if (!KD.lead && !KD.number) return kdToast("This call has no lead or number to log against");
+  if (must === true) KD.mustWrap = true;
+  kdEl("kd-wrap")?.classList.toggle("kd-must", !!KD.mustWrap);
   /* The Prospect form belongs to ONE call. It used to be cleared only after a
      Prospect/DNC save, so skipping the sheet (or saving VM) left the last
      contact's name and company in it — and the next uploaded contact's
@@ -5296,6 +5340,7 @@ async function kdSaveDispo() {
   await VOICE.call?.logged;                // the call's row is what the disposition stamps
   const note = (kdEl("kd-note")?.value || "").trim();
   const picked = KD_DISPOS.find((d) => d.label === KD.dispo);
+  if (KD.mustWrap && !picked) return kdToast("Pick a disposition for this call");
   const jobs = [];
 
   if (note) jobs.push(api("/api/leads/" + L.id + "/comments",
@@ -5353,6 +5398,7 @@ async function kdSaveDispo() {
 
   try {
     await Promise.all(jobs);
+    kdWrapDone();
     kdShow("kd-wrap", false);
     kdEl("kd-note").value = "";
     for (const i of ["kd-crm-first", "kd-crm-last", "kd-crm-email"]) if (kdEl(i)) kdEl(i).value = "";
@@ -5370,7 +5416,7 @@ async function kdSaveDispo() {
     KD.wantFu = false;
     kdAfterWrap(picked || null);
   } catch (e) {
-    kdToast("Could not save — " + (describeErr(e) || "unknown"));
+    kdWrapFailed(e);
   }
 }
 
@@ -5419,6 +5465,7 @@ async function kdSaveNumberDispo() {
     if (picked.kind === "prospect" || picked.kind === "dnc") {
       const r = await kdNoLeadSpecial(picked, note);
       if (!r) return;
+      kdWrapDone();
       kdShow("kd-wrap", false);
       kdEl("kd-note").value = "";
       KD.dispo = "";
@@ -5427,13 +5474,14 @@ async function kdSaveNumberDispo() {
     }
     const r = await api("/api/calls/disposition", {
       method: "POST", body: JSON.stringify({ number: KD.number, disposition: picked.label, note }) });
+    kdWrapDone();
     kdShow("kd-wrap", false);
     kdEl("kd-note").value = "";
     KD.dispo = "";
     kdToast(r?.crm?.sent ? "Saved · sent to Zoho CRM" : "Saved");
     if (r?.crm?.sendError) toast("Call saved, but Zoho CRM refused it for now — it will retry: " + r.crm.sendError, 9000);
   } catch (e) {
-    kdToast("Could not save — " + (describeErr(e) || "unknown"));
+    kdWrapFailed(e);
   }
 }
 
@@ -5445,6 +5493,7 @@ async function kdSaveNumberDispo() {
    the call, which campaign-upload.js saves to campaign_leads as it advances. */
 async function kdSaveUploadDispo() {
   const picked = KD_DISPOS.find((d) => d.label === KD.dispo);
+  if (KD.mustWrap && !picked) return kdToast("Pick a disposition for this call");
   const note = (kdEl("kd-note")?.value || "").trim();
   try {
     await VOICE.call?.logged;                 // the call row this stamps onto
@@ -5461,13 +5510,14 @@ async function kdSaveUploadDispo() {
     const campNote = [picked?.label, note].filter(Boolean).join(" — ");
     if (campNote && $("camp-note")) $("camp-note").value = campNote;
     DESK.wrapNote = campNote;                 // and to the browser's session, from the app
+    kdWrapDone();
     kdShow("kd-wrap", false);
     if (kdEl("kd-note")) kdEl("kd-note").value = "";
     KD.dispo = "";
     if (special) kdNoLeadReport(picked, special); else kdToast("Saved");
     kdAfterWrap(picked || null);              // advance the campaign (records to campaign_leads)
   } catch (e) {
-    kdToast("Could not save — " + (describeErr(e) || "unknown"));
+    kdWrapFailed(e);
   }
 }
 
@@ -5752,7 +5802,7 @@ async function kdAnswer() {
     /* A voicemail drop already opened the disposition when it was pressed, and
        may already have moved the session on — so do not pop it a second time
        here. The flag is per call; clear it for the next one. */
-    if (!KD.vmDropped) { kdOpenWrap(); if (KD.lead) kdLoadLead(KD.lead.id); }
+    if (!KD.vmDropped) { kdOpenWrap(true); if (KD.lead) kdLoadLead(KD.lead.id); }
     KD.vmDropped = false;
     if (VOICE.rcSession === s) VOICE.rcSession = null;
   });
@@ -5890,7 +5940,7 @@ async function rcCall(digits, name, leadId) {
     } else {
       // in a session a voicemail drop is offered as VM, ready to save
       if (inSession && KD.vmDropped) { KD.dispo = "VM"; KD.vmDropped = false; }
-      kdOpenWrap();
+      kdOpenWrap(true);
       if (KD.lead) kdLoadLead(KD.lead.id);
     }
     if (VOICE.rcSession === session) VOICE.rcSession = null;
@@ -6138,6 +6188,7 @@ async function callHoursOk(number, leadId) {
 
 function dialNow(number, name, leadId) {
   if (VOICE.provider === "desktop") return deskCall(number, name, leadId);
+  if (kdWrapBlocked()) return true;          // handled: nothing dialled until the last call is wrapped up
   if (VOICE.mode === "tel") return false;            // deliberately the OS's job
 
   /* RingCentral, where this rep has connected their own seat. Checked before
@@ -6655,7 +6706,7 @@ function campOpenWrap() {
     KD.lead = { id: cur.id, name: cur.name || cur.company, company: cur.company, phone: cur.phone, status: cur.status };
   KD.number = String(cur.phone || "").replace(/[^0-9*#+]/g, "");
   rcPanelToggle(true);
-  kdOpenWrap();
+  kdOpenWrap(true);
 }
 
 /* The disposition sheet was saved (picked) or skipped (null) for a session
@@ -6668,7 +6719,8 @@ function kdAfterWrap(picked) {
   if (!w) return;
   CAMP.awaitDispo = null;
   const line = wrapOutcomeOf(w.sdkOutcome);
-  const said = { "No Answer": "no-answer", Busy: "busy", VM: "voicemail" }[picked?.label];
+  // a wrong number that picked up reached nobody: not a connected call
+  const said = { "No Answer": "no-answer", Busy: "busy", VM: "voicemail", "Wrong number": "failed" }[picked?.label];
   submitOutcome({ outcome: said || line.outcome, status: said === "busy" ? "" : line.status });
 }
 
@@ -7105,7 +7157,7 @@ function renderCampaign(d) {
   const justCalled = !!(last && !last.in_session && S.me?.email
     && String(last.actor || "").toLowerCase() === S.me.email.toLowerCase()
     && Date.now() - new Date(last.at).getTime() < 30 * 60e3
-    && ["connected", "no-answer", "busy"].includes(last.to_value)) && !kdActive() && !CAMP.awaitDispo;
+    && (["connected", "no-answer", "busy"].includes(last.to_value) || !!last.disposition)) && !kdActive() && !CAMP.awaitDispo;
   const callerId = c?.callback?.name
     ? `<span class="cs-cid-k">Caller ID</span><span><b>${esc(c.callback.name)}</b> · callbacks ring ${esc(String(c.callback.name).split(" ")[0])}</span>`
     : KD.callerId ? `<span class="cs-cid-k">Caller ID</span><span><b>${esc(kdFmtNum(KD.callerId))}</b> · your own number</span>` : "";
@@ -7335,6 +7387,13 @@ function holdForHours(ct) {
 
 async function submitOutcome(extra) {
   if (CAMP.busy) return;                       // a double press must not skip a lead
+  if (kdWrapBlocked()) return;                 // the last call's disposition comes first
+  /* the dialer app's sheet is open for this call: that disposition moves the
+     session on, not a button here */
+  if (CAMP.awaitDispo && VOICE.provider === "desktop") {
+    deskOpenApp();
+    return toast("Save the disposition in the Karma Connect Dialer app first — then the next lead rings", 6000);
+  }
   CAMP.busy = true;
   // pressed on the card instead of saving the sheet: the sheet's question is answered
   const waited = CAMP.awaitDispo;
@@ -12822,6 +12881,10 @@ function deskSay(kind, extra) {
 async function deskTake(c) {
   const ref = { ref: c.id, leadId: c.leadId || null };
   window.kcDesktop?.show?.();
+  if (KD.mustWrap) {
+    kdWrapBlocked();
+    return deskSay("refused", { ...ref, reason: "Not dialled — save the disposition for the last call in the dialer app first" });
+  }
   if (kdActive()) {
     kdToast("Already on a call — hang up first, then call again");
     return deskSay("refused", { ...ref, reason: "Not dialled — you're already on a call in the dialer app" });
@@ -12849,7 +12912,7 @@ function deskEnded(c, outcome) {
   DESK.wrapFor = { ref: c.relay.ref, leadId: c.leadId, outcome };
   DESK.wrapNote = "";
   setTimeout(() => {
-    if (DESK.wrapFor && kdEl("kd-wrap")?.classList.contains("hidden") && !kdActive()) kdOpenWrap();
+    if (DESK.wrapFor && kdEl("kd-wrap")?.classList.contains("hidden") && !kdActive()) kdOpenWrap(true);
   }, 300);
 }
 function deskWrapped(picked) {
