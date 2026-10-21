@@ -681,6 +681,27 @@ const trimTo = (v, max) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, 
 const like = (s) => "%" + s.replace(/[\\%_]/g, (c) => "\\" + c) + "%";
 const PHONE10_NUM =`right(regexp_replace(regexp_replace(coalesce(a.meta->>'number', ''), '\\s*(ext\\.?|extension|x|#)\\s*\\d+\\s*$', '', 'i'), '\\D', '', 'g'), 10)`;
 
+/* "Leave out companies": what the person building the campaign typed — names
+   or parts of names, one per line or comma-separated ("SERVPRO, Belfor,
+   Acme Restoration"). Each is reduced the way client names are (nameKey:
+   letters and digits, legal endings dropped) and a lead is left out when its
+   company — or its name, for a lead with no company — CONTAINS one of them,
+   so "servpro" leaves out every SERVPRO franchise. Under 3 letters would
+   match far too much, so those are ignored. */
+const MAX_EXCLUDE = 200;
+function readExclude(v) {
+  const raw = Array.isArray(v) ? v : String(v == null ? "" : v).split(/[\n,;]+/);
+  const out = [], keys = new Set();
+  for (const s of raw) {
+    const text = String(s == null ? "" : s).trim().slice(0, 80);
+    const key = require("./clients").nameKey(text);
+    if (key.length < 3 || keys.has(key)) continue;
+    keys.add(key); out.push({ text, key });
+    if (out.length >= MAX_EXCLUDE) break;
+  }
+  return out;
+}
+
 function readSpec(b) {
   const kinds0 = (Array.isArray(b.kinds) ? b.kinds : KINDS).filter((x) => KINDS.includes(x));
   const statuses = (Array.isArray(b.statuses) ? b.statuses : [])
@@ -699,12 +720,17 @@ function readSpec(b) {
        import with batch), "exclude" them, or "any" (default) */
     recent: ["only", "exclude"].includes(b.recent) ? b.recent : "any",
     batch: b.recent === "only" && b.batch ? trimTo(b.batch, 200) : "",
+    exclude: readExclude(b.exclude),
   };
 }
 
 /* The WHERE for one spec over leads l. `owners` narrows to leads owned by
    those emails (the assigned source); params continue from `args`. */
-function specWhere(spec, args, { owners = null, skipped = false } = {}) {
+/* SQL: this lead's company (or name) contains one of these keys (a text[] param) */
+const EXCLUDED = (l, param) => `EXISTS (SELECT 1 FROM unnest(${param}::text[]) x(k)
+     WHERE ${require("./clients").nameKeySql(`coalesce(nullif(btrim(${l}.company), ''), ${l}.name)`)} LIKE '%' || x.k || '%')`;
+
+function specWhere(spec, args, { owners = null, skipped = false, excluded = false } = {}) {
   const p = (v) => `$${args.push(v)}`;
   const w = [
     "l.deleted_at IS NULL", "NOT l.removed", "nullif(btrim(l.phone), '') IS NOT NULL",
@@ -722,6 +748,10 @@ function specWhere(spec, args, { owners = null, skipped = false } = {}) {
   if (spec.recent === "only") w.push("l.recent_at IS NOT NULL");
   if (spec.recent === "exclude") w.push("l.recent_at IS NULL");
   if (spec.batch) w.push(`l.recent_batch = ${p(spec.batch)}`);
+  /* the companies to leave out; excluded: the opposite, to say how many it left out */
+  const ex = (spec.exclude || []).map((e) => e.key);
+  if (excluded) { w.push(ex.length ? EXCLUDED("l", p(ex)) : "FALSE"); }
+  else if (ex.length) w.push("NOT " + EXCLUDED("l", p(ex)));
   /* in Zoho → only when its status is one Zoho gave it (not one of Karma
      Connect's own: New, Contacted, Responded, Qualified, Not interested) */
   /* skipped: the opposite — what was left out for being in Zoho, to say back */
@@ -752,9 +782,9 @@ function specWhere(spec, args, { owners = null, skipped = false } = {}) {
 }
 
 /* How many distinct numbers a spec finds. */
-async function countSpec(spec, owners, run = query, skipped = false) {
+async function countSpec(spec, owners, run = query, skipped = false, excluded = false) {
   const args = [];
-  const where = specWhere(spec, args, { owners, skipped });
+  const where = specWhere(spec, args, { owners, skipped, excluded });
   return (await run(`SELECT count(DISTINCT coalesce(l.phone_key, l.id::text))::int AS n FROM leads l WHERE ${where}`, args)).rows[0].n;
 }
 
@@ -819,8 +849,12 @@ router.post("/api/dialer/campaigns/preview", requireAdmin, express.json({ limit:
       const sh = shares(Math.min(spec.limit, available), Math.max(1, reps.length));
       perRep = reps.map((r, i) => ({ email: r.email, name: r.name, n: sh[i] }));
     }
-    const inZoho = await countSpec(spec, spec.source === "assigned" ? reps.map((r) => r.email.toLowerCase()) : null, query, true);
-    res.json({ available, total: perRep.reduce((a, r) => a + r.n, 0), perRep, busy, inZoho });
+    const owned = spec.source === "assigned" ? reps.map((r) => r.email.toLowerCase()) : null;
+    const inZoho = await countSpec(spec, owned, query, true);
+    // how many the "Leave out companies" list kept out (that would otherwise have been in)
+    const left = spec.exclude.length ? await countSpec(spec, owned, query, false, true) : 0;
+    res.json({ available, total: perRep.reduce((a, r) => a + r.n, 0), perRep, busy, inZoho,
+      excluded: left });
   } catch (e) { next(e); }
 });
 
@@ -1032,6 +1066,7 @@ router.post("/api/dialer/campaigns", requireAdmin, express.json({ limit: "8kb" }
           ...(spec.states.length ? { states: spec.states } : {}),
           ...(spec.city ? { city: spec.city } : {}), ...(spec.q ? { q: spec.q } : {}),
           ...(spec.recent !== "any" ? { recent: spec.recent } : {}), ...(spec.batch ? { batch: spec.batch } : {}),
+          ...(spec.exclude.length ? { exclude: spec.exclude.map((e) => e.text) } : {}),
           hasPhone: true, callback,
           ...(batch ? { group: { batch, id: group?.id || null, name: group?.name || null, size: reps.length } } : {}),
           ...(b.start ? { started: new Date().toISOString() } : {}) });
@@ -1193,4 +1228,4 @@ router.post("/api/dialer/campaigns/:id/unassign", requireAdmin, express.json({ l
   } catch (e) { next(e); }
 });
 
-module.exports = { router, MAX_SESSION, OPEN_STATUSES, callbackTargets, connectedBy, _test: { servable } };
+module.exports = { router, MAX_SESSION, OPEN_STATUSES, callbackTargets, connectedBy, _test: { servable, readSpec, readExclude, countSpec } };

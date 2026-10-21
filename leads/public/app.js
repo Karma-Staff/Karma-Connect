@@ -11666,6 +11666,12 @@ async function openNewCampaign() {
         </div>
 
         <div class="pd-f">
+          <label class="modal-field">Leave out companies <span class="pd-help-inline">— optional</span>
+            <textarea id="pd-exclude" rows="2" maxlength="6000" placeholder="e.g. SERVPRO, Belfor, Acme Restoration — commas or one per line"></textarea>
+            <span class="pd-help" id="pd-exclude-help">Any lead whose company name contains one of these is left out, so “Servpro” leaves out every SERVPRO franchise. Kept for your next campaign.</span></label>
+        </div>
+
+        <div class="pd-f">
           <div class="pd-f-l">Dates <span class="pd-help-inline">— any time unless you set a range</span></div>
           <div class="pd-dates">
             <select id="pd-datebasis" aria-label="Which date">
@@ -11755,6 +11761,7 @@ async function openNewCampaign() {
     limit: +$("pd-limit").value,
     states: states().ok, city: $("pd-fcity").value.trim() || undefined, q: $("pd-fq").value.trim() || undefined,
     recent: $("pd-recent").value, batch: $("pd-recent").value === "only" ? $("pd-batch").value || undefined : undefined,
+    exclude: pdExcludeList($("pd-exclude").value),
   });
   /* the chips: everything narrowing the list, each with an × that clears it */
   const fmtDay = (d) => new Date(d + "T00:00:00").toLocaleDateString([], { day: "numeric", month: "short" });
@@ -11771,6 +11778,7 @@ async function openNewCampaign() {
     if (s.recent === "exclude") tag("left out", "recent", "Recently added");
     $("pd-batch-wrap").classList.toggle("hidden", s.recent !== "only");
     if (s.from || s.to) tag(s.from && s.to ? `${fmtDay(s.from)} – ${fmtDay(s.to)}` : s.from ? `since ${fmtDay(s.from)}` : `up to ${fmtDay(s.to)}`, "dates", s.dateBasis === "added" ? "Added" : "Last called");
+    if (s.exclude.length) tag(s.exclude.length <= 3 ? s.exclude.join(", ") : `${s.exclude.length} companies`, "exclude", "Leaving out");
     const bad = states().bad, badEl = $("pd-fstate-bad");
     badEl.textContent = bad.length ? `Not a state: ${bad.join(", ")}` : "";
     badEl.classList.toggle("hidden", !bad.length);
@@ -11797,10 +11805,11 @@ async function openNewCampaign() {
       try {
         const p = await api("/api/dialer/campaigns/preview", { method: "POST", body: JSON.stringify(s) });
         if (my !== seq) return;
+        const exN = p.excluded ? ` · ${dashN(p.excluded)} left out — on your Leave out companies list` : "";
         out.innerHTML = !p.total
-          ? `<span class="login-error">No numbers match these filters${p.inZoho ? ` (${dashN(p.inZoho)} left out — already in Zoho)` : ""}.</span>`
+          ? `<span class="login-error">No numbers match these filters${p.inZoho ? ` (${dashN(p.inZoho)} left out — already in Zoho)` : ""}${exN ? ` (${exN.slice(3)})` : ""}.</span>`
           : `<div class="pd-pv-h"><b>${dashN(p.total)}</b> number${p.total === 1 ? "" : "s"} in this campaign
-               <span class="dash-mute">of ${dashN(p.available)} that match${p.inZoho ? ` · ${dashN(p.inZoho)} left out — already in Zoho` : ""}</span></div>
+               <span class="dash-mute">of ${dashN(p.available)} that match${p.inZoho ? ` · ${dashN(p.inZoho)} left out — already in Zoho` : ""}${exN}</span></div>
              ${p.perRep.length > 1 || s.source !== "assigned" ? `<div class="pd-pv-reps">${p.perRep.map((r) =>
                `<span class="pd-pv-rep"><span class="live-av pd-av">${esc(initials(r.name))}</span>${esc(r.name)} <b>${dashN(r.n)}</b></span>`).join("")}</div>` : ""}
              ${p.busy.length ? `<div class="login-error">Busy with another session: ${p.busy.map(esc).join(", ")} — end it first.</div>` : ""}`;
@@ -11821,7 +11830,7 @@ async function openNewCampaign() {
     if (e.target.id === "pd-group") paintMembers();
     preview();
   });
-  const LIVE = new Set(["pd-fstate", "pd-fcity", "pd-fq"]);
+  const LIVE = new Set(["pd-fstate", "pd-fcity", "pd-fq", "pd-exclude"]);
   form.addEventListener("input", (e) => { if (e.target.type === "number" || LIVE.has(e.target.id)) preview(); });
   $("pd-dates-clear").addEventListener("click", () => { $("pd-from").value = ""; $("pd-to").value = ""; preview(); });
   $("pd-active").addEventListener("click", (e) => {
@@ -11836,6 +11845,7 @@ async function openNewCampaign() {
     else if (what === "q") $("pd-fq").value = "";
     else if (what === "recent") { $("pd-recent").value = "any"; $("pd-batch").value = ""; }
     else if (what === "dates") { $("pd-from").value = ""; $("pd-to").value = ""; }
+    else if (what === "exclude") $("pd-exclude").value = "";
     preview();
   });
   const toGroups = (e) => { e.preventDefault(); openRepGroups(reps, openNewCampaign); };
@@ -11882,6 +11892,8 @@ async function openNewCampaign() {
   $("pd-ai-go").addEventListener("click", aiGo);
   $("pd-ai-text").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); aiGo(); } });
 
+  /* the list from the last campaign this browser made, so it needn't be typed again */
+  try { $("pd-exclude").value = localStorage.getItem(PD_EXCLUDE_KEY) || ""; } catch (e) { /* no storage: start empty */ }
   paintWho(); preview();
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -11894,6 +11906,7 @@ async function openNewCampaign() {
       const out = await api("/api/dialer/campaigns", { method: "POST", body: JSON.stringify({
         ...s, name: $("pd-name").value, gap: +$("pd-gap").value, start: $("pd-start").checked,
         callback_ext: $("pd-callback").value || undefined }) });
+      try { localStorage.setItem(PD_EXCLUDE_KEY, $("pd-exclude").value.trim()); } catch (e) { /* not kept: fine */ }
       closeModal();
       const split = out.perRep && out.perRep.length > 1 ? ` between ${out.perRep.length} reps (${out.perRep.map((r) => `${r.name} ${dashN(r.total)}`).join(", ")})` : "";
       toast(`Campaign created with ${dashN(out.total)} number${out.total === 1 ? "" : "s"}${split}${
@@ -11905,6 +11918,13 @@ async function openNewCampaign() {
     }
   });
 }
+
+/* "Leave out companies" in the New campaign form: the typed names, split on
+   commas, semicolons or new lines. The server reduces and matches them
+   (campaign.js readExclude); under 3 letters is ignored there too. */
+const PD_EXCLUDE_KEY = "kc.pd.exclude";
+const pdExcludeList = (v) => [...new Set(String(v || "").split(/[\n,;]+/).map((s) => s.trim())
+  .filter((s) => s.replace(/[^a-z0-9]/gi, "").length >= 3))].slice(0, 200);
 
 /* Rep groups: named sets of reps a campaign can be given to at once. Made
    here by a manager; who is in each is entirely their choice. `back`

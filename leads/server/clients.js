@@ -196,4 +196,4 @@ router.delete("/api/clients/:id", requireAdmin, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-module.exports = { router, isClientSql, clientForPhone, clientForLead, clientNames, nameKey, toClient, _test: { stateOf, nameKeySql } };
+module.exports = { router, isClientSql, clientForPhone, clientForLead, clientNames, nameKey, nameKeySql, toClient, _test: { stateOf, nameKeySql } };
