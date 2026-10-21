@@ -1262,7 +1262,7 @@ const pairLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, message: "Too
 // Agent state for the Send Queue strip: on/off, caps, how many sent today, what's waiting.
 app.get("/api/outreach/agent/status", requireUser, async (req, res) => {
   try {
-    res.json(await liAgent.status(req.userId));
+    res.json(await liAgent.status(req.userId, { tzOffset: req.get("x-tz-offset") }));
   } catch (e) { res.status(500).json({ error: { message: "Could not load the agent status." } }); }
 });
 
@@ -1289,20 +1289,21 @@ app.post("/api/outreach/agent/enable", requireUser, async (req, res) => {
     // { enabled, accountId? } — accountId "all" (or none, from an older page) means every account.
     const r = await liAgent.setEnabled(req.userId, !!b.enabled, b.accountId || "all");
     if (!r) return res.status(404).json({ error: { message: "That LinkedIn account isn't on the agent." } });
-    res.json({ enabled: !!b.enabled, status: await liAgent.status(req.userId) });
+    res.json({ enabled: !!b.enabled, status: await liAgent.status(req.userId, { tzOffset: req.get("x-tz-offset") }) });
   } catch (e) { res.status(500).json({ error: { message: "Could not change the agent state." } }); }
 });
 
 // Hand the worker its next batch. The worker sends its OWN local hour/day — the recruiter's
 // working window is what matters, and this server may be in another timezone.
-// Body: { leaseId, localHour, localDay }. Always 200: an empty batch with a reason is normal.
+// Body: { leaseId, localHour, localDay, localMinute }. Always 200: an empty batch with a reason is normal.
 app.post("/api/outreach/agent/lease", requireAgent, async (req, res) => {
   try {
     const b = req.body || {};
     const hour = Number.isInteger(b.localHour) ? b.localHour : new Date().getHours();
     const day = Number.isInteger(b.localDay) ? b.localDay : new Date().getDay();
     const a = await agentAccount(req, res); if (!a) return;
-    res.json(await liAgent.lease(req.userId, a, { leaseId: b.leaseId, localHour: hour, localDay: day }));
+    res.json(await liAgent.lease(req.userId, a, { leaseId: b.leaseId, localHour: hour, localDay: day,
+      localMinute: Number.isInteger(b.localMinute) && b.localMinute >= 0 && b.localMinute < 60 ? b.localMinute : undefined }));
   } catch (e) { res.status(500).json({ error: { message: "Could not lease work." } }); }
 });
 
@@ -1494,7 +1495,7 @@ app.get("/api/outreach/agent/today", requireUser, async (req, res) => {
 app.post("/api/outreach/agent/accounts", requireUser, async (req, res) => {
   try {
     const a = await liAgent.createAccount(req.userId, req.body || {});
-    res.json({ account: { id: a.id, slot: a.slot, label: a.label }, status: await liAgent.status(req.userId) });
+    res.json({ account: { id: a.id, slot: a.slot, label: a.label }, status: await liAgent.status(req.userId, { tzOffset: req.get("x-tz-offset") }) });
   } catch (e) { res.status(400).json({ error: { message: (e && e.message) || "Could not add the account." } }); }
 });
 
@@ -1504,7 +1505,7 @@ app.patch("/api/outreach/agent/accounts/:id", requireUser, async (req, res) => {
     const b = req.body || {};
     const a = await liAgent.updateAccount(req.userId, String(req.params.id), { label: b.label, deviceId: b.deviceId, prospectOn: b.prospectOn, senderId: b.senderId });
     if (!a) return res.status(404).json({ error: { message: "Account not found." } });
-    res.json({ status: await liAgent.status(req.userId) });
+    res.json({ status: await liAgent.status(req.userId, { tzOffset: req.get("x-tz-offset") }) });
   } catch (e) { res.status(400).json({ error: { message: (e && e.message) || "Could not change the account." } }); }
 });
 
@@ -1513,7 +1514,7 @@ app.delete("/api/outreach/agent/accounts/:id", requireUser, async (req, res) => 
   try {
     const a = await liAgent.removeAccount(req.userId, String(req.params.id));
     if (!a) return res.status(404).json({ error: { message: "Account not found." } });
-    res.json({ status: await liAgent.status(req.userId) });
+    res.json({ status: await liAgent.status(req.userId, { tzOffset: req.get("x-tz-offset") }) });
   } catch (e) { res.status(400).json({ error: { message: (e && e.message) || "Could not remove the account." } }); }
 });
 

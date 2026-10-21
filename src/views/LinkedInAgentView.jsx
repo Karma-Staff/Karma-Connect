@@ -264,11 +264,11 @@ function SetupSteps({ a, st, run, busy, onConnectPc }) {
 // ── Hours and limits ────────────────────────────────────────────────
 const MAIN_FIELDS = [
   ["perDay", "Messages a day", "Replies count too"],
-  ["invitesPerDay", "Invitations a day", ""],
+  ["invitesPerWeek", "Most invitations a week", "Each week sends a different total up to this (60–80 for 80), a different number each day; LinkedIn's own limit is about 100"],
 ];
 const MORE_FIELDS = [
   ["perHour", "Messages an hour", ""],
-  ["invitesPerWeek", "Invitations a week", "LinkedIn's own limit is about 100"],
+  ["invitesPerDay", "Most invitations in one day", "No single day goes above this"],
   ["minGapSec", "Shortest gap (seconds)", "Between any two actions"],
   ["maxGapSec", "Longest gap (seconds)", "It waits a random time in between"],
   ["inboxEveryMin", "Check inbox every (minutes)", ""],
@@ -278,7 +278,7 @@ const MORE_FIELDS = [
 
 function hoursSummary(L) {
   return (L.weekdaysOnly ? "Weekdays" : "Every day") + " " + hourLabel(L.windowStart ?? 9) + "–" + hourLabel(L.windowEnd ?? 17)
-    + " · " + (L.perDay ?? "?") + " messages · " + (L.invitesPerDay ?? "?") + " invitations a day";
+    + " · " + (L.perDay ?? "?") + " messages a day · " + (L.invitesPerWeek ?? "?") + " invitations a week";
 }
 
 function NumField({ k, label, help, form, set, b, d }) {
@@ -339,6 +339,13 @@ function HoursAndLimits({ a, st, run, busy, open, onToggle }) {
       <div className="fgrid" style={{ marginTop: 14 }}>
         {MAIN_FIELDS.map(([k, label, help]) => <NumField key={k} k={k} label={label} help={help} form={form} set={set} b={b} d={d} />)}
       </div>
+      {(() => {
+        // the week can't add up if no day may go high enough
+        const days = form.weekdaysOnly ? 5 : 7, most = Number(form.invitesPerDay) || 0, week = Number(form.invitesPerWeek) || 0;
+        return most && week && most * days < week
+          ? <p className="lia-muted" style={{ margin: "10px 0 0", fontSize: 13, color: "#E7B74B" }}>At most {most} a day, the week reaches only {most * days} of {week}. Raise "Most invitations in one day" under More limits.</p>
+          : null;
+      })()}
       <details className="lia-more">
         <summary>More limits</summary>
         <div className="fgrid" style={{ marginTop: 12 }}>

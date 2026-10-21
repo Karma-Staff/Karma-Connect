@@ -416,7 +416,7 @@ function AgentStrip({ status, onToggle, busy, onOpenAgent }) {
           return (
             <span key={a.id} className="chip" title={(a.worker && a.worker.linkedin && a.worker.linkedin.name) || ""}
               style={{ background: "transparent", borderColor: states[i].tone + "55", color: "var(--text)", fontWeight: 500 }}>
-              <span style={{ color: states[i].tone }}>●</span>&nbsp;{a.label} · {states[i].label} · {c.day ?? 0}/{L.perDay ?? "?"} msgs · {c.invDay ?? 0}/{L.invitesPerDay ?? "?"} invites
+              <span style={{ color: states[i].tone }}>●</span>&nbsp;{a.label} · {states[i].label} · {c.day ?? 0}/{L.perDay ?? "?"} msgs · {a.invites ? a.invites.today + "/" + a.invites.target + " invites today" : (c.invDay ?? 0) + "/" + (L.invitesPerDay ?? "?") + " invites"}
             </span>
           );
         })}

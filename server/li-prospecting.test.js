@@ -55,7 +55,8 @@ describe("the search and the note", () => {
   it("searches the US and Canada, never existing connections", () => {
     const u = new URL(searchUrl({ title: "owner", trade: "restoration", page: 2 }));
     expect(u.pathname).toBe("/search/results/people/");
-    expect(u.searchParams.get("keywords")).toBe("owner restoration");
+    expect(u.searchParams.get("keywords")).toBe("restoration");
+    expect(u.searchParams.get("titleFreeText")).toMatch(/^\(owner\) NOT /);
     expect(JSON.parse(u.searchParams.get("geoUrn"))).toEqual(["103644278", "101174742"]);
     expect(JSON.parse(u.searchParams.get("network"))).toEqual(["S", "O"]);
     expect(u.searchParams.get("page")).toBe("2");

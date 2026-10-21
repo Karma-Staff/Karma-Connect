@@ -18,7 +18,7 @@ function ago(t) {
 // The tiles, in the order the work happens.
 const KINDS = [
   { k: "found", label: "Found", sub: (d) => "new prospects · " + d.searches + " search" + (d.searches === 1 ? "" : "es"), empty: "Nobody found yet today." },
-  { k: "invited", label: "Invited", sub: (d, L) => "invitations sent" + (L.invitesPerDay ? " · limit " + L.invitesPerDay : ""), empty: "No invitations sent yet today." },
+  { k: "invited", label: "Invited", sub: (d, L, a) => "invitations sent" + (a && a.invites ? " · today's target " + a.invites.target + " · " + a.invites.week + " of " + a.invites.weekCap + " this week" : ""), empty: "No invitations sent yet today." },
   { k: "accepted", label: "Accepted", sub: () => "new connections", empty: "Nobody has accepted yet today." },
   { k: "researched", label: "Researched", sub: () => "ready for you to approve", empty: "Nobody researched yet today. It happens a few minutes after someone accepts." },
   { k: "messages", label: "Messages", sub: (d, L) => "first messages sent" + (L.perDay ? " · limit " + L.perDay : ""), empty: "No messages sent yet today." },
@@ -113,7 +113,7 @@ export function AgentToday({ a, o, accounts, onOpenQueue }) {
                   onClick={() => setOpen(open === x.k ? "" : x.k)}>
                   <span className="lia-tile-l">{x.label}</span>
                   <span className="lia-tile-v">{n}{n >= 60 ? "+" : ""}</span>
-                  <span className="lia-tile-s">{x.sub(d, L)}</span>
+                  <span className="lia-tile-s">{x.sub(d, L, a)}</span>
                 </button>
               );
             })}

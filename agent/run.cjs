@@ -339,7 +339,7 @@ class Account {
     const now = new Date();
     const batch = await this.call("/api/outreach/agent/lease", {
       method: "POST",
-      body: { leaseId: this.leaseId, localHour: now.getHours(), localDay: now.getDay() },
+      body: { leaseId: this.leaseId, localHour: now.getHours(), localDay: now.getDay(), localMinute: now.getMinutes() },
     });
 
     if (!batch.items || !batch.items.length) {

@@ -23,19 +23,44 @@ const SEARCH_GAP_MIN = Math.max(10, parseInt(process.env.LI_SEARCH_GAP_MIN || "4
 const PER_SEARCH = 10;     // invitations queued from one search page at most
 
 const GEO = { us: "103644278", ca: "101174742" };   // LinkedIn's geo ids: United States, Canada
-// The owner's choice: owners and top leaders, plus operations leaders.
-const TITLES = ["owner", "president", "CEO", "founder", "general manager", "operations manager",
-  "director of operations", "VP operations", "branch manager", "partner"];
-const TRADES = ["restoration", "water damage restoration", "mitigation"];
-const PAGES = 3;           // pages of each search, before moving to the next title
 
-// Every search, in the order they're worked through: title × trade × page.
+// ── The searches ────────────────────────────────────────────────────
+// Each search is one title group (the "Title" filter: it matches the person's current job title)
+// crossed with one trade group (the keywords: matched anywhere on the profile). Boolean syntax is
+// LinkedIn's own — uppercase OR / NOT, quoted phrases, parentheses — and works on a regular account.
+// The owner's choice: owners and top leaders first, then operations leaders. Highest yield first.
+const TITLES = [
+  { name: "owners", q: 'owner OR "co-owner" OR proprietor OR franchisee' },
+  { name: "presidents", q: 'president OR CEO OR "chief executive" OR chairman', not: 'NOT "vice president"' },
+  { name: "founders", q: 'founder OR "co-founder" OR "managing partner" OR "managing member" OR principal' },
+  { name: "general managers", q: '"general manager" OR "managing director" OR COO OR "chief operating officer"' },
+  { name: "operations leaders", q: '"director of operations" OR "operations director" OR "vp operations" OR "vp of operations" OR "vice president of operations" OR "head of operations" OR "operations manager" OR "branch manager" OR "regional manager"' },
+];
+// Titles nobody wants, taken out at the search so they don't use up the page. Only words that are
+// never in an owner's title: the headline filters below do the finer sorting.
+const NOT_TITLES = "NOT adjuster NOT recruiter NOT technician NOT estimator NOT sales";
+// The words restoration companies really use, and the big franchise names. A keyword is matched
+// anywhere on the profile, so each group is kept short and specific.
+const TRADES = [
+  { name: "restoration", q: "restoration" },
+  { name: "water, fire & mold", q: '"water damage" OR "fire damage" OR "mold remediation"' },
+  { name: "mitigation", q: "mitigation OR remediation OR reconstruction" },
+  { name: "franchises", q: 'SERVPRO OR PuroClean OR "Paul Davis" OR BELFOR OR ServiceMaster OR "Rainbow Restoration"' },
+  { name: "franchises 2", q: '"911 Restoration" OR DKI OR "First Onsite" OR "Restoration 1" OR Rytech OR BluSky OR "ATI Restoration" OR Steamatic' },
+];
+const PAGES = 3;           // pages of each search; all first pages before any second page
+
+// Every search, in the order they're worked through: page × title × trade (75 in all).
+// The cursor an account already has is taken modulo this length, so the length can change.
 const SPECS = [];
-for (let p = 1; p <= PAGES; p++) for (const t of TITLES) for (const k of TRADES) SPECS.push({ title: t, trade: k, page: p });
+for (let p = 1; p <= PAGES; p++) for (const t of TITLES) for (const k of TRADES) {
+  SPECS.push({ title: t.name, trade: k.name, page: p, titleQ: "(" + t.q + ") " + [t.not, NOT_TITLES].filter(Boolean).join(" "), tradeQ: k.q });
+}
 
 function searchUrl(spec) {
   const u = new URL("https://www.linkedin.com/search/results/people/");
-  u.searchParams.set("keywords", spec.title + " " + spec.trade);
+  u.searchParams.set("keywords", spec.tradeQ || spec.trade);
+  u.searchParams.set("titleFreeText", spec.titleQ || "(" + spec.title + ") " + NOT_TITLES);
   u.searchParams.set("geoUrn", JSON.stringify([GEO.us, GEO.ca]));
   u.searchParams.set("network", JSON.stringify(["S", "O"]));   // 2nd and 3rd+: never people already connected
   u.searchParams.set("origin", "FACETED_SEARCH");
@@ -44,13 +69,36 @@ function searchUrl(spec) {
 }
 
 // ── Who counts ──────────────────────────────────────────────────────
-// A decision-maker by their headline: the owner's list, and the operations leaders.
-const LEADER = /\b(owner|co-?owner|founder|co-?founder|president|ceo|chief executive|chief operating|coo|partner|principal|general manager|gm|managing director|vp|vice president|director of operations|operations director|director,? operations|head of operations|operations manager|ops manager|branch manager|regional manager|area manager)\b/i;
-// …but not someone who only works for one, wants a job, or has left.
-const NOT_LEADER = /\b(assistant|intern|student|seeking|looking for|open to work|former|retired|ex-|aspiring|technician|tech\b|estimator|adjuster|recruit|sales rep|account executive|business development rep|bdr|sdr|marketing (?:specialist|coordinator)|coordinator)\b/i;
+// Owner-level: the people who decide. A second role beside it ("Owner & Estimator") doesn't
+// matter — a small company's owner does a bit of everything. "Vice President" is not a president,
+// "Product Owner" is not an owner, "HR Business Partner" is not a partner.
+const TOP = /\b(?:(?<!product |process |service )owner|co-?owner|proprietor|founder|co-?founder|founding partner|(?<!vice[\s-])president|ceo|chief executive|chairman|chairwoman|chairperson|coo|chief operating|managing (?:partner|member|director|owner|principal)|franchisee)\b/i;
+// Operations-level: counts only when it is their job, not a second word in a sales or office title.
+const MID = /\b(?:(?<!business )partner|principal|general manager|gm|vp|svp|evp|vice[\s-]president|director of (?:field )?operations|operations director|director,? operations|director of ops|head of operations|operations (?:manager|lead|leader)|ops manager|branch manager|regional manager|area manager|district manager|division manager|market manager|location manager|regional director)\b/i;
+// Roles that turn an operations-level headline into somebody else's job.
+const ROLE = /\b(?:sales|marketing|business development|biz dev|bd|bdm|bdr|sdr|account (?:manager|executive|rep|representative|director)|project (?:manager|coordinator|director|management)|pm|estimator|estimating|technician|tech|crew (?:chief|lead|leader)|lead tech|supervisor|foreman|superintendent|dispatcher|admin|administrator|administrative|office manager|customer (?:service|success|care)|coordinator|recruiter|recruiting|human resources|hr|finance|accounting|controller|bookkeeper|safety|fleet|warehouse|quality|training|it manager|franchise (?:development|sales)|claims)\b/i;
+// Nobody, whatever their title says: works for the leader, is still studying, or wants a job.
+const HARD = /\b(?:assistant|intern|internship|student|trainee|apprentice|to the (?:owner|president|ceo|founder|gm|general manager)|seeking (?:a |new |my )?(?:employment|work|job|position|role|opportunit\w*|new)|looking for (?:work|a job|a new|my next|employment|opportunit\w*|position|role)|open to (?:work|new opportunit\w*|opportunit\w*)|opentowork|actively (?:looking|seeking|pursuing)|job search|unemployed|in transition|aspiring)\b|#opentowork/i;
+// A part of the headline about a job they no longer have ("Former Owner…", "Retired").
+const GONE = /\b(?:former|formerly|ex|fmr|past|retired|previous|previously|emeritus)\b/i;
+// Sells to restoration companies, competes with Karma Staff, or sits on the insurance side.
+const VENDOR = /\b(?:software|saas|crm|erp|tech (?:company|startup)|technology company|marketing (?:agency|firm|company|services|solutions)|digital marketing|lead ?gen(?:eration)?|seo|ppc|web ?(?:design|development)|advertising agency|ad agency|branding agency|consultant|consulting|coach|coaching|recruiter|recruitment|recruiting (?:agency|firm|company)|staffing|headhunt\w*|talent (?:acquisition|solutions|partner|agency)|outsourc\w*|virtual assistant|call center|answering service|equipment (?:rental|supplier|supply|sales|dealer|manufacturer|company|co)|supplier|supplies|distributor|manufactur\w*|dealer|third[- ]party administrator|tpa|insurance (?:agent|agency|broker|carrier|company|sales|producer)|agency owner|underwriter|adjuster|adjusting|public adjust\w*|claims (?:manager|specialist|examiner|rep|representative|professional|consultant|handler|director|supervisor|analyst|team)|appraiser|attorney|lawyer|law|legal|litigation|paralegal|realtor|real estate (?:agent|broker|brokerage)|franchise (?:consultant|broker)|business broker|broker|lender|lending|payroll|bookkeep\w*|accounting firm|cpa|training (?:company|provider|center|institute)|academy|nonprofit|non-profit)\b/i;
+// The wrong kind of restoration: hair, cars, furniture, churches, wetlands, Restoration Hardware…
+// Taken out of the headline before looking for a restoration company in what's left.
+const WRONG_RESTORATION = /\b(?:(?:hair|auto|automotive|car|classic car|vehicle|motorcycle|boat|marine|furniture|antique|art|fine art|photo|film|data|dental|smile|tooth|teeth|ecolog\w*|ecosystem|habitat|wetland|stream|river|coral|reef|forest|prairie|land|masonry|stone|concrete|brick|facade|façade|window|wood|floor|hardwood|tile|bathtub|tub|leather|monument|historic\w*|heritage|headstone|cemetery|church|yoga|vision|hearing|jewelry|watch|piano|guitar|document|book|paper|sculpture|roof)\s+(?:(?:&|and)\s+)?(?:restor\w*|remediat\w*|reconstruct\w*)|restoration (?:hardware|church|ministr\w*|fellowship|community|yoga|wellness|health|medical|clinic|counseling|therapy|chiropractic|spa|salon|fitness|hair|dental|dentistry)|restorative|rh)\b/i;
 // A restoration company by the headline. The search keyword alone isn't enough: LinkedIn matches
 // it anywhere on the profile, including someone's job ten years ago.
-const RESTORATION = /\b(restor\w*|mitigat\w*|water damage|fire damage|flood|mold|mould|remediat\w*|disaster|reconstruct\w*|catastroph\w*|servpro|belfor|paul davis|puroclean|rainbow international|911 restoration|first ?onsite|blusky|dki|steamatic|chem-?dry|rytech|ati restoration|bms cat|cotton (?:global|commercial))\b/i;
+const RESTORATION = /\b(?:restor\w*|mitigat\w*|remediat\w*|water (?:damage|removal|extraction|cleanup|clean-up|intrusion|loss)|fire (?:damage|& smoke|and smoke)|smoke damage|flood\w*|mold|mould|mildew|sewage|biohazard|large loss|disaster|catastroph\w*|reconstruct\w*|drying|dry ?out|dehumidif\w*|servpro|belfor|paul davis|puroclean|rainbow (?:international|restoration)|first ?onsite|blusky|dki|steamatic|chem-?dry|rytech|bms cat|cotton (?:global|commercial|gds)|service ?master|dry ?medic|insurcomm|duraclean|bio-?one)\b/i;
+
+// ── Where they are ──────────────────────────────────────────────────
+// The search is already limited to the US and Canada; this is the backstop for a card whose
+// location names somewhere else. Metro names ("Dallas-Fort Worth Metroplex") name no country and pass.
+const NORTH_AMERICA = /\b(?:united states|usa|u\.s\.a?\.?|canada|alabama|alaska|arizona|arkansas|california|colorado|connecticut|delaware|florida|georgia|hawaii|idaho|illinois|indiana|iowa|kansas|kentucky|louisiana|maine|maryland|massachusetts|michigan|minnesota|mississippi|missouri|montana|nebraska|nevada|new hampshire|new jersey|new mexico|new york|north carolina|north dakota|ohio|oklahoma|oregon|pennsylvania|rhode island|south carolina|south dakota|tennessee|texas|utah|vermont|virginia|washington|west virginia|wisconsin|wyoming|district of columbia|puerto rico|alberta|british columbia|manitoba|new brunswick|newfoundland|nova scotia|ontario|prince edward island|quebec|québec|saskatchewan|yukon|northwest territories|nunavut)\b/i;
+const ELSEWHERE = /\b(?:united kingdom|uk|england|scotland|wales|ireland|australia|new zealand|india|pakistan|bangladesh|sri lanka|nepal|philippines|indonesia|malaysia|singapore|thailand|vietnam|japan|china|hong kong|taiwan|korea|nigeria|ghana|kenya|south africa|egypt|morocco|uganda|(?<!new )mexico|brazil|argentina|colombia|chile|peru|venezuela|ecuador|dominican republic|jamaica|trinidad|germany|france|spain|italy|portugal|netherlands|belgium|poland|sweden|norway|denmark|finland|switzerland|austria|greece|turkey|türkiye|israel|united arab emirates|uae|dubai|saudi arabia|qatar|kuwait|europe|asia|africa|middle east|latin america|south america|caribbean)\b/i;
+const outsideNorthAmerica = (loc) => {
+  const s = String(loc || "").trim();
+  return !!s && !NORTH_AMERICA.test(s) && ELSEWHERE.test(s);
+};
 
 const handleOf = (url) => {
   const m = String(url || "").match(/linkedin\.com\/in\/([^/?#\s]+)/i);
@@ -58,13 +106,20 @@ const handleOf = (url) => {
   try { return decodeURIComponent(m[1]).toLowerCase(); } catch (e) { return m[1].toLowerCase(); }
 };
 
-// "Owner at Acme Restoration" / "President | Acme Restoration" → { title, company }
+// The parts of a headline: "Owner at Acme | Former Marine" → ["Owner at Acme", "Former Marine"]
+const segments = (h) => String(h || "").split(/\s*[|·•;()]\s*|\s+[-–—]\s+|,\s+|\s+\/\s+/).map((s) => s.trim()).filter(Boolean);
+
+// "Owner at Acme Restoration" / "President | Acme Restoration" / "President, Acme Restoration"
+// → { title, company }
 function splitHeadline(h) {
-  const s = String(h || "").trim();
+  const s = String(h || "").trim().replace(/\s+/g, " ");
   const at = s.match(/^(.*?)\s+(?:at|@)\s+(.+)$/i);
-  if (at) return { title: at[1].trim(), company: at[2].split(/\s[|·•,]\s|\s[-–]\s/)[0].trim() };
-  const bar = s.split(/\s[|·•]\s|\s[-–]\s/);
+  if (at) return { title: at[1].trim(), company: at[2].split(/\s[|·•,]\s|\s[-–—]\s/)[0].trim() };
+  const bar = s.split(/\s[|·•]\s|\s[-–—]\s/);
   if (bar.length > 1) return { title: bar[0].trim(), company: bar[1].trim() };
+  // "President, Acme Restoration & Construction": a comma, when what's before it is a title
+  const comma = s.split(/,\s+/);
+  if (comma.length > 1 && (TOP.test(comma[0]) || MID.test(comma[0]))) return { title: comma[0].trim(), company: comma[1].trim() };
   return { title: s, company: "" };
 }
 
@@ -75,10 +130,16 @@ function skipReason(c) {
   const name = String(c.name || "").trim();
   if (!name || /linkedin member/i.test(name)) return "name hidden";
   if (c.degree === "1st") return "already a connection";
-  const h = String(c.headline || "");
-  if (!LEADER.test(h)) return "not a decision-maker";
-  if (NOT_LEADER.test(h)) return "not a decision-maker";
-  if (!RESTORATION.test(h)) return "not a restoration company";
+  if (outsideNorthAmerica(c.location)) return "outside the US and Canada";
+  const h = String(c.headline || "").replace(/\s+/g, " ").trim();
+  // Only the jobs they still have: "Former Owner at Acme | now consulting" has no live leader in it.
+  const live = segments(h).filter((s) => !GONE.test(s)).join(" | ");
+  if (HARD.test(live)) return "not a decision-maker";
+  const top = TOP.test(live);
+  if (!top && !MID.test(live)) return "not a decision-maker";
+  if (!top && ROLE.test(live)) return "not a decision-maker";
+  if (!RESTORATION.test(live.replace(WRONG_RESTORATION, " "))) return "not a restoration company";
+  if (VENDOR.test(live)) return "sells to restoration companies";
   return null;
 }
 

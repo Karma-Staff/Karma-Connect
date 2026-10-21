@@ -40,6 +40,7 @@
 const crypto = require("node:crypto");
 // the agent finding prospects by itself (searching LinkedIn, inviting decision-makers)
 const prospecting = require("./li-prospecting.cjs");
+const weekly = require("./li-weekly.cjs");
 const { dbOn, q, logActivity } = require("./db.cjs");
 
 // ── Caps ────────────────────────────────────────────────────────────
@@ -50,8 +51,11 @@ const num = (v, d) => { const n = parseInt(v, 10); return Number.isFinite(n) && 
 const LIMITS = {
   perDay:      num(process.env.LI_AGENT_PER_DAY, 25),      // messages + replies per user per rolling 24h
   perHour:     num(process.env.LI_AGENT_PER_HOUR, 8),      // messages + replies per user per rolling hour
-  invitesPerDay:  num(process.env.LI_AGENT_INVITES_PER_DAY, 15),  // connection requests per rolling 24h
-  invitesPerWeek: num(process.env.LI_AGENT_INVITES_PER_WEEK, 80), // ...and per rolling 7 days (LinkedIn's own limit is ~100)
+  // Connection requests: invitesPerWeek a week (Monday–Sunday on the PC's clock, and never more
+  // in any rolling 7 days), spread as a different number each working day (li-weekly.cjs), never
+  // more than invitesPerDay in one day.
+  invitesPerDay:  num(process.env.LI_AGENT_INVITES_PER_DAY, 25),
+  invitesPerWeek: num(process.env.LI_AGENT_INVITES_PER_WEEK, 80), // LinkedIn's own limit is ~100
   minGapSec:   num(process.env.LI_AGENT_MIN_GAP_SEC, 45),  // floor between two actions of any kind
   maxGapSec:   num(process.env.LI_AGENT_MAX_GAP_SEC, 180), // worker jitters up to here
   leaseMin:    num(process.env.LI_AGENT_LEASE_MIN, 10),    // a claimed item must report back within this
@@ -429,6 +433,25 @@ async function sentCounts(userId, accountId) {
   return (await queueCounts(userId)).get(String(accountId)) || { ...NO_COUNTS };
 }
 
+/* Today's invitation target for one account (li-weekly.cjs), from the invitations it has sent
+   since the PC's Monday 00:00 and its midnight. `local` is the PC's { localHour, localDay,
+   localMinute }. Returns { target, today, week, weekCap }. */
+async function inviteTarget(userId, acct, L, local, now = Date.now()) {
+  const b = weekly.localBounds({ now, ...local });
+  const { rows } = await q(
+    `select count(*) as week, count(*) filter (where o.sent_at >= $4) as today
+       from outreach_queue o
+      where o.user_id = $1 and o.channel = 'linkedin' and o.action = 'invite' and o.status = 'sent'
+        and o.sent_at >= $3 and ${EFF_SQL("o")} = $2`,
+    [userId, acct.id, new Date(b.weekStart), new Date(b.todayStart)]);
+  const week = Number((rows[0] && rows[0].week) || 0), today = Number((rows[0] && rows[0].today) || 0);
+  // this week's total differs week to week (never over invitesPerWeek); the days share it
+  const weekCap = weekly.weekTarget({ weekCap: L.invitesPerWeek, accountId: acct.id, weekIndex: b.weekIndex });
+  const target = weekly.dailyTarget({ weekCap, maxPerDay: L.invitesPerDay, sentBeforeToday: week - today,
+    localDay: local.localDay, weekdaysOnly: L.weekdaysOnly, accountId: acct.id, dayIndex: b.dayIndex });
+  return { target, today, week, weekCap };
+}
+
 // Two accounts signed in to the same LinkedIn would each get the full caps. Name the other one.
 async function sameLinkedIn(userId, acct) {
   const h = acct && acct.worker && acct.worker.linkedin && acct.worker.linkedin.handle;
@@ -460,14 +483,20 @@ function decide({ state, counts, localHour, localDay, now = Date.now(), limits: 
     if (gap < L.minGapSec) return { ok: false, reason: `Too soon — ${Math.ceil(L.minGapSec - gap)}s to go.`, ...none, retryInSec: Math.ceil(L.minGapSec - gap) };
   }
   const msg = Math.max(0, Math.min(L.batch, L.perDay - (counts.day || 0), L.perHour - (counts.hour || 0)));
-  const inv = Math.max(0, Math.min(L.batch, L.invitesPerDay - (counts.invDay || 0), L.invitesPerWeek - (counts.invWeek || 0)));
+  // With today's target (counts.invTarget, from inviteTarget) the day's room is what's left of it;
+  // without one, the plain rolling-24h cap.
+  const spread = Number.isInteger(counts.invTarget);
+  const dayRoom = spread ? counts.invTarget - (counts.invToday || 0) : L.invitesPerDay - (counts.invDay || 0);
+  const inv = Math.max(0, Math.min(L.batch, dayRoom, L.invitesPerWeek - (counts.invWeek || 0)));
   const allowed = Math.min(L.batch, msg + inv);
   if (allowed > 0) return { ok: true, reason: "", allowed, msg, inv };
   const why = [];
   if ((counts.day || 0) >= L.perDay) why.push(`Daily message cap reached (${L.perDay}).`);
   else if ((counts.hour || 0) >= L.perHour) why.push(`Hourly message cap reached (${L.perHour}).`);
   if ((counts.invWeek || 0) >= L.invitesPerWeek) why.push(`Weekly invitation cap reached (${L.invitesPerWeek}).`);
-  else if ((counts.invDay || 0) >= L.invitesPerDay) why.push(`Daily invitation cap reached (${L.invitesPerDay}).`);
+  else if (spread && (counts.invThisWeek || 0) >= (counts.invWeekTarget || L.invitesPerWeek)) why.push(`This week's ${counts.invWeekTarget || L.invitesPerWeek} invitations are sent.`);
+  else if (spread && dayRoom <= 0) why.push(`Today's invitation target reached (${counts.invTarget} of ${counts.invWeekTarget || L.invitesPerWeek} this week).`);
+  else if (!spread && (counts.invDay || 0) >= L.invitesPerDay) why.push(`Daily invitation cap reached (${L.invitesPerDay}).`);
   return { ok: false, reason: why.join(" ") || "No headroom left under the caps.", ...none };
 }
 
@@ -517,12 +546,14 @@ async function claim(userId, accountId, actions, limit, leaseId, expires) {
 // Hand the worker its next batch for one account. Returns { items, wait, reason } — items may be
 // empty with a reason the worker shows the user, and `wait` is how many seconds to sleep before
 // asking again.
-async function lease(userId, acct, { leaseId, localHour, localDay } = {}) {
+async function lease(userId, acct, { leaseId, localHour, localDay, localMinute } = {}) {
   if (!dbOn) return { items: [], wait: 60, reason: "No database configured." };
   await reclaimStale();
   const state = acct;
   const L = limitsFor(state);
   const counts = await sentCounts(userId, acct.id);
+  const t = await inviteTarget(userId, acct, L, { localHour, localDay, localMinute });
+  Object.assign(counts, { invTarget: t.target, invToday: t.today, invThisWeek: t.week, invWeekTarget: t.weekCap });
   const twin = state.enabled ? await sameLinkedIn(userId, acct) : null;
   if (twin) return { items: [], wait: 300, reason: `Signed in to the same LinkedIn as "${twin}". Sign one of them in to a different account.`, limits: L, counts, dryRun: !!state.dry_run };
   const verdict = decide({ state, counts, localHour, localDay, limits: L });
@@ -1272,7 +1303,12 @@ async function revokeDevice(userId, id) {
 
 // What the Send Queue strip and the LinkedIn agent page show: every account with its own state,
 // counts and limits, plus the PCs. The top-level fields sum the accounts up.
-async function status(userId) {
+async function status(userId, { tzOffset } = {}) {
+  // the viewer's clock (the page sends its UTC offset in minutes), for today's invitation target
+  const off = Number.isFinite(Number(tzOffset)) && tzOffset !== "" && tzOffset != null
+    ? Math.max(-840, Math.min(840, Math.round(Number(tzOffset)))) : -new Date().getTimezoneOffset();
+  const ln = new Date(Date.now() + off * 60000);
+  const local = { localHour: ln.getUTCHours(), localDay: ln.getUTCDay(), localMinute: ln.getUTCMinutes() };
   const defaults = {};
   for (const k of [...Object.keys(BOUNDS), "weekdaysOnly"]) defaults[k] = LIMITS[k];
   if (!dbOn) return { accounts: [], devices: [], maxAccounts: MAX_ACCOUNTS, defaults, bounds: BOUNDS, enabled: false, needReply: 0, firstMessages: 0 };
@@ -1290,8 +1326,11 @@ async function status(userId) {
     const h = a.worker && a.worker.linkedin && a.worker.linkedin.handle;
     if (h) handles.set(h.toLowerCase(), [...(handles.get(h.toLowerCase()) || []), a.label]);
   }
+  const targets = new Map();
+  for (const a of accounts) targets.set(String(a.id), await inviteTarget(userId, a, limitsFor(a), local).catch(() => null));
   const list = accounts.map((a) => {
     const c = counts.get(String(a.id)) || NO_COUNTS;
+    const t = targets.get(String(a.id));
     const h = a.worker && a.worker.linkedin && a.worker.linkedin.handle;
     const twins = h ? (handles.get(h.toLowerCase()) || []).filter((l) => l !== a.label) : [];
     return {
@@ -1301,6 +1340,8 @@ async function status(userId) {
       worker: a.worker || null, pendingCommand: a.command || null,
       settings: cleanSettings(a.settings), limits: limitsFor(a),
       counts: { day: c.day, hour: c.hour, invDay: c.invDay, invWeek: c.invWeek, copies: cpBy.get(String(a.id)) || 0 },
+      // today's invitation target and this week's (Monday–Sunday) progress
+      invites: t ? { target: t.target, today: t.today, week: t.week, weekCap: t.weekCap } : null,
       ready: c.ready, waiting: c.waiting, inflight: c.inflight,
       needReply: inboxBy.get(String(a.id)) || 0, firstMessages: fuBy.get(String(a.id)) || 0,
       sameLinkedInAs: twins[0] || null,
@@ -1323,7 +1364,7 @@ async function status(userId) {
 module.exports = {
   ensureAgentSchema, getState, setEnabled, halt, status,
   listAccounts, accountFor, createAccount, updateAccount, removeAccount, setQueueAccount, MAX_ACCOUNTS, EFF_SQL,
-  lease, report, reclaimStale, sentCounts, decide, inWindow, LIMITS,
+  lease, report, reclaimStale, sentCounts, inviteTarget, decide, inWindow, LIMITS,
   watch, markAccepted, recordInbox, listInbox, setHandled, saveDraft, queueReply, sendWithoutWaiting,
   recordProfile, listFollowups, saveFollowupDraft, queueFollowup, skipFollowup, needProfile,
   requestCopy, getCopy, leaseCopies, finishCopy,

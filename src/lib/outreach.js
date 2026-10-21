@@ -4,7 +4,8 @@
 async function api(path, { method = "GET", body } = {}) {
   const res = await fetch(path, {
     method,
-    headers: { "Content-Type": "application/json" },
+    // the viewer's clock, so the agent status can say what "today" and "this week" mean for them
+    headers: { "Content-Type": "application/json", "X-TZ-Offset": String(-new Date().getTimezoneOffset()) },
     body: body ? JSON.stringify(body) : undefined,
   });
   let data = {};
