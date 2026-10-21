@@ -20,7 +20,7 @@ const activity = require("./activity");
 const counts = require("./counts");
 // statuses are open-ended now: they come from Zoho call results (zoho-scan.js applyStatus)
 /* 'lead' (a Zoho Lead/Contact) | 'registered' (only in Zoho's call history) | null */
-const { zohoKindSql, inZohoSql } = require("./zoho-scan");
+const { zohoKindSql, inZohoSql, listedContactedSql } = require("./zoho-scan");
 
 const router = express.Router();
 /* path-scoped, not bare router.use(requireUser): every feature router is
@@ -129,7 +129,7 @@ function buildFilters(p, user) {
   if (p.recent === "true") {
     add("recent_at IS NOT NULL");
     // already in Zoho: listed under Contacted, not waiting here to be worked
-    add("NOT " + inZohoSql("leads"));
+    add("NOT " + listedContactedSql("leads"));
     if (p.batch) add("recent_batch = ?", String(p.batch).slice(0, 200));
   } else if (["company", "person", "job"].includes(p.kind) && p.inzoho !== "true"
       && p.favorite !== "true" && p.removed !== "true") add("recent_at IS NULL");
@@ -140,7 +140,7 @@ function buildFilters(p, user) {
      kept finding leads there that were already registered in Zoho.
      Favorites, the DNC tab and Contacted itself still show it. */
   if (["company", "person", "job"].includes(p.kind) && p.inzoho !== "true" && p.favorite !== "true" && p.removed !== "true")
-    add("NOT " + inZohoSql("leads"));
+    add("NOT " + listedContactedSql("leads"));
   // removed=true is the DNC tab; everything else excludes banned leads
   add(p.removed === "true" ? "removed" : "NOT removed");
   // a deleted lead is in the admin's trash bin: no tab, DNC included, shows it
@@ -155,7 +155,7 @@ function buildFilters(p, user) {
      Zoho call list" set, there to stop anyone calling or being assigned a
      person who is already being worked. jsonb_exists (not the ? operator) so the
      add() placeholder substitution above leaves it alone. */
-  if (p.inzoho === "true") add(inZohoSql("leads"));
+  if (p.inzoho === "true") add(listedContactedSql("leads"));
   /* A KPI tile was clicked. Comma-separated so tiles can be combined —
      "unassigned,ready" is the assignments board asking for work that is both
      unclaimed and actually callable. Unknown keys are ignored, and a single
@@ -242,7 +242,7 @@ router.get("/api/recently-added/batches", requireUser, async (req, res, next) =>
     const rows = (await query(
       `SELECT recent_batch AS batch, count(*)::int AS n, max(recent_at) AS at
          FROM leads WHERE recent_at IS NOT NULL AND deleted_at IS NULL AND NOT removed
-          AND NOT ${inZohoSql("leads")}
+          AND NOT ${listedContactedSql("leads")}
          ${mine ? "AND btrim(owner) = $1" : ""}
         GROUP BY recent_batch ORDER BY max(recent_at) DESC`, mine ? [String(req.user.email || "").trim()] : [])).rows;
     res.json({ batches: rows, total: rows.reduce((a, r) => a + r.n, 0) });

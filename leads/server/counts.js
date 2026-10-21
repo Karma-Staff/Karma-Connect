@@ -7,6 +7,8 @@
 const express = require("express");
 const { query } = require("./db");
 const { requireUser, rankOf, RANK } = require("./auth");
+// where a lead is listed: the one rule the lists use (leads.js), so tile and list agree
+const { listedContactedSql } = require("./zoho-scan");
 
 const router = express.Router();
 const TTL = 30_000;
@@ -29,15 +31,15 @@ router.get("/api/counts", requireUser, async (req, res, next) => {
     const args = isAdmin ? [] : [mine];
     const r = (await query(`
       SELECT
-        /* companies and people with any Zoho record are listed under Contacted
-           instead (leads.js buildFilters — the same rule), so they are counted there */
-        count(*) FILTER (WHERE kind = 'company' AND NOT removed AND recent_at IS NULL AND z.lead_id IS NULL)::int AS companies,
-        count(*) FILTER (WHERE kind = 'person'  AND NOT removed AND recent_at IS NULL AND z.lead_id IS NULL)::int AS people,
-        count(*) FILTER (WHERE NOT removed AND (z.lead_id IS NOT NULL OR (kind = 'job' AND zc.lead_id IS NOT NULL)))::int AS contacted,
+        /* in Zoho or worked through it (zoho-scan.js listedContactedSql — the
+           lists' rule): counted under Contacted, not in the four tabs below */
+        count(*) FILTER (WHERE kind = 'company' AND NOT removed AND recent_at IS NULL AND NOT in_z)::int AS companies,
+        count(*) FILTER (WHERE kind = 'person'  AND NOT removed AND recent_at IS NULL AND NOT in_z)::int AS people,
+        count(*) FILTER (WHERE NOT removed AND in_z)::int AS contacted,
         count(*) FILTER (WHERE NOT removed)::int AS all_leads,
-        count(*) FILTER (WHERE kind = 'job'     AND NOT removed AND recent_at IS NULL AND z.lead_id IS NULL AND zc.lead_id IS NULL)::int AS jobs,
+        count(*) FILTER (WHERE kind = 'job'     AND NOT removed AND recent_at IS NULL AND NOT in_z)::int AS jobs,
         /* what an import just brought in, held under Recently added (025) */
-        count(*) FILTER (WHERE NOT removed AND recent_at IS NOT NULL AND z.lead_id IS NULL AND zc.lead_id IS NULL)::int AS recent,
+        count(*) FILTER (WHERE NOT removed AND recent_at IS NOT NULL AND NOT in_z)::int AS recent,
         count(*) FILTER (WHERE favorite AND NOT removed)::int          AS favorites,
         count(*) FILTER (WHERE removed)::int                           AS removed,
         count(*) FILTER (WHERE status = 'New' AND NOT removed)::int    AS status_new,
@@ -60,16 +62,8 @@ router.get("/api/counts", requireUser, async (req, res, next) => {
         count(*) FILTER (WHERE date_added >= current_date - 13
                          AND date_added < current_date - 6
                          AND NOT removed)::int                         AS prev_week
-      FROM leads
-      LEFT JOIN (SELECT DISTINCT lead_id FROM activity_log
-                  WHERE jsonb_exists(meta, 'crm_link') AND lead_id IS NOT NULL
-                    AND meta->'crm_link'->>'module' IN ('Leads', 'Contacts', 'Accounts')) z ON z.lead_id = leads.id
-      /* a job posting's company in Zoho (zoho-scan.js inZohoSql: the posting goes with it) */
-      LEFT JOIN (SELECT DISTINCT lead_id FROM activity_log
-                  WHERE jsonb_exists(meta, 'crm_link') AND lead_id IS NOT NULL
-                    AND meta->'crm_link'->>'module' IN ('Leads', 'Contacts', 'Accounts')) zc
-             ON leads.kind = 'job' AND zc.lead_id = leads.company_lead_id
-      WHERE deleted_at IS NULL${scope}`, args)).rows[0];   // the trash bin counts as gone
+      FROM (SELECT leads.*, ${listedContactedSql("leads")} AS in_z FROM leads
+             WHERE deleted_at IS NULL${scope}) leads`, args)).rows[0];   // the trash bin counts as gone
     if (!isAdmin) delete r.contacted;                   // the Contacted tab is admins' only
     const { all_leads, ...rest } = r;
     const data = { ...rest, total: all_leads, at: new Date().toISOString() };

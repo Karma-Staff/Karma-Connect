@@ -94,6 +94,22 @@ const inZohoSql = (alias = "leads") =>
     OR (${alias}.kind = 'job' AND ${alias}.company_lead_id IS NOT NULL AND EXISTS (SELECT 1 FROM activity_log a
         WHERE a.lead_id = ${alias}.company_lead_id AND jsonb_exists(a.meta, 'crm_link') AND ${REAL_LINK("a")})))`;
 
+/* SQL: where a lead is LISTED — under Contacted, not Companies / People / Job
+   board / Recently added. In Zoho (a Lead, Contact or Account, inZohoSql) OR
+   worked through Zoho: a Zoho Call to its number carries a Call Result — the
+   disposition that also became its status (applyStatus). Owner's rule,
+   2026-10-21: a lead showing a disposition synced from Zoho has been contacted
+   and moves to Contacted, record or not. A job posting goes with its company.
+   Only the lists and their counts use this; campaigns keep contactedSql, so a
+   "No Answer" can still be called again from a campaign. */
+const CALLED = (key) => `EXISTS (SELECT 1 FROM zoho_records zc WHERE zc.module = 'Calls' AND zc.call_result IS NOT NULL
+      AND zc.phone_key = ${key})`;
+const listedContactedSql = (alias = "leads") =>
+  `(${inZohoSql(alias)}
+    OR (${alias}.phone_key IS NOT NULL AND ${CALLED(alias + ".phone_key")})
+    OR (${alias}.kind = 'job' AND ${alias}.company_lead_id IS NOT NULL AND EXISTS (SELECT 1 FROM leads co
+        WHERE co.id = ${alias}.company_lead_id AND co.phone_key IS NOT NULL AND ${CALLED("co.phone_key")})))`;
+
 /* SQL: is this lead listed under Contacted instead of Companies / People?
    In Zoho AND worked there — its status is a Zoho Call Result, not still
    'New'. A Zoho record nobody has called yet stays in Companies / People.
@@ -469,4 +485,4 @@ router.post("/api/crm/zoho/match", requireAdmin, express.json({ limit: "1mb" }),
   } catch (e) { next(e); }
 });
 
-module.exports = { router, startSweeper, run, kindsOfPhones, zohoKindSql, inZohoSql, contactedSql, _test: { recordOf, flag, resolveCalls, changed, dueTick, config, applyStatus } };
+module.exports = { router, startSweeper, run, kindsOfPhones, zohoKindSql, inZohoSql, contactedSql, listedContactedSql, _test: { recordOf, flag, resolveCalls, changed, dueTick, config, applyStatus } };
