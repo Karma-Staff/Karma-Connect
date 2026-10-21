@@ -793,3 +793,33 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
 /* why Find prospects is not inviting right now (LinkedInAgentView prospectBlock) */
 .kc .lia-why{margin:10px 0 0 52px; padding:10px 13px; border-radius:12px; font-size:13px; line-height:1.5; color:#ffe2a1; background:rgba(231,183,75,.1); border:1px solid rgba(231,183,75,.4)}
 @media(max-width:720px){ .kc .lia-why{margin-left:0} }
+
+/* ── LinkedIn dashboard (AgentDashboardView) ── */
+.kc .agd-tiles{display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:12px; margin-top:16px}
+.kc .agd-tiles .dash-tile{min-height:0; padding:16px}
+.kc .agd-tiles .dash-tile .tv{font-size:27px}
+.kc .agd-grid{display:grid; grid-template-columns:3fr 2fr; gap:16px; margin-top:16px}
+.kc .agd-rows{display:flex; flex-direction:column}
+.kc .agd-row{display:grid; grid-template-columns:minmax(170px,1.6fr) minmax(90px,2fr) repeat(5,minmax(48px,.5fr)); gap:12px; align-items:center;
+  padding:10px 0; border-bottom:1px solid var(--border); font-size:13.5px}
+.kc .agd-row:last-child{border-bottom:none}
+.kc .agd-row.idle{opacity:.62}
+.kc .agd-rowh{font-size:10.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); font-weight:700; padding-top:0}
+.kc .agd-row .num{text-align:right; font-variant-numeric:tabular-nums; font-weight:700; color:var(--text)}
+.kc .agd-rowh span:nth-child(n+3){text-align:right}
+.kc .agd-who{display:flex; gap:10px; align-items:flex-start; min-width:0}
+.kc .agd-who .lia-dot{margin-top:5px}
+.kc .agd-who b{display:block; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.kc .agd-who em{display:block; font-style:normal; font-size:12px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.kc .agd-who small{display:block; font-size:11.5px; color:var(--faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:260px}
+.kc .agd-track{display:flex; flex-direction:column; gap:3px; height:16px; justify-content:center}
+.kc .agd-track i{display:block; height:6px; border-radius:3px; min-width:2px}
+.kc .agd-tbl{width:100%; border-collapse:collapse; font-size:13px}
+.kc .agd-tbl th{text-align:left; font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); font-weight:700; padding:6px 10px 8px 0; white-space:nowrap}
+.kc .agd-tbl td{padding:8px 10px 8px 0; border-top:1px solid var(--border); color:var(--text); white-space:nowrap}
+@media(max-width:1100px){ .kc .agd-tiles{grid-template-columns:repeat(3,minmax(0,1fr))} .kc .agd-grid{grid-template-columns:1fr} }
+@media(max-width:640px){
+  .kc .agd-tiles{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .kc .agd-row{grid-template-columns:1fr repeat(3,minmax(40px,auto))}
+  .kc .agd-row > :nth-child(2), .kc .agd-row > :nth-child(5), .kc .agd-row > :nth-child(6), .kc .agd-row > :nth-child(7){display:none}
+}

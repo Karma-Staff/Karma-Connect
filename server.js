@@ -1485,6 +1485,15 @@ app.get("/api/outreach/agent/events", requireUser, async (req, res) => {
 
 // Everything the agent did today (?since= the start of the day in the viewer's time zone,
 // ?accountId= one account): found, invited, accepted, researched, sent, replied, incoming, problems.
+// The LinkedIn agent dashboard (server/li-dashboard.cjs): an admin sees every rep's accounts,
+// anyone else their own. ?range=today|yesterday|week|month, on the viewer's clock.
+app.get("/api/outreach/agent/dashboard", requireUser, async (req, res) => {
+  try {
+    res.json(await require("./server/li-dashboard.cjs").dashboard({ userId: req.userId, isAdmin: !!publicUser(req.user).isAdmin,
+      range: String(req.query.range || "today"), tzOffset: req.get("x-tz-offset") }));
+  } catch (e) { res.status(500).json({ error: { message: "Could not load the agent dashboard." } }); }
+});
+
 app.get("/api/outreach/agent/today", requireUser, async (req, res) => {
   try {
     res.json(await require("./server/li-today.cjs").today(req.userId, { since: req.query.since, accountId: req.query.accountId }));

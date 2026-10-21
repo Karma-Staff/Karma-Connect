@@ -23,6 +23,7 @@ import { SettingsView } from "./views/SettingsView.jsx";
 import { UsageView } from "./views/UsageView.jsx";
 import { AdminMembersView } from "./views/AdminMembersView.jsx";
 import { TeamActivityView } from "./views/TeamActivityView.jsx";
+import { AgentDashboardView } from "./views/AgentDashboardView.jsx";
 import { DashboardView } from "./views/DashboardView.jsx";
 import { BoardView } from "./views/BoardView.jsx";
 import { RemindersView } from "./views/RemindersView.jsx";
@@ -817,6 +818,7 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
     { id: "coach", label: "Message Coach", ic: Ic.dash },
     { id: "queue", label: "Send Queue", ic: Ic.send },
     { id: "liagent", label: "LinkedIn agent", ic: Ic.conn },
+    { id: "lidash", label: "LinkedIn dashboard", ic: Ic.usage },
     ...(isAdmin ? [
       { id: "approvals", label: "Approvals", ic: Ic.intel, admin: true, count: adminList.filter((a) => a.status === "pending").length },
       { id: "team", label: "Team activity", ic: Ic.team, admin: true },
@@ -1479,6 +1481,7 @@ export default function KarmaConnectAI({ userEmail = "", onSignOut } = {}) {
           {view === "reminders" && <RemindersView onChanged={loadRemindersDue} />}
           {view === "coach" && <CoachView />}
           {view === "queue" && <SendQueueView showToast={showToast} onOpenAgent={() => setView("liagent")} />}
+          {view === "lidash" && <AgentDashboardView onOpenAgent={() => setView("liagent")} />}
           {view === "liagent" && <LinkedInAgentView showToast={showToast} onOpenQueue={() => setView("queue")} onResearch={researchFromInbox} />}
 
           {view === "usage" && <UsageView />}

@@ -192,3 +192,9 @@ export async function sendWithoutWaiting(id) {
   const d = await api("/api/outreach/queue/" + encodeURIComponent(id) + "/no-wait", { method: "POST" });
   return d.item;
 }
+
+// The LinkedIn agent dashboard: tiles, one row per LinkedIn account, day-by-day and hour-by-hour.
+// range: today | yesterday | week | month. An admin gets every rep's accounts.
+export async function agentDashboard(range = "today") {
+  return api("/api/outreach/agent/dashboard?range=" + encodeURIComponent(range));
+}
