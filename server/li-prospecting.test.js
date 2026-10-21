@@ -56,7 +56,11 @@ describe("the search and the note", () => {
     const u = new URL(searchUrl({ title: "owner", trade: "restoration", page: 2 }));
     expect(u.pathname).toBe("/search/results/people/");
     expect(u.searchParams.get("keywords")).toBe("restoration");
-    expect(u.searchParams.get("titleFreeText")).toMatch(/^\(owner\) NOT /);
+    expect(u.searchParams.get("titleFreeText")).toBe("owner");
+    // plain: no Title filter, everything in the keywords
+    const p = new URL(searchUrl({ title: "owner", trade: "restoration", page: 1 }, { plain: true }));
+    expect(p.searchParams.get("keywords")).toBe("(owner) (restoration)");
+    expect(p.searchParams.has("titleFreeText")).toBe(false);
     expect(JSON.parse(u.searchParams.get("geoUrn"))).toEqual(["103644278", "101174742"]);
     expect(JSON.parse(u.searchParams.get("network"))).toEqual(["S", "O"]);
     expect(u.searchParams.get("page")).toBe("2");

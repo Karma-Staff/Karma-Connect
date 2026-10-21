@@ -437,10 +437,9 @@ describe("li-prospecting.skipReason", () => {
     const u = new URL(searchUrl(SPECS[0]));
     expect(u.pathname).toBe("/search/results/people/");
     expect(u.searchParams.get("keywords")).toBe("restoration");
-    expect(u.searchParams.get("titleFreeText")).toBe('(owner OR "co-owner" OR proprietor OR franchisee) NOT adjuster NOT recruiter NOT technician NOT estimator NOT sales');
-    // "president" would also match every vice president, so that group alone rules them out
-    expect(new URL(searchUrl(SPECS[5])).searchParams.get("titleFreeText")).toMatch(/^\(president .*\) NOT "vice president" NOT adjuster/);
-    expect(new URL(searchUrl(SPECS[20])).searchParams.get("titleFreeText")).not.toMatch(/NOT "vice president"/);
+    expect(u.searchParams.get("titleFreeText")).toBe('owner OR "co-owner" OR proprietor OR franchisee');
+    // no NOT words: a search that LinkedIn misreads returns nobody; the headline filters do that work
+    for (const s of SPECS) expect(searchUrl(s)).not.toMatch(/NOT/);
     expect(JSON.parse(u.searchParams.get("geoUrn"))).toEqual(["103644278", "101174742"]);
     expect(JSON.parse(u.searchParams.get("network"))).toEqual(["S", "O"]);
     expect(u.searchParams.get("origin")).toBe("FACETED_SEARCH");

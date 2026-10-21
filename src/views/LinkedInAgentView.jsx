@@ -66,8 +66,9 @@ function prospectBlock(a, w) {
   if (a.dryRun) return "Test mode is on, so it doesn't search or send anything. Turn Test mode off.";
   if (!a.enabled) return "this account is paused. Press Start.";
   if (a.searchLimitHit) return "LinkedIn's monthly search limit is reached on this account; it searches again next month.";
-  if ((a.searchesToday || 0) >= (a.searchesPerDay || 6))
-    return `today's ${a.searchesPerDay || 6} searches are done; it searches again tomorrow${a.ready ? `, and ${plural(a.ready, "invitation")} ${a.ready === 1 ? "is" : "are"} waiting to go within today's limit` : ""}.`;
+  if (a.invites && a.invites.target > 0 && a.invites.today >= a.invites.target) return null;   // today's invitations are sent
+  if ((a.searchesToday || 0) >= (a.searchesPerDay || 15))
+    return `it ran all ${a.searchesPerDay || 15} of today's searches without finding enough new decision-makers${a.ready ? ` (${plural(a.ready, "invitation")} still waiting to go)` : ""}; it searches again tomorrow. The log below says who it left out and why.`;
   const now = new Date(), h = now.getHours(), day = now.getDay();
   if (L.weekdaysOnly && (day === 0 || day === 6)) return "it works weekdays only (Hours & limits); it starts again on Monday.";
   if (L.windowStart != null && L.windowEnd != null && (h < L.windowStart || h >= L.windowEnd))
@@ -196,7 +197,7 @@ function StatusCard({ a, st, run, busy, onOpenQueue }) {
                 ? "off: it only invites the people you add."
                 : "owners and operations leaders at restoration companies in the US and Canada, invited automatically"
                   + (a.notesLeft ? " with a short note" : " (this month's free notes are used up, so without a note)")
-                  + ". Today: " + plural(a.foundToday || 0, "new prospect") + " from " + (a.searchesToday || 0) + " of " + (a.searchesPerDay || 6) + " searches."}</span></span>
+                  + ". Today: " + plural(a.foundToday || 0, "new prospect") + " from " + plural(a.searchesToday || 0, "search", "searches") + (a.invites ? " · invitations " + a.invites.today + " of today's " + a.invites.target : "") + "."}</span></span>
             </label>
           )}
           {a.prospecting && a.prospectOn && prospectBlock(a, w) && (

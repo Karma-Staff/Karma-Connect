@@ -3,9 +3,11 @@
 // (no approval for the invitation; every message after they accept is still approved by a person).
 //
 //   1. watch() asks nextSearch() whether this account should search now. It does when the
-//      account is on, its "find prospects" switch is on, and fewer invitations are waiting to go
-//      than it can send today. Searches are capped per day and spaced out: LinkedIn watches
-//      search more closely than anything else, and a free account has a monthly search limit.
+//      account is on, its "find prospects" switch is on, and fewer invitations are lined up than
+//      it still has to send today (today's target, li-weekly.cjs). It keeps searching until they
+//      are — invitations go out every working day (owner, 2026-10-21) — spaced out, and never
+//      more than SEARCHES_PER_DAY: LinkedIn watches search closely, and a free account has a
+//      monthly search limit. A search that queued nobody is followed sooner by the next one.
 //   2. The worker opens that search page (agent/prospect.cjs) and posts back what it saw.
 //   3. recordProspects() keeps only real decision-makers at restoration companies whom nobody on
 //      the team has contacted, saves each as a lead (History), and queues an invitation from this
@@ -18,8 +20,10 @@ const crypto = require("crypto");
 const { dbOn, q, logActivity } = require("./db.cjs");
 
 const ON = process.env.LI_PROSPECTING !== "0";
-const SEARCHES_PER_DAY = Math.max(1, Math.min(20, parseInt(process.env.LI_SEARCHES_PER_DAY || "6", 10) || 6));
-const SEARCH_GAP_MIN = Math.max(10, parseInt(process.env.LI_SEARCH_GAP_MIN || "40", 10) || 40);
+// the most searches in a day — a ceiling, not a quota: it stops as soon as today's invitations are lined up
+const SEARCHES_PER_DAY = Math.max(1, Math.min(25, parseInt(process.env.LI_SEARCHES_PER_DAY || "15", 10) || 15));
+const SEARCH_GAP_MIN = Math.max(10, parseInt(process.env.LI_SEARCH_GAP_MIN || "25", 10) || 25);
+const EMPTY_GAP_MIN = 10;  // after a search that queued nobody (the worker asks every 10 minutes)
 const PER_SEARCH = 10;     // invitations queued from one search page at most
 
 const GEO = { us: "103644278", ca: "101174742" };   // LinkedIn's geo ids: United States, Canada
@@ -31,14 +35,13 @@ const GEO = { us: "103644278", ca: "101174742" };   // LinkedIn's geo ids: Unite
 // The owner's choice: owners and top leaders first, then operations leaders. Highest yield first.
 const TITLES = [
   { name: "owners", q: 'owner OR "co-owner" OR proprietor OR franchisee' },
-  { name: "presidents", q: 'president OR CEO OR "chief executive" OR chairman', not: 'NOT "vice president"' },
+  { name: "presidents", q: 'president OR CEO OR "chief executive" OR chairman' },
   { name: "founders", q: 'founder OR "co-founder" OR "managing partner" OR "managing member" OR principal' },
   { name: "general managers", q: '"general manager" OR "managing director" OR COO OR "chief operating officer"' },
   { name: "operations leaders", q: '"director of operations" OR "operations director" OR "vp operations" OR "vp of operations" OR "vice president of operations" OR "head of operations" OR "operations manager" OR "branch manager" OR "regional manager"' },
 ];
-// Titles nobody wants, taken out at the search so they don't use up the page. Only words that are
-// never in an owner's title: the headline filters below do the finer sorting.
-const NOT_TITLES = "NOT adjuster NOT recruiter NOT technician NOT estimator NOT sales";
+// No NOT words in the search: if LinkedIn reads them as plain words a search returns nobody, and
+// the headline filters below (skipReason) already drop adjusters, recruiters, technicians, sales.
 // The words restoration companies really use, and the big franchise names. A keyword is matched
 // anywhere on the profile, so each group is kept short and specific.
 const TRADES = [
@@ -54,13 +57,19 @@ const PAGES = 3;           // pages of each search; all first pages before any s
 // The cursor an account already has is taken modulo this length, so the length can change.
 const SPECS = [];
 for (let p = 1; p <= PAGES; p++) for (const t of TITLES) for (const k of TRADES) {
-  SPECS.push({ title: t.name, trade: k.name, page: p, titleQ: "(" + t.q + ") " + [t.not, NOT_TITLES].filter(Boolean).join(" "), tradeQ: k.q });
+  SPECS.push({ title: t.name, trade: k.name, page: p, titleQ: t.q, tradeQ: k.q });
 }
 
-function searchUrl(spec) {
+/* plain: everything in the keywords, no Title filter — used for the rest of the day once a
+   Title-filter search came back with nobody on the page, in case that filter isn't working. */
+function searchUrl(spec, { plain = false } = {}) {
   const u = new URL("https://www.linkedin.com/search/results/people/");
-  u.searchParams.set("keywords", spec.tradeQ || spec.trade);
-  u.searchParams.set("titleFreeText", spec.titleQ || "(" + spec.title + ") " + NOT_TITLES);
+  const title = spec.titleQ || spec.title, trade = spec.tradeQ || spec.trade;
+  if (plain) u.searchParams.set("keywords", "(" + title + ") (" + trade + ")");
+  else {
+    u.searchParams.set("keywords", trade);
+    u.searchParams.set("titleFreeText", title);
+  }
   u.searchParams.set("geoUrn", JSON.stringify([GEO.us, GEO.ca]));
   u.searchParams.set("network", JSON.stringify(["S", "O"]));   // 2nd and 3rd+: never people already connected
   u.searchParams.set("origin", "FACETED_SEARCH");
@@ -162,6 +171,8 @@ async function ensureProspectingSchema() {
   await q("alter table linkedin_account add column if not exists note_out_month text");
   await q("alter table linkedin_account add column if not exists sender_id text");
   await q("alter table linkedin_account add column if not exists search_out_month text");
+  await q("alter table linkedin_account add column if not exists prospect_last_queued int");  // what the last search queued
+  await q("alter table linkedin_account add column if not exists prospect_plain_day date");   // plain searches for the rest of this day
   await q("alter table outreach_queue add column if not exists auto_found boolean not null default false");
   await q("alter table outreach_queue add column if not exists note_optional boolean not null default false");
 }
@@ -171,25 +182,49 @@ const thisMonth = () => new Date().toISOString().slice(0, 7);
 const sameDay = (d) => !!d && new Date(d).toISOString().slice(0, 10) === today();
 
 // ── 1. Should this account search now? ──────────────────────────────
-async function nextSearch(userId, acct, limits, { ignoreGap = false } = {}) {
+/* need: invitations this account still has to send today (today's target less what it sent);
+   without it, a day's maximum. Searches stop once that many are lined up. */
+async function nextSearch(userId, acct, limits, { ignoreGap = false, need } = {}) {
   if (!ON || !dbOn || !acct || !acct.prospect_on || acct.dry_run) return null;
   if (acct.search_out_month === thisMonth()) return null;   // LinkedIn's monthly search limit was hit
+  if (Number.isInteger(need) && need <= 0) return null;      // today's invitations are done
   const runs = sameDay(acct.prospect_day) ? acct.prospect_runs || 0 : 0;
   if (runs >= SEARCHES_PER_DAY) return null;
-  if (!ignoreGap && acct.prospect_last && Date.now() - new Date(acct.prospect_last).getTime() < SEARCH_GAP_MIN * 60000) return null;
-  // Enough invitations already waiting to go from this account: no need to look for more yet.
+  const gap = runs && !acct.prospect_last_queued ? EMPTY_GAP_MIN : SEARCH_GAP_MIN;
+  if (!ignoreGap && acct.prospect_last && Date.now() - new Date(acct.prospect_last).getTime() < gap * 60000) return null;
+  // Enough invitations already lined up from this account: no need to look for more yet.
   const { rows } = await q(
     `select count(*)::int as n from outreach_queue
       where user_id = $1 and li_account_id = $2 and channel = 'linkedin' and action = 'invite'
         and status in ('approved', 'sending')`, [userId, acct.id]);
-  if ((rows[0] && rows[0].n) >= (limits && limits.invitesPerDay ? limits.invitesPerDay : 15)) return null;
+  const want = Number.isInteger(need) ? need : (limits && limits.invitesPerDay ? limits.invitesPerDay : 15);
+  if ((rows[0] && rows[0].n) >= want) return null;
   const cursor = Math.max(0, acct.prospect_cursor || 0) % SPECS.length;
   const spec = SPECS[cursor];
-  return { url: searchUrl(spec), cursor, label: spec.title + " · " + spec.trade + (spec.page > 1 ? " · page " + spec.page : "") };
+  const plain = sameDay(acct.prospect_plain_day);
+  return { url: searchUrl(spec, { plain }), cursor, plain,
+    label: spec.title + " · " + spec.trade + (spec.page > 1 ? " · page " + spec.page : "") + (plain ? " · keywords" : "") };
 }
 
 // ── 3. What the worker saw on the search page ───────────────────────
-async function recordProspects(userId, acct, { cursor, candidates, halt, limit } = {}) {
+async function recordProspects(userId, acct, body = {}) {
+  const r = await recordProspects_(userId, acct, body);
+  if (!dbOn || r.limit || body.halt) return r;
+  // what it queued, for the gap before the next search; a Title-filter search with nobody on the
+  // page switches this account to plain keyword searches for the rest of the day
+  const empty = !(Array.isArray(body.candidates) && body.candidates.length);
+  await q(`update linkedin_account set prospect_last_queued = $2,
+             prospect_plain_day = case when $3 then $4::date else prospect_plain_day end, updated_at = now() where id = $1`,
+    [acct.id, r.queued || 0, empty && !sameDay(acct.prospect_plain_day), today()]).catch(() => {});
+  // the page's log says what happened and why people were left out
+  const why = Object.entries(r.skipped || {}).sort((a, b) => b[1] - a[1]).map(([k, n]) => n + " " + k).join(", ");
+  const text = empty
+    ? "Search found nobody on the page" + (sameDay(acct.prospect_plain_day) ? "" : "; switching to keyword searches for today")
+    : `Search: ${r.seen} people seen, ${r.queued} queued to invite${why ? " (left out: " + why + ")" : ""}`;
+  require("./linkedin-agent.cjs").addEvents(userId, [{ level: r.queued ? "success" : "info", text }], acct.id).catch(() => {});
+  return r;
+}
+async function recordProspects_(userId, acct, { cursor, candidates, halt, limit } = {}) {
   if (!dbOn) return { seen: 0, queued: 0 };
   if (limit) {
     await q("update linkedin_account set search_out_month = $2, prospect_last = now(), updated_at = now() where id = $1", [acct.id, thisMonth()]);
