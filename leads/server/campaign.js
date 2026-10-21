@@ -151,11 +151,41 @@ async function servable(s, depth = 0) {
   return moved ? { s: moved, callTime: { ...checks[j], deferred: j, later } } : { s, callTime: { ...checks[0], later } };
 }
 
+/* A session's "connected" count, from the calls themselves: the stored counter
+   was added up when each outcome was saved, under whatever rule held then (the
+   line picking up, before 2026-10-21). Counted now by the disposition rule
+   (calls.js CONNECTED — GK, CDM, Email captured, DNC, Prospect), so past
+   campaigns show the same numbers as the Call report. A lead-list session's
+   calls carry its id (meta.session); an uploaded sheet keeps each row's
+   disposition as the first part of its outcome note. ids → Map(id → n). */
+async function connectedBy(ids) {
+  const want = [...new Set((ids || []).map(Number).filter(Number.isFinite))];
+  const out = new Map(want.map((id) => [id, 0]));
+  if (!want.length) return out;
+  const { CONNECTED, CONNECTED_DISPOS } = require("./calls");
+  const [calls, rows] = await Promise.all([
+    query(`SELECT (meta->>'session')::bigint AS id, count(*)::int AS n FROM activity_log
+            WHERE action = 'call' AND meta ? 'session' AND meta->>'session' = ANY($1::text[]) AND ${CONNECTED("meta")}
+            GROUP BY 1`, [want.map(String)]),
+    query(`SELECT session_id AS id, count(*)::int AS n FROM campaign_leads
+            WHERE session_id = ANY($1::bigint[]) AND status = 'done'
+              AND btrim(split_part(coalesce(outcome_note, ''), ' — ', 1)) = ANY($2::text[])
+            GROUP BY 1`, [want, CONNECTED_DISPOS]),
+  ]);
+  for (const r of [...calls.rows, ...rows.rows]) out.set(+r.id, (out.get(+r.id) || 0) + r.n);
+  return out;
+}
+// a served session's body, its connected count recounted
+async function withConnected(body) {
+  if (body && body.id != null) body.connected = (await connectedBy([body.id])).get(+body.id) || 0;
+  return body;
+}
+
 /* The served session: the next callable lead's card, with its local time. */
 async function serve(s, actor) {
   const v = await servable(s);
   const card = v.s.cur_id != null ? await leadCard(v.s.cur_id, actor) : null;
-  return shape(v.s, card && { ...card, callTime: v.callTime });
+  return withConnected(shape(v.s, card && { ...card, callTime: v.callTime }));
 }
 
 /* A manager's power-dialer campaign is a call session too — same snapshot of
@@ -274,7 +304,7 @@ router.get("/api/campaign/current", requireUser, async (req, res, next) => {
   try {
     const s = await openSession(me(req));
     if (!s) return res.json({ session: null });
-    res.json(upload.isUpload(s) ? await upload.serveUpload(s) : await serve(s, me(req)));
+    res.json(upload.isUpload(s) ? await withConnected(await upload.serveUpload(s)) : await serve(s, me(req)));
   } catch (e) { next(e); }
 });
 
@@ -288,7 +318,7 @@ router.post("/api/campaign/outcome", requireUser, express.json({ limit: "8kb" })
       if (!s) return res.status(400).json({ error: "no session running" });
       const b = req.body || {};
       // an uploaded campaign records against its own table, not `leads`
-      if (upload.isUpload(s)) return res.json(await upload.outcomeUpload(s, b));
+      if (upload.isUpload(s)) return res.json(await withConnected(await upload.outcomeUpload(s, b)));
       const id = s.cur_id;
       if (!id) return res.json(shape(s, null));
       /* The page names the lead it was showing. If the session is already past
@@ -406,7 +436,7 @@ router.post("/api/campaign/outcome", requireUser, express.json({ limit: "8kb" })
                 filters = CASE WHEN filters->>'kind' = 'campaign'
                                THEN filters || '{"status":"completed"}'::jsonb ELSE filters END
           WHERE id = $1`, [s.id]);
-      res.json(nid ? await serve(next, me(req)) : shape(next, null));
+      res.json(nid ? await serve(next, me(req)) : await withConnected(shape(next, null)));
     } catch (e) { next(e); }
   });
 
@@ -426,10 +456,11 @@ router.get("/api/campaign/mine", requireUser, async (req, res, next) => {
        WHERE lower(s.actor) = lower($1) AND s.filters->>'kind' = 'campaign'
        ORDER BY s.ended_at IS NULL DESC, s.started_at DESC
        LIMIT 100`, [me(req)]);
+    const conn = await connectedBy(rows.map((s) => s.id));
     res.json({ list: rows.map((s) => ({
       id: +s.id, name: s.filters.name, status: campaignStatus(s),
       total: +s.total, completed: s.pos, pending: Math.max(0, s.total - s.pos),
-      called: s.called, connected: s.connected, skipped: s.skipped,
+      called: s.called, connected: conn.get(+s.id) || 0, skipped: s.skipped,
       createdBy: s.creator_name || null, pausedBy: s.filters.paused_by || null,
       callback: s.filters.callback || null,
       createdAt: s.started_at, startedAt: s.filters.started || null, endedAt: s.ended_at,
@@ -454,7 +485,7 @@ router.post("/api/campaign/end", requireUser, async (req, res, next) => {
     if (isCampaign(s) && !seesAll(req))
       return res.status(403).json({ error: "This campaign was assigned by a manager — only they can end it. You can simply leave this screen." });
     await query("UPDATE call_sessions SET ended_at = now() WHERE id = $1", [s.id]);
-    res.json({ ended: true, called: s.called, connected: s.connected,
+    res.json({ ended: true, called: s.called, connected: (await connectedBy([s.id])).get(+s.id) || 0,
       skipped: s.skipped, total: s.total, pos: s.pos });
   } catch (e) { next(e); }
 });
@@ -543,6 +574,7 @@ router.get("/api/dialer/campaigns", requireAdmin, async (req, res, next) => {
        LIMIT 500`);
     const q = String(req.query.q || "").trim().toLowerCase();
     const want = String(req.query.status || "");
+    const conn = await connectedBy(rows.map((s) => s.id));
     const list = rows.map((s) => {
       // an uploaded campaign's leads live in campaign_leads, not lead_ids
       const isUp = s.filters.source === "upload";
@@ -551,7 +583,7 @@ router.get("/api/dialer/campaigns", requireAdmin, async (req, res, next) => {
       return {
       id: s.id, name: s.filters.name, status: campaignStatus(s),
       total, completed, pending: Math.max(0, total - completed),
-      called: s.called, connected: s.connected, skipped: s.skipped,
+      called: s.called, connected: conn.get(+s.id) || 0, skipped: s.skipped,
       owner: s.owner, ownerName: s.owner_name, createdBy: s.filters.created_by, creatorName: s.creator_name,
       gap: s.filters.gap || null, callback: s.filters.callback || null,
       pausedBy: s.filters.paused_by || null, source: s.filters.source || "assigned",
@@ -1152,4 +1184,4 @@ router.post("/api/dialer/campaigns/:id/unassign", requireAdmin, express.json({ l
   } catch (e) { next(e); }
 });
 
-module.exports = { router, MAX_SESSION, OPEN_STATUSES, callbackTargets, _test: { servable } };
+module.exports = { router, MAX_SESSION, OPEN_STATUSES, callbackTargets, connectedBy, _test: { servable } };

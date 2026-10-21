@@ -194,6 +194,47 @@ const companyNumbers = (userId) => cached("numbers", 30 * 60e3, async () => {
 
 const CONNECTED = new Set(["Accepted", "Call connected"]);
 const isMissed = (c) => c.dir === "Inbound" && !CONNECTED.has(c.res);
+
+/* An OUTGOING call is connected only when the rep's disposition says it reached
+   someone — GK, CDM, Email captured, DNC or Prospect (calls.js CONNECTED_DISPOS,
+   owner's rule 2026-10-21). RingCentral's "Call connected" only means the line
+   picked up: voicemail, a wrong number and an unanswered-then-voicemail all say
+   that. The disposition is Karma Connect's, logged when the call ended: the
+   closest one to the same number within five minutes of this call's end is
+   this call's (the same match the Call logs page uses). An outgoing call with
+   no disposition — dialled outside Karma Connect, say — is not connected. */
+const digits10 = (v) => {
+  const d = String(v || "").replace(/D/g, "");
+  return d.length >= 10 ? d.slice(-10) : "";
+};
+async function dispositionsIn(fromMs, toMs) {
+  const { rows } = await query(
+    `SELECT at, meta->>'number' AS number, meta->>'disposition' AS disposition
+       FROM activity_log
+      WHERE action = 'call' AND meta ? 'disposition' AND at >= $1 AND at < $2`,
+    [new Date(fromMs).toISOString(), new Date(toMs + 3600e3).toISOString()]);
+  const by = new Map();
+  for (const r of rows) {
+    const d = digits10(r.number);
+    if (!d) continue;
+    if (!by.has(d)) by.set(d, []);
+    by.get(d).push({ at: Date.parse(r.at), disposition: r.disposition });
+  }
+  return by;
+}
+function dispositionOf(c, dispos) {
+  const cand = dispos && dispos.get(digits10(c.dir === "Outbound" ? c.toNum : c.fromNum));
+  if (!cand) return null;
+  const end = c.t + c.dur * 1000;
+  let best = 5 * 60e3, out = null;
+  for (const x of cand) { const gap = Math.abs(x.at - end); if (gap < best) { best = gap; out = x.disposition; } }
+  return out;
+}
+let REACHED = null;
+const reached = (dispo) => {
+  if (!REACHED) REACHED = new Set(require("./calls").CONNECTED_DISPOS);   // lazily: calls.js requires this file
+  return !!dispo && REACHED.has(dispo);
+};
 const blank = () => ({ incoming: 0, outgoing: 0, missed: 0 });
 function tally(o, c) {
   if (c.dir === "Inbound") { if (isMissed(c)) o.missed++; else o.incoming++; }
@@ -209,7 +250,7 @@ function topN(rows, n, sumKeys) {
 }
 
 function shape(calls, ctx) {
-  const { tz, days, week, extById } = ctx;
+  const { tz, days, week, extById, dispos } = ctx;
   const agentOf = (c) => {
     if (c.extId && extById.has(c.extId)) return extById.get(c.extId);
     const ext = c.dir === "Outbound" ? c.fromExt : c.toExt;
@@ -236,14 +277,17 @@ function shape(calls, ctx) {
     tally(hourly[+w.hour], c);
 
     kpi.total.calls++; kpi.total.secs += c.dur;
-    if (c.dir === "Inbound") {
+    // outgoing: connected by its disposition; incoming: answered (RingCentral's word)
+    const out = c.dir !== "Inbound";
+    const isConnected = out ? reached(dispositionOf(c, dispos)) : CONNECTED.has(c.res);
+    if (!out) {
       if (isMissed(c)) kpi.missed.calls++;
       else { kpi.incoming.calls++; kpi.incoming.secs += c.dur; answered++; }
     } else {
       kpi.outgoing.calls++; kpi.outgoing.secs += c.dur;
-      if (CONNECTED.has(c.res)) kpi.outgoing.connected++;
+      if (isConnected) kpi.outgoing.connected++;
     }
-    if (CONNECTED.has(c.res) && c.dur > 0) { talkSecs += c.dur; talkCalls++; }
+    if (isConnected && c.dur > 0) { talkSecs += c.dur; talkCalls++; }
 
     const a = agentOf(c);
     if (a) {
@@ -251,9 +295,9 @@ function shape(calls, ctx) {
         ...blank(), connected: 0, outConnected: 0, talkSecs: 0 });
       const row = agents.get(a.id);
       tally(row, c);
-      if (CONNECTED.has(c.res)) { row.connected++; row.talkSecs += c.dur; }
-      // outgoing calls that were picked up: this agent's connection rate is outConnected / outgoing
-      if (c.dir !== "Inbound" && CONNECTED.has(c.res)) row.outConnected++;
+      if (isConnected) { row.connected++; row.talkSecs += c.dur; }
+      // outgoing calls that reached someone: this agent's connection rate is outConnected / outgoing
+      if (out && isConnected) row.outConnected++;
     }
 
     const ours = c.dir === "Outbound" ? c.fromNum : c.toNum;
@@ -371,7 +415,10 @@ router.get("/api/voice/rc/dashboard", requireAdmin, async (req, res, next) => {
       return true;
     });
 
-    const body = shape(filtered, { tz, days, week, extById });
+    // the reps' dispositions over the range, to say which outgoing calls were connected
+    const dispos = await dispositionsIn(localMidnight(days[0], tz), localMidnight(addDays(days[days.length - 1], 1), tz))
+      .catch((e) => { warnings.push("Dispositions unavailable, so no outgoing call counts as connected: " + e.message); return new Map(); });
+    const body = shape(filtered, { tz, days, week, extById, dispos });
 
     let agents = null;
     if (pres) {
@@ -446,5 +493,6 @@ const agentAllowed = (allow, ext, id) =>
   allow.empty || (ext && allow.exts.has(ext)) || (id != null && allow.ids.has(String(id)));
 
 module.exports = { router, readerFor, rcGet, cached, extensions, companyNumbers, fetchDay, safeTz, wall, localMidnight, addDays,
+  dispositionsIn, dispositionOf, shape,
   allowedAgents, agentAllowed,
   _test: { localMidnight, addDays, shape, wall } };

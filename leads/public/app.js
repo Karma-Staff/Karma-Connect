@@ -11246,7 +11246,9 @@ function renderCallLog() {
       <td>${r.agent ? `<div class="cl-party"><b>${esc(r.agent.name)}</b>${r.agent.ext ? `<span>x${esc(r.agent.ext)}</span>` : ""}</div>` : `<span class="dash-mute">—</span>`}</td>
       <td class="n cl-dur">${r.seconds ? esc(liveClock(r.seconds * 1000)) : `<span class="dash-mute">0:00</span>`}</td>
       <td>${when(r.at)}</td>
-      <td><span class="cl-result${/connected|accepted/i.test(r.result) ? " ok" : ""}">${esc(r.result)}</span></td>
+      <td><span class="cl-result${(r.connected ?? /connected|accepted/i.test(r.result)) ? " ok" : ""}" title="${r.connected
+        ? "Connected: " + (r.mode === "outgoing" ? "the disposition says it reached someone (GK, CDM, Email captured, DNC or Prospect)" : "answered")
+        : r.mode === "outgoing" ? "Not connected: only GK, CDM, Email captured, DNC and Prospect count as connected — the line picking up doesn't" : "Not answered"}">${esc(r.result)}</span></td>
       <td>${r.disposition ? `<span class="dash-chip">${esc(r.disposition)}</span>` : `<span class="dash-mute">—</span>`}</td>
       <td class="cl-rec">${r.recording
         ? `<button class="cl-play" data-play="${esc(r.recording)}" title="Play the recording">

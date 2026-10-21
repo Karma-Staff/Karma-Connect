@@ -41,6 +41,11 @@ const digits10 = (v) => {
   return d.length >= 10 ? d.slice(-10) : "";
 };
 const CONNECTED = new Set(["Accepted", "Call connected"]);
+/* "connected" on a row: an outgoing call by its disposition (calls.js
+   CONNECTED_DISPOS — GK, CDM, Email captured, DNC, Prospect), an incoming one
+   by whether it was answered. RingCentral's own result stays as it is. */
+let REACHED = null;
+const reached = (d) => { if (!REACHED) REACHED = new Set(require("./calls").CONNECTED_DISPOS); return !!d && REACHED.has(d); };
 
 /* Every lead's number, once per ten minutes, as one map — a page of fifty
    calls then costs no queries at all to name. */
@@ -119,6 +124,7 @@ function ownRow(o, phones) {
     agent: us.name ? { id: null, name: us.name, ext: "" } : null,
     ours: "", result: OWN_RESULT[o.outcome] || o.outcome || "Logged",
     disposition: o.disposition || null, recording: null, source: "karma",
+    connected: out ? reached(o.disposition) : o.outcome === "connected",
   };
 }
 
@@ -188,6 +194,7 @@ async function buildRows(req) {
       from: out ? us : party, to: out ? party : us,
       agent: agent ? { id: agent.id, name: agent.name, ext: agent.ext } : us.name ? { id: null, name: us.name, ext: "" } : null,
       ours, result: c.res, disposition, recording: c.recId,
+      connected: out ? reached(disposition) : !missed,
     };
   });
 
