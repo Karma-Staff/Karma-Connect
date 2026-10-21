@@ -6734,15 +6734,22 @@ function campOpenWrap() {
    call: record the session's outcome — VM, No Answer and Busy say what it
    was; anything else keeps what the line reported — and move on, which
    rings the next lead when auto-dial is on. */
+// the dispositions that make a call "connected" — the same list as calls.js CONNECTED_DISPOS
+const CONNECTED_DISPOS = new Set(["Prospect", "GK", "CDM", "Email captured", "DNC", "Gatekeeper", "Email Captured", "Do Not Contact"]);
 function kdAfterWrap(picked) {
   deskWrapped(picked);
   const w = CAMP.awaitDispo;
   if (!w) return;
   CAMP.awaitDispo = null;
   const line = wrapOutcomeOf(w.sdkOutcome);
-  // a wrong number that picked up reached nobody: not a connected call
-  const said = { "No Answer": "no-answer", Busy: "busy", VM: "voicemail", "Wrong number": "failed" }[picked?.label];
-  submitOutcome({ outcome: said || line.outcome, status: said === "busy" ? "" : line.status });
+  /* Connected only when the call reached someone (calls.js CONNECTED_DISPOS):
+     GK, CDM, Email captured, DNC or Prospect. Anything else — No Answer, VM,
+     Busy, Wrong number, no disposition — is not, whatever the line did. */
+  const label = picked?.label;
+  const said = CONNECTED_DISPOS.has(label) ? "connected"
+    : { "No Answer": "no-answer", Busy: "busy", VM: "voicemail", "Wrong number": "failed" }[label]
+      || (line.outcome === "connected" ? "no-answer" : line.outcome);
+  submitOutcome({ outcome: said, status: said === "busy" ? "" : line.status });
 }
 
 function cancelWrap(reason) {

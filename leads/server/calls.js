@@ -35,6 +35,17 @@ const TZ = process.env.REPORT_TZ || process.env.DIGEST_TZ || "America/New_York";
 
    Returns the rows it wrote, because the morning email wants exactly this and
    should not ask a second time and risk a different answer. */
+/* What counts as a CONNECTED call: the rep's disposition, not whether the line
+   picked up. Owner's rule, 2026-10-21: connected only when the call reached
+   someone — GK, CDM, Email captured, DNC or Prospect (and the older names for
+   the same results). No Answer, VM, Busy, Wrong number, or no disposition at
+   all is not connected. Every count here, the day rollup, the dashboard and
+   the reports, uses this one expression. */
+const CONNECTED_DISPOS = ["Prospect", "GK", "CDM", "Email captured", "DNC",
+  "Gatekeeper", "Email Captured", "Do Not Contact"];
+const CONNECTED_SET = new Set(CONNECTED_DISPOS);
+const CONNECTED = (m = "meta") => `(coalesce(${m}->>'disposition', '') IN (${CONNECTED_DISPOS.map((d) => "'" + d.replace(/'/g, "''") + "'").join(", ")}))`;
+
 async function rollupDay(day) {
   const { rows } = await query(
     `INSERT INTO call_daily (day, actor, calls, connected, placed, no_answer,
@@ -42,7 +53,7 @@ async function rollupDay(day) {
                              first_at, last_at, built_at)
      SELECT call_day(at, $2) AS d, actor,
             count(*)::int,
-            count(*) FILTER (WHERE meta->>'outcome' = 'connected')::int,
+            count(*) FILTER (WHERE ${CONNECTED("meta")})::int,
             count(*) FILTER (WHERE meta->>'outcome' = 'placed')::int,
             count(*) FILTER (WHERE meta->>'outcome' = 'no-answer')::int,
             count(*) FILTER (WHERE meta->>'outcome' = 'busy')::int,
@@ -73,7 +84,7 @@ async function rollupDay(day) {
 const LIVE_TODAY = `
   SELECT actor,
          count(*)::int                                                   AS calls,
-         count(*) FILTER (WHERE meta->>'outcome' = 'connected')::int     AS connected,
+         count(*) FILTER (WHERE ${CONNECTED("meta")})::int     AS connected,
          count(*) FILTER (WHERE meta->>'outcome' = 'placed')::int        AS placed,
          count(*) FILTER (WHERE meta->>'outcome' = 'no-answer')::int     AS no_answer,
          count(*) FILTER (WHERE meta->>'outcome' = 'busy')::int          AS busy,
@@ -491,8 +502,8 @@ router.get("/api/calls/mine", requireUser, async (req, res, next) => {
         ORDER BY a.at DESC LIMIT 101`, [...args, before])).rows;
     const sum = (await query(
       `SELECT count(*)::int AS calls,
-              count(*) FILTER (WHERE a.meta->>'outcome' = 'connected')::int AS connected,
-              coalesce(sum((a.meta->>'seconds')::int) FILTER (WHERE a.meta->>'outcome' = 'connected'), 0)::int AS seconds
+              count(*) FILTER (WHERE ${CONNECTED("a.meta")})::int AS connected,
+              coalesce(sum((a.meta->>'seconds')::int) FILTER (WHERE ${CONNECTED("a.meta")}), 0)::int AS seconds
          FROM activity_log a WHERE ${where}`, args)).rows[0];
     /* A signed, self-authorising link to the rep's own recording (calllogs.js);
        required lazily to avoid a load-order cycle. null when there is none, or
@@ -964,7 +975,7 @@ router.get("/api/calls/person/:email", requireAdmin, async (req, res, next) => {
 
     const liveToday = (await query(
       `SELECT count(*)::int AS calls,
-              count(*) FILTER (WHERE meta->>'outcome' = 'connected')::int AS connected,
+              count(*) FILTER (WHERE ${CONNECTED("meta")})::int AS connected,
               count(*) FILTER (WHERE meta->>'outcome' = 'placed')::int    AS placed,
               coalesce(sum((meta->>'seconds')::int), 0)::int              AS seconds,
               count(DISTINCT lead_id)::int                                AS leads,
@@ -1134,7 +1145,7 @@ async function gatherExport({ from, to, who, shape }) {
       `SELECT to_char(a.at AT TIME ZONE $4, 'YYYY-MM-DD') AS day,
               to_char(a.at AT TIME ZONE $4, 'HH24:MI') AS time,
               a.actor, a.lead_code, a.lead_name, l.company, l.city, l.state,
-              a.meta->>'outcome' AS outcome,
+              a.meta->>'outcome' AS outcome, a.meta->>'disposition' AS disposition,
               (a.meta->>'seconds')::int AS seconds,
               a.meta->>'number' AS number
          FROM activity_log a
@@ -1153,7 +1164,7 @@ async function gatherExport({ from, to, who, shape }) {
         "city", "state", "outcome", "seconds", "number"],
       totals: {
         calls: recs.length,
-        connected: recs.filter((x) => x.outcome === "connected").length,
+        connected: recs.filter((x) => CONNECTED_SET.has(x.disposition)).length,
         placed: recs.filter((x) => x.outcome === "placed").length,
         leads: new Set(recs.map((x) => x.lead_code)).size,
         talk: hhmm(recs.reduce((a, x) => a + x.seconds, 0)),
@@ -1355,4 +1366,27 @@ router.get("/api/calls/export", requireAdmin, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-module.exports = { router, OUTCOMES, rollupDay, TZ };
+/* When what counts as connected changes, the stored days were added up the old
+   way: rebuild the last REBUILD_DAYS from the call log, once. Derived numbers
+   only — activity_log, the record of every call, is never touched. */
+const RULE_VERSION = 2;          // 2: connected = a reaching disposition (2026-10-21)
+const REBUILD_DAYS = 120;
+function rebuildForRuleSoon() {
+  if (process.env.KARMA_NO_SWEEP === "1") return;
+  setTimeout(async () => {
+    try {
+      const settings = require("./settings");
+      if ((await settings.get("calls.connected_rule", 1)) >= RULE_VERSION) return;
+      await settings.set("calls.connected_rule", RULE_VERSION, "calls-rebuild");   // once, even if a rebuild is cut short
+      let days = 0;
+      for (let i = 1; i <= REBUILD_DAYS; i++) {
+        const day = (await query("SELECT (call_day(now(), $2) - $1::int)::text AS d", [i, TZ])).rows[0].d;
+        await rollupDay(day);
+        days++;
+      }
+      console.log(`[karma] call report: ${days} days re-counted with the new "connected" rule`);
+    } catch (e) { console.error("[karma] call report rebuild:", e.message); }
+  }, 30_000).unref();
+}
+
+module.exports = { router, OUTCOMES, rollupDay, TZ, CONNECTED, CONNECTED_DISPOS, rebuildForRuleSoon };

@@ -68,7 +68,7 @@ router.get("/api/tasks", requireUser, async (req, res, next) => {
     const done = (await query(
       `SELECT count(*) FILTER (WHERE action = 'call')::int                    AS calls,
               count(*) FILTER (WHERE action = 'call'
-                               AND meta->>'outcome' = 'connected')::int       AS connected,
+                               AND ${require("./calls").CONNECTED("meta")})::int AS connected,
               count(*) FILTER (WHERE action = 'status')::int                  AS statuses,
               count(*) FILTER (WHERE action = 'note')::int                    AS notes,
               count(DISTINCT lead_id) FILTER (WHERE action <> 'open')::int    AS leads_worked

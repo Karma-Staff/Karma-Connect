@@ -147,6 +147,8 @@ function mount(app, opts = {}) {
   /* recording calls, and the manager's report built from them. After leads.js
      so its requireOwnLead guard has already run for /api/leads/:id paths. */
   app.use(require("./calls").router);
+  /* the call report's stored days, re-counted once when what "connected" means changes */
+  require("./calls").rebuildForRuleSoon();
   /* one rep's own working queue — always the caller's own, never the team's */
   app.use(require("./tasks").router);
   /* the prospect briefing. After leads.js so requireOwnLead has already run:
