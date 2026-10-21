@@ -344,18 +344,20 @@ async function servableRow(sessionId) {
   if (!rows.length) return null;
   const now = new Date();
   const checks = rows.map((r) => calltime.check(r, now));
+  // how many in reach are waiting for their calling hours (or lunch) to open — shown on the card
+  const later = checks.filter((c) => !c.open).length;
   const j = checks.findIndex((c) => c.open);
-  if (j === 0) return checks[0];
+  if (j === 0) return { ...checks[0], later };
   if (j < 0) {
     const soonest = checks.map((c) => c.opensAt).filter(Boolean).sort()[0] || null;
-    return { ...checks[0], waiting: true, opensAt: soonest };
+    return { ...checks[0], waiting: true, opensAt: soonest, later };
   }
   await query(
     `UPDATE campaign_leads c SET pos = m.top + u.ord
        FROM (SELECT coalesce(max(pos), 0) AS top FROM campaign_leads WHERE session_id = $1) m,
             unnest($2::bigint[]) WITH ORDINALITY u(id, ord)
       WHERE c.id = u.id AND c.session_id = $1`, [sessionId, rows.slice(0, j).map((r) => r.id)]);
-  return { ...checks[j], deferred: j };
+  return { ...checks[j], deferred: j, later };
 }
 
 async function serveUpload(s) {
@@ -377,6 +379,14 @@ async function outcomeUpload(s, b) {
     `SELECT * FROM campaign_leads WHERE id = $1 AND session_id = $2 AND status = 'pending'`,
     [-b.leadId, s.id])).rows[0] : null;
   const row = shown || await currentRow(s.id);
+  /* "Call later" (outside its hours, or lunch): to the back of the sheet,
+     still pending — not a skip, nothing counted. */
+  if (row && b.later === true) {
+    await query(
+      `UPDATE campaign_leads SET pos = (SELECT coalesce(max(pos), 0) + 1 FROM campaign_leads WHERE session_id = $2)
+        WHERE id = $1 AND status = 'pending'`, [row.id, s.id]);
+    return { ...(await serveUpload(s)), later: true };
+  }
   if (row) {
     let skip = b.skip === true;
     let called = String(b.outcome || "no-answer");

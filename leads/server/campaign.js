@@ -136,17 +136,19 @@ async function servable(s, depth = 0) {
   const now = new Date();
   // one further down the list is never the one brought forward
   const checks = rows.map((r) => (r.gone ? { open: false, dnc: true } : calltime.check(r, now)));
+  // how many in reach are waiting for their calling hours (or lunch) to open — shown on the card
+  const later = checks.filter((c) => !c.open && !c.dnc).length;
   const j = checks.findIndex((c) => c.open);
-  if (j === 0) return { s, callTime: checks[0] };
+  if (j === 0) return { s, callTime: { ...checks[0], later } };
   if (j < 0) {
     const soonest = checks.map((c) => c.opensAt).filter(Boolean).sort()[0] || null;
-    return { s, callTime: { ...checks[0], waiting: true, opensAt: soonest } };
+    return { s, callTime: { ...checks[0], waiting: true, opensAt: soonest, later } };
   }
   const moved = (await query(
     `UPDATE call_sessions
         SET lead_ids = lead_ids[1:pos] || lead_ids[pos + $2 + 1:] || lead_ids[pos + 1:pos + $2]
       WHERE id = $1 AND ended_at IS NULL RETURNING ${COLS}`, [s.id, j])).rows[0];
-  return moved ? { s: moved, callTime: { ...checks[j], deferred: j } } : { s, callTime: checks[0] };
+  return moved ? { s: moved, callTime: { ...checks[j], deferred: j, later } } : { s, callTime: { ...checks[0], later } };
 }
 
 /* The served session: the next callable lead's card, with its local time. */
@@ -295,6 +297,17 @@ router.post("/api/campaign/outcome", requireUser, express.json({ limit: "8kb" })
          Answer with where the session is instead. */
       if (Number.isInteger(b.leadId) && b.leadId > 0 && b.leadId !== +id)
         return res.json({ ...(await serve(s, me(req))), stale: true });
+
+      /* "Call later": outside its calling hours, or its lunch break. Not a
+         skip — the lead goes to the back of the list untouched and comes up
+         again once its hours open (servable() brings it forward). Nothing is
+         counted, nothing logged. */
+      if (b.later === true) {
+        const moved = (await query(
+          `UPDATE call_sessions SET lead_ids = lead_ids[1:pos] || lead_ids[pos + 2:] || lead_ids[pos + 1:pos + 1]
+            WHERE id = $1 AND ended_at IS NULL RETURNING ${COLS}`, [s.id])).rows[0];
+        return res.json({ ...(await serve(moved || s, me(req))), later: true });
+      }
 
       const lead = (await query(
         "SELECT id, lead_code, name, company, status FROM leads WHERE id = $1", [id])).rows[0];

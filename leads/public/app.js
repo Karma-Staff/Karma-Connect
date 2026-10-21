@@ -7186,6 +7186,8 @@ function renderCampaign(d) {
     && String(last.actor || "").toLowerCase() === S.me.email.toLowerCase()
     && Date.now() - new Date(last.at).getTime() < 30 * 60e3
     && (["connected", "no-answer", "busy"].includes(last.to_value) || !!last.disposition)) && !kdActive() && !CAMP.awaitDispo;
+  // outside its calling hours or at its lunch break (not DNC): Skip becomes "Call later"
+  const notNow = !!(ct && ct.open === false && !ct.dnc);
   const callerId = c?.callback?.name
     ? `<span class="cs-cid-k">Caller ID</span><span><b>${esc(c.callback.name)}</b> · callbacks ring ${esc(String(c.callback.name).split(" ")[0])}</span>`
     : KD.callerId ? `<span class="cs-cid-k">Caller ID</span><span><b>${esc(kdFmtNum(KD.callerId))}</b> · your own number</span>` : "";
@@ -7216,7 +7218,9 @@ function renderCampaign(d) {
         <div class="cs-prog">${campProgress(d)}</div>
         <span id="cs-act">${campAction(d, phase)}</span>
         <button type="button" class="cs-btn cs-ghost camp-skip" id="camp-skip" title="${justCalled
-          ? "You've already called them — move on; it counts as called" : "Leave it untouched and move on"}"><span>${justCalled ? "Next" : "Skip"}</span>${CS_IC.next}</button>
+          ? "You've already called them — move on; it counts as called"
+          : notNow ? "Outside their calling hours or at lunch: back of the list, it comes up again when their hours open (not a skip)"
+            : "Leave it untouched and move on"}"><span>${justCalled ? "Next" : notNow ? "Call later" : "Skip"}</span>${CS_IC.next}</button>
       </div>
       <div class="cs-status"><span id="camp-auto-state" class="camp-auto-state cs-msg">${esc(justCalled
         ? `You called ${name} ${relTime(last.at)} — press Next to move on; it counts as called, not skipped`
@@ -7231,7 +7235,8 @@ function renderCampaign(d) {
           ct && !ct.open && ct.local ? (ct.lunch
             ? `<span class="cs-closed" title="No calls 12–1:30pm in the lead's local time">their lunch break</span>`
             : `<span class="cs-closed" title="Calls are allowed 8am–9pm in the lead's local time">outside calling hours</span>`) : ""}${
-          ct?.deferred ? `<span class="cs-moved">${ct.deferred} lead${ct.deferred === 1 ? "" : "s"} it's too early or late for moved to later</span>` : ""}</div>
+          ct?.later ? `<span class="cs-moved" title="Outside their calling hours or at lunch right now. They stay in this campaign and come up by themselves when their hours open.">${ct.later} waiting for their calling hours — they ring when it opens</span>`
+            : ct?.deferred ? `<span class="cs-moved">${ct.deferred} lead${ct.deferred === 1 ? "" : "s"} it's too early or late for moved to later</span>` : ""}</div>
         <div class="cs-phone-row">
           <div class="cs-phone">
             <span class="cs-phone-ic">${CS_IC.phone}</span>
@@ -7304,7 +7309,8 @@ function renderCampaign(d) {
       outcome: btn.dataset.out === "not-interested" ? "connected" : btn.dataset.out,
       status: btn.dataset.status,
     })));
-  $("camp-skip").addEventListener("click", () => submitOutcome({ skip: true }));
+  // outside its hours: "Call later" keeps it in the campaign (back of the list), never a skip
+  $("camp-skip").addEventListener("click", () => submitOutcome(notNow && !justCalled ? { later: true } : { skip: true }));
   $("camp-end").addEventListener("click", () => {
     if (canEnd) return endCampaign();
     cancelAutoDial(); cancelWrap();
@@ -7461,6 +7467,7 @@ async function submitOutcome(extra) {
       }
     }
     renderCampaign(CAMP.s);
+    if (extra.later) toast("Kept for later — it comes up again when their calling hours open", 5000);
   } catch (e) {
     CAMP.advanced = false;
     // still waiting on this call: keep the bar saying so, with its Disposition button
