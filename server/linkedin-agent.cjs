@@ -644,7 +644,7 @@ const INBOX_ALL = process.env.LI_INBOX_ALL !== "0";
 // can tell their conversations apart in the inbox), and the
 // invitations still waiting (so it can spot them in the new-connections list). Reading pages
 // is activity too, so this answers only while the agent is on and inside the window.
-async function watch(userId, acct, { localHour, localDay } = {}) {
+async function watch(userId, acct, { localHour, localDay, justStarted = false } = {}) {
   if (!dbOn) return { ok: false, reason: "No database configured.", people: [], pendingInvites: [] };
   const state = acct;
   if (!state.enabled) return { ok: false, reason: state.halt_reason || "The agent is off.", people: [], pendingInvites: [], needProfile: [] };
@@ -677,7 +677,8 @@ async function watch(userId, acct, { localHour, localDay } = {}) {
   const pendingInvites = [...new Set(pend.rows.map((r) => handleOf(r.linkedin_url)).filter(Boolean))];
   await q("update linkedin_account set last_seen_at = now(), updated_at = now() where id = $1", [acct.id]);
   return { ok: true, reason: "", people, readAll: INBOX_ALL, pendingInvites, needProfile: await needProfile(userId, acct.id),
-    search: await prospecting.nextSearch(userId, acct, limitsFor(acct)).catch(() => null) };
+    // an agent that has just started searches at once, without waiting out the gap
+    search: await prospecting.nextSearch(userId, acct, limitsFor(acct), { ignoreGap: justStarted }).catch(() => null) };
 }
 
 // The worker saw these handles in this account's new-connections list: their invitations were

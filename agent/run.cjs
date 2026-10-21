@@ -30,7 +30,7 @@ const { searchPeople } = require("./prospect.cjs");
 const { readInbox, readAccepted } = require("./inbox.cjs");
 const { captureProfile } = require("./capture.cjs");
 
-const VERSION = "0.5.0";
+const VERSION = "0.6.0";   // 0.6.0: finds prospects (prospect.cjs), from the moment it starts
 const ARGS = process.argv.slice(2);
 const flag = (f) => ARGS.includes(f);
 const argVal = (f) => { const i = ARGS.indexOf(f); return i >= 0 ? ARGS[i + 1] : undefined; };
@@ -244,6 +244,8 @@ class Account {
     this.memo = new Map(); // thread → preview last read, so unchanged threads aren't reopened
     this.lastInbox = 0;
     this.lastAccept = 0;
+    this.lastSearchCheck = 0;        // finding prospects: asked about straight away, then every 10 minutes
+    this.searchedSinceStart = false;
     this.nextTick = 0;
     this.me = { state: "starting", activity: "Starting up", linkedin: null, lastInboxAt: null, lastAcceptAt: null };
     this.signingIn = false;
@@ -394,8 +396,12 @@ class Account {
     const L = this.control.limits || {};
     const dueInbox = Date.now() - this.lastInbox >= everyMin("LI_AGENT_INBOX_MIN", L.inboxEveryMin, 5, 15) * 60000;
     const dueAccept = Date.now() - this.lastAccept >= everyMin("LI_AGENT_ACCEPT_MIN", L.acceptEveryMin, 15, 60) * 60000;
-    if (!dueInbox && !dueAccept) return true;
-    const w = await this.call("/api/outreach/agent/watch", { method: "POST", body: { localHour: now.getHours(), localDay: now.getDay() } });
+    // finding prospects has its own clock: the first check is the moment the agent starts
+    const dueSearch = Date.now() - this.lastSearchCheck >= 10 * 60000;
+    if (!dueInbox && !dueAccept && !dueSearch) return true;
+    if (dueSearch) this.lastSearchCheck = Date.now();
+    const w = await this.call("/api/outreach/agent/watch", { method: "POST",
+      body: { localHour: now.getHours(), localDay: now.getDay(), justStarted: !this.searchedSinceStart } });
     if (!w.ok) return true; // off or outside the window — try again later, quietly
 
     const stop = async (reason) => {
@@ -442,6 +448,7 @@ class Account {
     if (w.search && w.search.url) {
       this.doing("working", "Looking for prospects: " + w.search.label);
       const s = await searchPeople(page, w.search.url);
+      this.searchedSinceStart = true;
       if (s.halt) return stop(s.halt);
       const r = await this.call("/api/outreach/agent/prospects", { method: "POST",
         body: { cursor: w.search.cursor, candidates: s.candidates, limit: !!s.limit } }).catch(() => ({}));

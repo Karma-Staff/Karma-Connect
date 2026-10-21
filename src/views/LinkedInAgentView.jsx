@@ -50,6 +50,31 @@ function overall(a, devices) {
   return { key: "paused", label: "Paused", say: "Paused", tone: "var(--muted)", online };
 }
 
+// "0.5.0" < "0.6.0"
+const verLt = (a, b) => {
+  const x = String(a || "0").split(".").map(Number), y = String(b || "0").split(".").map(Number);
+  for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) < (y[i] || 0); }
+  return false;
+};
+const PROSPECT_AGENT = "0.6.0";   // the first agent that finds prospects (agent/prospect.cjs)
+/* Why "Find prospects" isn't finding or inviting anyone at this moment, in
+   plain words — or null when nothing is in its way. */
+function prospectBlock(a, w) {
+  const L = a.limits || {};
+  if (w && w.version && verLt(w.version, PROSPECT_AGENT))
+    return `the agent on ${w.host || "the PC"} is an old version (${w.version}) that can't find prospects. Update it: download the agent again from PCs below and run Connect-this-PC.bat, or in the Karma Connect folder run  git pull  and restart it.`;
+  if (a.dryRun) return "Test mode is on, so it doesn't search or send anything. Turn Test mode off.";
+  if (!a.enabled) return "this account is paused. Press Start.";
+  if (a.searchLimitHit) return "LinkedIn's monthly search limit is reached on this account; it searches again next month.";
+  if ((a.searchesToday || 0) >= (a.searchesPerDay || 6))
+    return `today's ${a.searchesPerDay || 6} searches are done; it searches again tomorrow${a.ready ? `, and ${plural(a.ready, "invitation")} ${a.ready === 1 ? "is" : "are"} waiting to go within today's limit` : ""}.`;
+  const now = new Date(), h = now.getHours(), day = now.getDay();
+  if (L.weekdaysOnly && (day === 0 || day === 6)) return "it works weekdays only (Hours & limits); it starts again on Monday.";
+  if (L.windowStart != null && L.windowEnd != null && (h < L.windowStart || h >= L.windowEnd))
+    return `it works ${hourLabel(L.windowStart)}–${hourLabel(L.windowEnd)} (Hours & limits; the PC's time), so it waits until then.`;
+  return null;
+}
+
 function Dot({ tone, pulse }) {
   return <span className={"lia-dot" + (pulse ? " pulse" : "")} style={{ background: tone }} aria-hidden="true" />;
 }
@@ -169,12 +194,13 @@ function StatusCard({ a, st, run, busy, onOpenQueue }) {
               <span className="lia-switch-ui" aria-hidden="true" />
               <span><b>Find prospects for me</b> <span className="lia-muted">— {!a.prospectOn
                 ? "off: it only invites the people you add."
-                : a.dryRun ? "paused while test mode is on."
-                  : a.searchLimitHit ? "LinkedIn's monthly search limit is reached on this account; it searches again next month."
-                    : "owners and operations leaders at restoration companies in the US and Canada, invited automatically"
-                      + (a.notesLeft ? " with a short note" : " (this month's free notes are used up, so without a note)")
-                      + ". Today: " + plural(a.foundToday || 0, "new prospect") + " from " + (a.searchesToday || 0) + " of " + (a.searchesPerDay || 6) + " searches."}</span></span>
+                : "owners and operations leaders at restoration companies in the US and Canada, invited automatically"
+                  + (a.notesLeft ? " with a short note" : " (this month's free notes are used up, so without a note)")
+                  + ". Today: " + plural(a.foundToday || 0, "new prospect") + " from " + (a.searchesToday || 0) + " of " + (a.searchesPerDay || 6) + " searches."}</span></span>
             </label>
+          )}
+          {a.prospecting && a.prospectOn && prospectBlock(a, w) && (
+            <div className="lia-why" role="status">Not inviting right now: {prospectBlock(a, w)}</div>
           )}
         </div>
       )}

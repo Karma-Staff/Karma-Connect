@@ -1332,7 +1332,7 @@ app.post("/api/outreach/agent/watch", requireAgent, async (req, res) => {
     const hour = Number.isInteger(b.localHour) ? b.localHour : new Date().getHours();
     const day = Number.isInteger(b.localDay) ? b.localDay : new Date().getDay();
     const a = await agentAccount(req, res); if (!a) return;
-    res.json(await liAgent.watch(req.userId, a, { localHour: hour, localDay: day }));
+    res.json(await liAgent.watch(req.userId, a, { localHour: hour, localDay: day, justStarted: b.justStarted === true }));
   } catch (e) { res.status(500).json({ error: { message: "Could not load the watch list." } }); }
 });
 

@@ -790,3 +790,6 @@ html,body,#root{margin:0;padding:0;background:#081224;min-height:100%}
   .kc .lia-tile{padding:11px 12px}
   .kc .lia-tile-v{font-size:20px}
 }
+/* why Find prospects is not inviting right now (LinkedInAgentView prospectBlock) */
+.kc .lia-why{margin:10px 0 0 52px; padding:10px 13px; border-radius:12px; font-size:13px; line-height:1.5; color:#ffe2a1; background:rgba(231,183,75,.1); border:1px solid rgba(231,183,75,.4)}
+@media(max-width:720px){ .kc .lia-why{margin-left:0} }

@@ -110,12 +110,12 @@ const thisMonth = () => new Date().toISOString().slice(0, 7);
 const sameDay = (d) => !!d && new Date(d).toISOString().slice(0, 10) === today();
 
 // ── 1. Should this account search now? ──────────────────────────────
-async function nextSearch(userId, acct, limits) {
+async function nextSearch(userId, acct, limits, { ignoreGap = false } = {}) {
   if (!ON || !dbOn || !acct || !acct.prospect_on || acct.dry_run) return null;
   if (acct.search_out_month === thisMonth()) return null;   // LinkedIn's monthly search limit was hit
   const runs = sameDay(acct.prospect_day) ? acct.prospect_runs || 0 : 0;
   if (runs >= SEARCHES_PER_DAY) return null;
-  if (acct.prospect_last && Date.now() - new Date(acct.prospect_last).getTime() < SEARCH_GAP_MIN * 60000) return null;
+  if (!ignoreGap && acct.prospect_last && Date.now() - new Date(acct.prospect_last).getTime() < SEARCH_GAP_MIN * 60000) return null;
   // Enough invitations already waiting to go from this account: no need to look for more yet.
   const { rows } = await q(
     `select count(*)::int as n from outreach_queue
@@ -168,8 +168,19 @@ async function recordProspects(userId, acct, { cursor, candidates, halt, limit }
      select lower(substring(data->'prospect'->>'linkedinUrl' from '/in/([^/?#]+)')) from prospects
       where lower(substring(data->'prospect'->>'linkedinUrl' from '/in/([^/?#]+)')) = any($1)`, [handles]);
   const known = new Set(seen.map((r) => r.h));
-  const fresh = keep.filter((c) => !known.has(c.handle)).slice(0, PER_SEARCH);
+  let fresh = keep.filter((c) => !known.has(c.handle));
   if (fresh.length < keep.length) skipped["already contacted or saved"] = keep.length - fresh.length;
+  /* Clients (the leads app's Clients list): nobody at a client company is
+     invited. Best effort — if the list can't be read, nobody is invited this
+     round rather than risk inviting a client. */
+  let clientSet = null;
+  try { clientSet = await require("../leads/server/clients").clientNames(fresh.map((c) => splitHeadline(c.headline).company)); }
+  catch (e) { console.warn("[li-prospecting] clients list:", e.message); }
+  if (!clientSet) return { seen: list.length, queued: 0, skipped: { ...skipped, "clients list unavailable": fresh.length } };
+  const nk = require("../leads/server/clients").nameKey;
+  const notClients = fresh.filter((c) => !clientSet.has(nk(splitHeadline(c.headline).company)));
+  if (notClients.length < fresh.length) skipped["works at a client"] = fresh.length - notClients.length;
+  fresh = notClients.slice(0, PER_SEARCH);
 
   const senderName = await senderNameFor(acct);
   const withNote = acct.note_out_month !== thisMonth();
