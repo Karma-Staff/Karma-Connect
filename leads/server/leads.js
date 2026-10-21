@@ -128,6 +128,8 @@ function buildFilters(p, user) {
      and Contacted still show such a lead. */
   if (p.recent === "true") {
     add("recent_at IS NOT NULL");
+    // already in Zoho: listed under Contacted, not waiting here to be worked
+    add("NOT " + inZohoSql("leads"));
     if (p.batch) add("recent_batch = ?", String(p.batch).slice(0, 200));
   } else if (["company", "person", "job"].includes(p.kind) && p.inzoho !== "true"
       && p.favorite !== "true" && p.removed !== "true") add("recent_at IS NULL");
@@ -137,7 +139,7 @@ function buildFilters(p, user) {
      until 2026-10-20 a Zoho record still at 'New' stayed in Companies, and reps
      kept finding leads there that were already registered in Zoho.
      Favorites, the DNC tab and Contacted itself still show it. */
-  if (["company", "person"].includes(p.kind) && p.inzoho !== "true" && p.favorite !== "true" && p.removed !== "true")
+  if (["company", "person", "job"].includes(p.kind) && p.inzoho !== "true" && p.favorite !== "true" && p.removed !== "true")
     add("NOT " + inZohoSql("leads"));
   // removed=true is the DNC tab; everything else excludes banned leads
   add(p.removed === "true" ? "removed" : "NOT removed");
@@ -240,6 +242,7 @@ router.get("/api/recently-added/batches", requireUser, async (req, res, next) =>
     const rows = (await query(
       `SELECT recent_batch AS batch, count(*)::int AS n, max(recent_at) AS at
          FROM leads WHERE recent_at IS NOT NULL AND deleted_at IS NULL AND NOT removed
+          AND NOT ${inZohoSql("leads")}
          ${mine ? "AND btrim(owner) = $1" : ""}
         GROUP BY recent_batch ORDER BY max(recent_at) DESC`, mine ? [String(req.user.email || "").trim()] : [])).rows;
     res.json({ batches: rows, total: rows.reduce((a, r) => a + r.n, 0) });

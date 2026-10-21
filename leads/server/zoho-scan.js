@@ -87,8 +87,12 @@ const zohoKindSql = (alias = "leads") => `(SELECT CASE
 
 /* SQL: is this lead in Zoho (a real Zoho record linked)? — the Contacted tab,
    the campaign builder, the bulk-assign guard. */
+/* A job posting goes with its company: the company in Zoho means its postings
+   are too, so the Job board doesn't keep offering a company already being worked. */
 const inZohoSql = (alias = "leads") =>
-  `EXISTS (SELECT 1 FROM activity_log a WHERE a.lead_id = ${alias}.id AND jsonb_exists(a.meta, 'crm_link') AND ${REAL_LINK("a")})`;
+  `(EXISTS (SELECT 1 FROM activity_log a WHERE a.lead_id = ${alias}.id AND jsonb_exists(a.meta, 'crm_link') AND ${REAL_LINK("a")})
+    OR (${alias}.kind = 'job' AND ${alias}.company_lead_id IS NOT NULL AND EXISTS (SELECT 1 FROM activity_log a
+        WHERE a.lead_id = ${alias}.company_lead_id AND jsonb_exists(a.meta, 'crm_link') AND ${REAL_LINK("a")})))`;
 
 /* SQL: is this lead listed under Contacted instead of Companies / People?
    In Zoho AND worked there — its status is a Zoho Call Result, not still
@@ -202,6 +206,17 @@ async function flag() {
          FROM leads l
          JOIN zoho_records z ON z.email IS NOT NULL AND z.email = lower(l.email) AND z.module = ANY($1)
         WHERE l.deleted_at IS NULL AND NOT l.removed AND nullif(btrim(l.email), '') IS NOT NULL
+       UNION ALL
+       /* A Call to this number that is attached to a Zoho Lead, Contact or
+          Account: the lead IS that record. A Prospect made on a call becomes a
+          Zoho Lead with the call on it, often with no phone of its own — matched
+          by phone alone it looked like call history, and the lead stayed in
+          Companies / Job board with a Zoho status but no "In Zoho". */
+       SELECT l.id, l.lead_code, l.name, t.module, t.zoho_id
+         FROM leads l
+         JOIN zoho_records c ON c.module = 'Calls' AND c.phone_key = l.phone_key AND c.linked_id IS NOT NULL
+         JOIN zoho_records t ON t.zoho_id = c.linked_id AND t.module <> 'Calls'
+        WHERE l.deleted_at IS NULL AND NOT l.removed
      ), ranked AS (
        /* 2 a Lead/Contact, 1 an Account, 0 only a Call: a better match
           is added on top of a weaker one, never the other way round */

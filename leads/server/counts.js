@@ -33,11 +33,11 @@ router.get("/api/counts", requireUser, async (req, res, next) => {
            instead (leads.js buildFilters — the same rule), so they are counted there */
         count(*) FILTER (WHERE kind = 'company' AND NOT removed AND recent_at IS NULL AND z.lead_id IS NULL)::int AS companies,
         count(*) FILTER (WHERE kind = 'person'  AND NOT removed AND recent_at IS NULL AND z.lead_id IS NULL)::int AS people,
-        count(*) FILTER (WHERE NOT removed AND z.lead_id IS NOT NULL)::int AS contacted,
+        count(*) FILTER (WHERE NOT removed AND (z.lead_id IS NOT NULL OR (kind = 'job' AND zc.lead_id IS NOT NULL)))::int AS contacted,
         count(*) FILTER (WHERE NOT removed)::int AS all_leads,
-        count(*) FILTER (WHERE kind = 'job'     AND NOT removed AND recent_at IS NULL)::int AS jobs,
+        count(*) FILTER (WHERE kind = 'job'     AND NOT removed AND recent_at IS NULL AND z.lead_id IS NULL AND zc.lead_id IS NULL)::int AS jobs,
         /* what an import just brought in, held under Recently added (025) */
-        count(*) FILTER (WHERE NOT removed AND recent_at IS NOT NULL)::int AS recent,
+        count(*) FILTER (WHERE NOT removed AND recent_at IS NOT NULL AND z.lead_id IS NULL AND zc.lead_id IS NULL)::int AS recent,
         count(*) FILTER (WHERE favorite AND NOT removed)::int          AS favorites,
         count(*) FILTER (WHERE removed)::int                           AS removed,
         count(*) FILTER (WHERE status = 'New' AND NOT removed)::int    AS status_new,
@@ -64,6 +64,11 @@ router.get("/api/counts", requireUser, async (req, res, next) => {
       LEFT JOIN (SELECT DISTINCT lead_id FROM activity_log
                   WHERE jsonb_exists(meta, 'crm_link') AND lead_id IS NOT NULL
                     AND meta->'crm_link'->>'module' IN ('Leads', 'Contacts', 'Accounts')) z ON z.lead_id = leads.id
+      /* a job posting's company in Zoho (zoho-scan.js inZohoSql: the posting goes with it) */
+      LEFT JOIN (SELECT DISTINCT lead_id FROM activity_log
+                  WHERE jsonb_exists(meta, 'crm_link') AND lead_id IS NOT NULL
+                    AND meta->'crm_link'->>'module' IN ('Leads', 'Contacts', 'Accounts')) zc
+             ON leads.kind = 'job' AND zc.lead_id = leads.company_lead_id
       WHERE deleted_at IS NULL${scope}`, args)).rows[0];   // the trash bin counts as gone
     if (!isAdmin) delete r.contacted;                   // the Contacted tab is admins' only
     const { all_leads, ...rest } = r;
