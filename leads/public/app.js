@@ -260,6 +260,20 @@ async function zohoAutoLoad() {
       s.changedBy ? `Set by ${s.changedBy}${s.changedAt ? " " + relTime(s.changedAt) : ""}.` : ""].filter(Boolean).join("\n");
 }
 
+/* The Job board's phone lookup (server/phone-finder.js): how it's going, in one line. */
+async function phoneFinderLoad() {
+  const el = $("phone-finder");
+  if (!el) return;
+  let s;
+  try { s = await api("/api/phone-finder/status"); } catch (e) { el.textContent = ""; return; }
+  if (!s.on) { el.textContent = "Automatic phone lookup is off"; return; }
+  el.textContent = `☎ ${dashN(s.foundToday)} phone${s.foundToday === 1 ? "" : "s"} found today · ${dashN(s.missing)} still without one`;
+  el.title = `Job board leads without a phone are looked up by themselves, a few every ${s.everyMin} minutes: `
+    + "a company we already hold, then the company's own website, then a web search "
+    + `(${s.webUsedToday} of ${s.webPerDay} today). A number is only kept when it's really on the page; `
+    + "Do Not Contact numbers are never used. Each phone found is noted on its lead.";
+}
+
 function zohoChip(on, kind) {
   if (!on) return "";
   /* Two kinds, from the 10-minute Zoho scan (zoho-scan.js): the number is a
@@ -9427,6 +9441,9 @@ function setTab(tab) {
   $("recent-ctl")?.classList.toggle("hidden", !TABS[tab].recentAdded);
   $("recent-release")?.classList.toggle("hidden", !TABS[tab].recentAdded || !isAdmin());
   if (TABS[tab].recentAdded) loadBatches();
+  $("phone-finder")?.classList.toggle("hidden", TABS[tab].kind !== "job");
+  $("phone-find")?.classList.toggle("hidden", TABS[tab].kind !== "job" || !isAdmin());
+  if (TABS[tab].kind === "job") phoneFinderLoad();
   $("zoho-scan")?.classList.toggle("hidden", !TABS[tab].contacted);
   $("zoho-auto")?.classList.toggle("hidden", !TABS[tab].contacted);
   if (TABS[tab].contacted) zohoAutoLoad();
@@ -9883,6 +9900,19 @@ function wire() {
     } catch (ex) { toast("Couldn't change it: " + ex.message, 6000); }
     e.target.disabled = false;
     zohoAutoLoad();
+  });
+  on("phone-find", "click", async () => {
+    const btn = $("phone-find");
+    btn.disabled = true; const label = btn.textContent; btn.textContent = "Looking up phones…";
+    try {
+      const r = await api("/api/phone-finder/run", { method: "POST" });
+      toast(r.tried ? `Found ${dashN(r.found)} phone${r.found === 1 ? "" : "s"} for ${dashN(r.tried)} Job board lead${r.tried === 1 ? "" : "s"} checked`
+        : "Nothing to look up right now — every Job board lead has a phone or was checked recently", 7000);
+      loadList(true);
+      phoneFinderLoad();
+    } catch (e) {
+      toast("Couldn't look up phones: " + (e.message || "unknown"), 8000);
+    } finally { btn.disabled = false; btn.textContent = label; }
   });
   on("zoho-scan", "click", async () => {
     const btn = $("zoho-scan");

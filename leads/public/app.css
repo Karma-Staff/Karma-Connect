@@ -1044,6 +1044,9 @@ body.zv-collapsed .zohovoice-container { display: none !important; }
 .seg-back-arrow { font-size: 16px; line-height: 1; }
 .list-filters { display: flex; align-items: center; gap: 8px; }
 #zoho-scan, .zoho-auto { white-space: nowrap; flex: none; }
+/* the Job board phone lookup line (phone-finder.js) */
+#phone-find { white-space: nowrap; flex: none; }
+.phone-finder { font-size: 12.5px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 /* Recently added: the release button asks twice (the first click says how many) */
 #recent-release { white-space: nowrap; flex: none; }
 #recent-release.armed { color: var(--accent-ink); border-color: var(--accent); }

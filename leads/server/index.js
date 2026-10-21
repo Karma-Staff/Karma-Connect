@@ -132,6 +132,11 @@ function mount(app, opts = {}) {
   const zohoScan = require("./zoho-scan");
   app.use(zohoScan.router);
   zohoScan.startSweeper();
+  /* Job board leads with no phone: looked up by themselves — a company we
+     hold, the company's website, then a capped, verified web search */
+  const phoneFinder = require("./phone-finder");
+  app.use(phoneFinder.router);
+  phoneFinder.startSweeper();
   /* each rep's recorded voicemail, for voicemail drop */
   app.use(require("./vm-drop").router);
   /* caller reputation: carrier status where a provider is connected, and the

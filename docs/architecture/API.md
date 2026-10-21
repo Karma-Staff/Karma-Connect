@@ -4,7 +4,7 @@
 
 # API
 
-**260 routes**, generated from the source on 2026-10-20.
+**262 routes**, generated from the source on 2026-10-21.
 
 Every path is absolute. That is deliberate: Karma Leads' API paths are the same
 whether it runs standalone or mounted into Connect, which is what let its front
@@ -47,13 +47,13 @@ declared once for the group.
 
 ---
 
-## Karma Leads — 167 routes
+## Karma Leads — 169 routes
 
 ### `/api/activity`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/activity` | admin | [leads/server/index.js:170](../../leads/server/index.js#L170) |  |
+| GET | `/api/activity` | admin | [leads/server/index.js:175](../../leads/server/index.js#L175) |  |
 
 ### `/api/alerts`
 
@@ -122,27 +122,27 @@ declared once for the group.
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/calltime` | signed in | [leads/server/campaign.js:228](../../leads/server/campaign.js#L228) | Calling hours for a number dialled by hand — a click on a lead's phone, the dial pad, the des… |
+| GET | `/api/calltime` | signed in | [leads/server/campaign.js:250](../../leads/server/campaign.js#L250) | Calling hours for a number dialled by hand — a click on a lead's phone, the dial pad, the des… |
 
 ### `/api/campaign`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/campaign/current` | signed in | [leads/server/campaign.js:239](../../leads/server/campaign.js#L239) |  |
-| POST | `/api/campaign/end` | signed in | [leads/server/campaign.js:405](../../leads/server/campaign.js#L405) |  |
-| GET | `/api/campaign/mine` | signed in | [leads/server/campaign.js:373](../../leads/server/campaign.js#L373) | GET /api/campaign/mine — the power-dialer campaigns given to this person, the open one first: |
-| POST | `/api/campaign/outcome` | signed in | [leads/server/campaign.js:250](../../leads/server/campaign.js#L250) | One press: log the call, set the status, optionally book a follow-back and leave a note, then… |
-| POST | `/api/campaign/pause` | signed in | [leads/server/campaign.js:422](../../leads/server/campaign.js#L422) | A break: whoever is dialling a campaign — the rep it was given to, or a manager working one t… |
-| GET | `/api/campaign/preview` | signed in | [leads/server/campaign.js:163](../../leads/server/campaign.js#L163) | How many are callable, before committing to a session. |
-| POST | `/api/campaign/start` | signed in | [leads/server/campaign.js:175](../../leads/server/campaign.js#L175) |  |
-| GET | `/api/campaign/state` | signed in | [leads/server/campaign.js:395](../../leads/server/campaign.js#L395) |  |
+| GET | `/api/campaign/current` | signed in | [leads/server/campaign.js:271](../../leads/server/campaign.js#L271) |  |
+| POST | `/api/campaign/end` | signed in | [leads/server/campaign.js:437](../../leads/server/campaign.js#L437) |  |
+| GET | `/api/campaign/mine` | signed in | [leads/server/campaign.js:405](../../leads/server/campaign.js#L405) | GET /api/campaign/mine — the power-dialer campaigns given to this person, the open one first: |
+| POST | `/api/campaign/outcome` | signed in | [leads/server/campaign.js:282](../../leads/server/campaign.js#L282) | One press: log the call, set the status, optionally book a follow-back and leave a note, then… |
+| POST | `/api/campaign/pause` | signed in | [leads/server/campaign.js:454](../../leads/server/campaign.js#L454) | A break: whoever is dialling a campaign — the rep it was given to, or a manager working one t… |
+| GET | `/api/campaign/preview` | signed in | [leads/server/campaign.js:185](../../leads/server/campaign.js#L185) | How many are callable, before committing to a session. |
+| POST | `/api/campaign/start` | signed in | [leads/server/campaign.js:197](../../leads/server/campaign.js#L197) |  |
+| GET | `/api/campaign/state` | signed in | [leads/server/campaign.js:427](../../leads/server/campaign.js#L427) |  |
 
 ### `/api/comments`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| PATCH | `/api/comments/:id` | signed in *(inherited)* | [leads/server/leads.js:565](../../leads/server/leads.js#L565) |  |
-| DELETE | `/api/comments/:id` | signed in *(inherited)* | [leads/server/leads.js:581](../../leads/server/leads.js#L581) |  |
+| PATCH | `/api/comments/:id` | signed in *(inherited)* | [leads/server/leads.js:571](../../leads/server/leads.js#L571) |  |
+| DELETE | `/api/comments/:id` | signed in *(inherited)* | [leads/server/leads.js:587](../../leads/server/leads.js#L587) |  |
 
 ### `/api/counts`
 
@@ -172,10 +172,10 @@ declared once for the group.
 | POST | `/api/crm/sync/recordings/retry` | admin | [leads/server/crm-sync.js:555](../../leads/server/crm-sync.js#L555) | POST /api/crm/sync/recordings/retry — look again for the recordings of calls already in Zoho… |
 | POST | `/api/crm/zoho/backfill` | admin | [leads/server/zoho-inbound.js:101](../../leads/server/zoho-inbound.js#L101) | The webhook only catches NEW Zoho records. |
 | POST | `/api/crm/zoho/lead-created` | — | [leads/server/zoho-inbound.js:42](../../leads/server/zoho-inbound.js#L42) |  |
-| POST | `/api/crm/zoho/match` | admin | [leads/server/zoho-scan.js:438](../../leads/server/zoho-scan.js#L438) | POST /api/crm/zoho/match {phones?: |
-| GET | `/api/crm/zoho/scan` | admin | [leads/server/zoho-scan.js:422](../../leads/server/zoho-scan.js#L422) | GET /api/crm/zoho/scan — when it last ran and what it found. |
-| POST | `/api/crm/zoho/scan` | admin | [leads/server/zoho-scan.js:413](../../leads/server/zoho-scan.js#L413) | POST /api/crm/zoho/scan — run one now (the "Scan Zoho" button). |
-| PUT | `/api/crm/zoho/scan/config` | admin | [leads/server/zoho-scan.js:396](../../leads/server/zoho-scan.js#L396) | PUT /api/crm/zoho/scan/config — {auto?: |
+| POST | `/api/crm/zoho/match` | admin | [leads/server/zoho-scan.js:453](../../leads/server/zoho-scan.js#L453) | POST /api/crm/zoho/match {phones?: |
+| GET | `/api/crm/zoho/scan` | admin | [leads/server/zoho-scan.js:437](../../leads/server/zoho-scan.js#L437) | GET /api/crm/zoho/scan — when it last ran and what it found. |
+| POST | `/api/crm/zoho/scan` | admin | [leads/server/zoho-scan.js:428](../../leads/server/zoho-scan.js#L428) | POST /api/crm/zoho/scan — run one now (the "Scan Zoho" button). |
+| PUT | `/api/crm/zoho/scan/config` | admin | [leads/server/zoho-scan.js:411](../../leads/server/zoho-scan.js#L411) | PUT /api/crm/zoho/scan/config — {auto?: |
 
 ### `/api/cron`
 
@@ -187,20 +187,20 @@ declared once for the group.
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/dialer/callback-targets` | admin | [leads/server/campaign.js:469](../../leads/server/campaign.js#L469) |  |
-| GET | `/api/dialer/campaigns` | admin | [leads/server/campaign.js:482](../../leads/server/campaign.js#L482) |  |
-| POST | `/api/dialer/campaigns` | admin | [leads/server/campaign.js:882](../../leads/server/campaign.js#L882) |  |
+| GET | `/api/dialer/callback-targets` | admin | [leads/server/campaign.js:501](../../leads/server/campaign.js#L501) |  |
+| GET | `/api/dialer/campaigns` | admin | [leads/server/campaign.js:514](../../leads/server/campaign.js#L514) |  |
+| POST | `/api/dialer/campaigns` | admin | [leads/server/campaign.js:914](../../leads/server/campaign.js#L914) |  |
 | GET | `/api/dialer/campaigns/:id/export` | admin | [leads/server/campaign-upload.js:259](../../leads/server/campaign-upload.js#L259) |  |
-| POST | `/api/dialer/campaigns/:id/state` | admin | [leads/server/campaign.js:1047](../../leads/server/campaign.js#L1047) | start / pause / resume / end |
-| POST | `/api/dialer/campaigns/:id/unassign` | admin | [leads/server/campaign.js:1076](../../leads/server/campaign.js#L1076) | Unassign a campaign's leads: |
-| POST | `/api/dialer/campaigns/ai-filter` | admin | [leads/server/campaign.js:858](../../leads/server/campaign.js#L858) | POST /api/dialer/campaigns/ai-filter {text} — plain words → the form's filter spec, whitelist… |
-| POST | `/api/dialer/campaigns/preview` | admin | [leads/server/campaign.js:717](../../leads/server/campaign.js#L717) | POST /api/dialer/campaigns/preview — what a build would hand out, before anything is changed: |
-| GET | `/api/dialer/campaigns/reps` | admin | [leads/server/campaign.js:524](../../leads/server/campaign.js#L524) | Who can be given a campaign, and how many callable leads each one has — the New campaign form… |
+| POST | `/api/dialer/campaigns/:id/state` | admin | [leads/server/campaign.js:1079](../../leads/server/campaign.js#L1079) | start / pause / resume / end |
+| POST | `/api/dialer/campaigns/:id/unassign` | admin | [leads/server/campaign.js:1108](../../leads/server/campaign.js#L1108) | Unassign a campaign's leads: |
+| POST | `/api/dialer/campaigns/ai-filter` | admin | [leads/server/campaign.js:890](../../leads/server/campaign.js#L890) | POST /api/dialer/campaigns/ai-filter {text} — plain words → the form's filter spec, whitelist… |
+| POST | `/api/dialer/campaigns/preview` | admin | [leads/server/campaign.js:749](../../leads/server/campaign.js#L749) | POST /api/dialer/campaigns/preview — what a build would hand out, before anything is changed: |
+| GET | `/api/dialer/campaigns/reps` | admin | [leads/server/campaign.js:556](../../leads/server/campaign.js#L556) | Who can be given a campaign, and how many callable leads each one has — the New campaign form… |
 | POST | `/api/dialer/campaigns/upload` | admin | [leads/server/campaign-upload.js:181](../../leads/server/campaign-upload.js#L181) |  |
-| GET | `/api/dialer/groups` | admin | [leads/server/campaign.js:995](../../leads/server/campaign.js#L995) |  |
-| POST | `/api/dialer/groups` | admin | [leads/server/campaign.js:998](../../leads/server/campaign.js#L998) |  |
-| PUT | `/api/dialer/groups/:id` | admin | [leads/server/campaign.js:1014](../../leads/server/campaign.js#L1014) |  |
-| DELETE | `/api/dialer/groups/:id` | admin | [leads/server/campaign.js:1039](../../leads/server/campaign.js#L1039) |  |
+| GET | `/api/dialer/groups` | admin | [leads/server/campaign.js:1027](../../leads/server/campaign.js#L1027) |  |
+| POST | `/api/dialer/groups` | admin | [leads/server/campaign.js:1030](../../leads/server/campaign.js#L1030) |  |
+| PUT | `/api/dialer/groups/:id` | admin | [leads/server/campaign.js:1046](../../leads/server/campaign.js#L1046) |  |
+| DELETE | `/api/dialer/groups/:id` | admin | [leads/server/campaign.js:1071](../../leads/server/campaign.js#L1071) |  |
 
 ### `/api/dnc-import`
 
@@ -241,33 +241,33 @@ declared once for the group.
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/lead-statuses` | signed in | [leads/server/leads.js:267](../../leads/server/leads.js#L267) |  |
+| GET | `/api/lead-statuses` | signed in | [leads/server/leads.js:273](../../leads/server/leads.js#L273) |  |
 
 ### `/api/leads`
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
 | GET | `/api/leads` | signed in | [leads/server/demo.js:266](../../leads/server/demo.js#L266) | The whole list, not just the distribute query — otherwise the tabs sit empty while the KPI ti… |
-| GET | `/api/leads` | signed in *(inherited)* | [leads/server/leads.js:187](../../leads/server/leads.js#L187) |  |
-| PATCH | `/api/leads/:id` | own lead *(inherited)* | [leads/server/leads.js:358](../../leads/server/leads.js#L358) | status / owner / favorite — the three judgement fields the UI edits |
+| GET | `/api/leads` | signed in *(inherited)* | [leads/server/leads.js:192](../../leads/server/leads.js#L192) |  |
+| PATCH | `/api/leads/:id` | own lead *(inherited)* | [leads/server/leads.js:364](../../leads/server/leads.js#L364) | status / owner / favorite — the three judgement fields the UI edits |
 | DELETE | `/api/leads/:id` | admin, own lead *(inherited)* | [leads/server/trash.js:110](../../leads/server/trash.js#L110) |  |
 | POST | `/api/leads/:id/call` | signed in, own lead *(inherited)* | [leads/server/calls.js:107](../../leads/server/calls.js#L107) | POST /api/leads/:id/call — the softphone reporting how a call went. |
-| GET | `/api/leads/:id/comments` | own lead *(inherited)* | [leads/server/leads.js:526](../../leads/server/leads.js#L526) |  |
-| POST | `/api/leads/:id/comments` | own lead *(inherited)* | [leads/server/leads.js:537](../../leads/server/leads.js#L537) |  |
+| GET | `/api/leads/:id/comments` | own lead *(inherited)* | [leads/server/leads.js:532](../../leads/server/leads.js#L532) |  |
+| POST | `/api/leads/:id/comments` | own lead *(inherited)* | [leads/server/leads.js:543](../../leads/server/leads.js#L543) |  |
 | POST | `/api/leads/:id/crm-lead` | signed in, own lead *(inherited)* | [leads/server/crm-sync.js:679](../../leads/server/crm-sync.js#L679) |  |
 | GET | `/api/leads/:id/delete-preview` | admin, own lead *(inherited)* | [leads/server/trash.js:94](../../leads/server/trash.js#L94) | what the confirm modal shows before the click: |
 | POST | `/api/leads/:id/disposition` | signed in, own lead *(inherited)* | [leads/server/calls.js:205](../../leads/server/calls.js#L205) |  |
 | GET | `/api/leads/:id/followup` | signed in, own lead *(inherited)* | [leads/server/followups.js:104](../../leads/server/followups.js#L104) | What is set on this lead right now — the reading pane asks on every open. |
 | POST | `/api/leads/:id/followup` | signed in, own lead *(inherited)* | [leads/server/followups.js:51](../../leads/server/followups.js#L51) | Set (or replace) the reminder on a lead. |
 | DELETE | `/api/leads/:id/followup` | signed in, own lead *(inherited)* | [leads/server/followups.js:116](../../leads/server/followups.js#L116) |  |
-| POST | `/api/leads/:id/remove` | own lead *(inherited)* | [leads/server/leads.js:423](../../leads/server/leads.js#L423) | removal is a phone ban: |
-| GET | `/api/leads/:id/remove-preview` | own lead *(inherited)* | [leads/server/leads.js:407](../../leads/server/leads.js#L407) | how many leads a ban would take down — the modal's blast radius line |
+| POST | `/api/leads/:id/remove` | own lead *(inherited)* | [leads/server/leads.js:429](../../leads/server/leads.js#L429) | removal is a phone ban: |
+| GET | `/api/leads/:id/remove-preview` | own lead *(inherited)* | [leads/server/leads.js:413](../../leads/server/leads.js#L413) | how many leads a ban would take down — the modal's blast radius line |
 | GET | `/api/leads/:id/research` | signed in, own lead *(inherited)* | [leads/server/research.js:49](../../leads/server/research.js#L49) | GET — whatever we already hold. |
 | POST | `/api/leads/:id/research` | signed in, own lead *(inherited)* | [leads/server/research.js:90](../../leads/server/research.js#L90) | POST — buy a briefing. |
-| POST | `/api/leads/:id/restore` | own lead *(inherited)* | [leads/server/leads.js:494](../../leads/server/leads.js#L494) |  |
+| POST | `/api/leads/:id/restore` | own lead *(inherited)* | [leads/server/leads.js:500](../../leads/server/leads.js#L500) |  |
 | GET | `/api/leads/:id/timeline` | signed in, own lead *(inherited)* | [leads/server/calls.js:761](../../leads/server/calls.js#L761) | GET /api/leads/:id/timeline — everything that ever happened to ONE lead. |
 | GET | `/api/leads/:key` | signed in | [leads/server/demo.js:310](../../leads/server/demo.js#L310) | Opening a lead. |
-| GET | `/api/leads/:key` | signed in *(inherited)* | [leads/server/leads.js:282](../../leads/server/leads.js#L282) | one lead plus everything the reading pane shows beside it |
+| GET | `/api/leads/:key` | signed in *(inherited)* | [leads/server/leads.js:288](../../leads/server/leads.js#L288) | one lead plus everything the reading pane shows beside it |
 
 ### `/api/me`
 
@@ -280,6 +280,13 @@ declared once for the group.
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
 | GET | `/api/owners` | signed in | [leads/server/bulk.js:224](../../leads/server/bulk.js#L224) | Two populations, one list: |
+
+### `/api/phone-finder`
+
+| Method | Path | Guard | Source | |
+|---|---|---|---|---|
+| POST | `/api/phone-finder/run` | admin | [leads/server/phone-finder.js:326](../../leads/server/phone-finder.js#L326) | run a round now (admin) — the same round the timer runs |
+| GET | `/api/phone-finder/status` | signed in | [leads/server/phone-finder.js:322](../../leads/server/phone-finder.js#L322) |  |
 
 ### `/api/phone-refresh`
 
@@ -298,8 +305,8 @@ declared once for the group.
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/recently-added/batches` | signed in | [leads/server/leads.js:234](../../leads/server/leads.js#L234) | GET /api/recently-added/batches — each import waiting under Recently added, newest first, wit… |
-| POST | `/api/recently-added/release` | admin | [leads/server/leads.js:249](../../leads/server/leads.js#L249) | POST /api/recently-added/release {batch?} (admin) — move recently added leads into their places: |
+| GET | `/api/recently-added/batches` | signed in | [leads/server/leads.js:239](../../leads/server/leads.js#L239) | GET /api/recently-added/batches — each import waiting under Recently added, newest first, wit… |
+| POST | `/api/recently-added/release` | admin | [leads/server/leads.js:255](../../leads/server/leads.js#L255) | POST /api/recently-added/release {batch?} (admin) — move recently added leads into their places: |
 
 ### `/api/recents`
 
