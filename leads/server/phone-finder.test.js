@@ -46,6 +46,34 @@ describe("never reading a private address", () => {
   });
 });
 
+describe("a Google Maps place is used only when it's plainly this business", () => {
+  const { sameBusiness, sameTown, mapsQuery } = _test;
+  it("matches the same name, written differently", () => {
+    expect(sameBusiness("Greenwood Industries, Inc.", "Greenwood Industries")).toBe(true);
+    expect(sameBusiness("Ruiz Restoration", "Ruiz Restoration LLC")).toBe(true);
+    expect(sameBusiness("A & B Water Damage", "A and B Water Damage")).toBe(true);
+  });
+  it("never gives one franchise branch's number to another", () => {
+    expect(sameBusiness("SERVPRO of South Tampa", "SERVPRO of North Tampa")).toBe(false);
+    expect(sameBusiness("Paul Davis Restoration of Austin", "Paul Davis Restoration of Dallas")).toBe(false);
+  });
+  it("refuses a different business", () => {
+    expect(sameBusiness("Greenwood Industries", "Greenwood Plumbing")).toBe(false);
+    expect(sameBusiness("Acme", "Zenith Roofing")).toBe(false);
+  });
+  it("needs the town to agree", () => {
+    expect(sameTown({ city: "Worcester", state: "MA" }, { city: "Worcester", state: "Massachusetts" })).toBe(true);
+    expect(sameTown({ city: "Worcester" }, { city: "Boston" })).toBe(false);
+    expect(sameTown({ state: "Massachusetts" }, { state: "MA" })).toBe(true);
+    expect(sameTown({ state: "TX" }, { state: "Oklahoma" })).toBe(false);
+    expect(sameTown({}, { city: "Boston" })).toBe(false);
+  });
+  it("looks a person up by their company", () => {
+    expect(mapsQuery({ kind: "person", name: "Jane Doe", company: "Ruiz Restoration", city: "Tampa", state: "FL" })).toBe("Ruiz Restoration, Tampa, FL");
+    expect(mapsQuery({ kind: "job", name: "Estimator", company: "Greenwood Industries", city: "Worcester", state: "MA" })).toBe("Greenwood Industries, Worcester, MA");
+  });
+});
+
 describe("a web search answer is kept only when the page says it", () => {
   const content = [
     { type: "text", text: "Their number is (512) 555-0187.", citations: [{ url: "https://acme.example/contact", cited_text: "Call Acme Restoration at 512-555-0187 today" }] },

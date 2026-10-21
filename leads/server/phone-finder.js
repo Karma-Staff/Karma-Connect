@@ -1,5 +1,5 @@
 "use strict";
-/* Automatic phone lookup for the Job board.
+/* Automatic phone lookup for leads without a phone — Companies, People, Job board.
 
    Job boards hand over a company's name, town and often its website — never a
    phone, so most Job board leads couldn't be called. This sweeper looks for
@@ -12,7 +12,9 @@
      3. website — the company's own site: its homepage and contact page, a
                   tel: link first, else the number printed most often (a fax
                   number is skipped)
-     4. web     — a web search, capped per day because each costs money. The
+     4. maps    — Google Maps (Apify), one run per round, capped per day; a place
+                  is used only when its name and town plainly match the lead
+     5. web     — a web search, capped per day because each costs money. The
                   answer is only kept when the number is in the text of the
                   page the search cites: a number the model merely "knows"
                   is never written to a lead.
@@ -34,7 +36,8 @@ const activity = require("./activity");
 const settings = require("./settings");
 const { pk } = require("./dedupe");
 const { findPhoneDonor, domainOf } = require("./enrich");
-const { inZohoSql } = require("./zoho-scan");
+// leads under Contacted (in Zoho, or worked through it) are not looked up
+const { listedContactedSql } = require("./zoho-scan");
 
 const router = express.Router();
 
@@ -210,33 +213,107 @@ async function fromWebSearch(lead) {
   return null;
 }
 
+/* ---------------- Google Maps ----------------
+   One Apify run for a batch of leads: each search is "<company>, <city>, <state>"
+   with one place back. A place is only used when it is plainly this business —
+   every distinctive word of one name is in the other (so "SERVPRO of North
+   Tampa" never gives its number to "SERVPRO of South Tampa") and its town
+   agrees with the lead's. Capped per day (MAPS_PER_DAY) and per run
+   (maxTotalChargeUsd), because each place is billed. */
+const MAPS_ACTOR = "compass~crawler-google-places";
+const MAPS_PER_DAY = Math.max(0, +(process.env.ENRICH_MAPS_PER_DAY ?? 500));
+const MAPS_PLACE_USD = 0.005;      // the actor's price per place, rounded up, for the run's charge cap
+
+const NOISE = new Set(["inc", "llc", "ltd", "co", "corp", "corporation", "company", "the", "and", "of", "pllc", "lp", "llp", "group"]);
+const words = (s) => String(s || "").toLowerCase().normalize("NFKD").replace(/&/g, " and ")
+  .replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter((w) => w && !NOISE.has(w));
+function sameBusiness(a, b) {
+  const A = words(a), B = words(b);
+  if (!A.length || !B.length) return false;
+  const inB = A.every((w) => B.includes(w)), inA = B.every((w) => A.includes(w));
+  // the shorter name entirely inside the longer, and a real word in common
+  return (inB || inA) && A.some((w) => w.length >= 3 && B.includes(w));
+}
+const place = (s) => String(s || "").toLowerCase().replace(/[^a-z]/g, "");
+const ST = { alabama: "al", alaska: "ak", arizona: "az", arkansas: "ar", california: "ca", colorado: "co", connecticut: "ct", delaware: "de",
+  florida: "fl", georgia: "ga", hawaii: "hi", idaho: "id", illinois: "il", indiana: "in", iowa: "ia", kansas: "ks", kentucky: "ky",
+  louisiana: "la", maine: "me", maryland: "md", massachusetts: "ma", michigan: "mi", minnesota: "mn", mississippi: "ms", missouri: "mo",
+  montana: "mt", nebraska: "ne", nevada: "nv", newhampshire: "nh", newjersey: "nj", newmexico: "nm", newyork: "ny", northcarolina: "nc",
+  northdakota: "nd", ohio: "oh", oklahoma: "ok", oregon: "or", pennsylvania: "pa", rhodeisland: "ri", southcarolina: "sc", southdakota: "sd",
+  tennessee: "tn", texas: "tx", utah: "ut", vermont: "vt", virginia: "va", washington: "wa", westvirginia: "wv", wisconsin: "wi", wyoming: "wy",
+  districtofcolumbia: "dc", ontario: "on", quebec: "qc", britishcolumbia: "bc", alberta: "ab", manitoba: "mb", saskatchewan: "sk",
+  novascotia: "ns", newbrunswick: "nb", newfoundlandandlabrador: "nl", princeedwardisland: "pe" };
+const stOf = (s) => { const p = place(s); return p.length === 2 ? p : ST[p] || p; };
+function sameTown(lead, item) {
+  if (str(lead.city) && str(item.city)) return place(lead.city) === place(item.city);
+  if (str(lead.state) && str(item.state)) return stOf(lead.state) === stOf(item.state);
+  return false;    // nothing to compare: not sure enough to ring it
+}
+const mapsName = (lead) => str(lead.kind === "person" ? lead.company : lead.company || lead.name);
+const mapsQuery = (lead) => [mapsName(lead), str(lead.city), str(lead.state)].filter(Boolean).join(", ");
+
+// leads → Map(lead.id → { key, source }) for the ones Google Maps plainly matched
+async function fromMaps(leads) {
+  const out = new Map();
+  const ask = leads.filter((l) => mapsName(l) && (str(l.city) || str(l.state)));
+  if (!ask.length) return out;
+  const byQuery = new Map(ask.map((l) => [mapsQuery(l), l]));
+  const { apify } = require("./apify");
+  const items = await apify(
+    `/acts/${MAPS_ACTOR}/run-sync-get-dataset-items?timeout=280&format=json&clean=true`
+    + `&maxTotalChargeUsd=${(byQuery.size * MAPS_PLACE_USD + 0.01).toFixed(2)}`,
+    { method: "POST", body: JSON.stringify({ searchStringsArray: [...byQuery.keys()], maxCrawledPlacesPerSearch: 1, language: "en" }) });
+  for (const it of Array.isArray(items) ? items : []) {
+    const lead = byQuery.get(str(it.searchString));
+    if (!lead || out.has(lead.id) || it.permanentlyClosed) continue;
+    const key = pk(it.phoneUnformatted || it.phone);
+    if (!key || !sameBusiness(mapsName(lead), it.title) || !sameTown(lead, it)) continue;
+    out.set(lead.id, { key, source: it.url || "Google Maps: " + it.title });
+  }
+  return out;
+}
+
 /* ---------------- one lead ---------------- */
 const banned = async (key) => (await query("SELECT 1 FROM blocklist WHERE phone_key = $1", [key])).rowCount > 0;
 
-async function webBudget() {
+// today's paid lookups (web searches, Google Maps places), kept in app_settings
+async function budget() {
   const today = new Date().toISOString().slice(0, 10);
   const st = await settings.get(STATE, {});
-  const used = st.day === today ? st.webUsed || 0 : 0;
-  return { today, used, left: Math.max(0, WEB_PER_DAY - used), st };
+  const same = st.day === today;
+  const webUsed = same ? st.webUsed || 0 : 0, mapsUsed = same ? st.mapsUsed || 0 : 0;
+  return { today, st: same ? st : { day: today }, webUsed, mapsUsed,
+    webLeft: Math.max(0, WEB_PER_DAY - webUsed), mapsLeft: Math.max(0, MAPS_PER_DAY - mapsUsed) };
 }
-async function spendWeb() {
-  const b = await webBudget();
-  await settings.set(STATE, { ...b.st, day: b.today, webUsed: b.used + 1 }, "phone-finder").catch(() => {});
+async function spend(field, n = 1) {
+  const b = await budget();
+  await settings.set(STATE, { ...b.st, day: b.today, [field]: (b[field] || 0) + n }, "phone-finder").catch(() => {});
 }
+const webBudget = async () => { const b = await budget(); return { used: b.webUsed, left: b.webLeft }; };
+const spendWeb = () => spend("webUsed");
 
-async function findFor(lead, { allowWeb }) {
-  // 1. its company has one
+// the free steps: its company, a company we hold, its own website
+async function findFree(lead) {
   if (lead.kind === "job" && lead.company_phone_key) return { key: lead.company_phone_key, how: "company", source: "company #" + lead.company_lead_id };
-  // 2. a company we already hold
-  const co = { id: lead.id, name: str(lead.company) || str(lead.name), website: lead.website || lead.company_website, city: lead.city, state: lead.state };
-  const donor = await findPhoneDonor(query, co).catch(() => null);
-  if (donor && donor.donor && donor.donor.phone_key) return { key: donor.donor.phone_key, how: "donor", source: "lead #" + donor.donor.id };
-  // 3. its own website
+  // a person's company line is only looked up by company — never matched to a company by a person's name
+  const coName = lead.kind === "person" ? str(lead.company) : str(lead.company) || str(lead.name);
+  if (!coName && !(lead.website || lead.company_website)) return null;
+  const co = { id: lead.id, name: coName, website: lead.website || lead.company_website, city: lead.city, state: lead.state };
+  if (coName) {
+    const donor = await findPhoneDonor(query, co).catch(() => null);
+    if (donor && donor.donor && donor.donor.phone_key) return { key: donor.donor.phone_key, how: "donor", source: "lead #" + donor.donor.id };
+  }
   if (co.website) {
     const w = await fromWebsite(co.website).catch(() => null);
     if (w) return { key: w.key, how: "website", source: w.source };
   }
-  // 4. a web search (capped)
+  return null;
+}
+
+// one lead through every step — the free ones, then a web search when allowed (kept for tests)
+async function findFor(lead, { allowWeb }) {
+  const free = await findFree(lead);
+  if (free) return free;
   if (allowWeb) {
     await spendWeb();
     const s = await fromWebSearch(lead).catch(() => null);
@@ -244,6 +321,9 @@ async function findFor(lead, { allowWeb }) {
   }
   return null;
 }
+
+const WORDS = { company: "from its company", donor: "from a matching company already in Karma Connect",
+  website: "from the company's website", maps: "from Google Maps", web: "from a web search" };
 
 async function save(lead, hit) {
   if (await banned(hit.key)) return false;     // a DNC number never comes back through here
@@ -258,47 +338,75 @@ async function save(lead, hit) {
     await query(`UPDATE leads SET phone = $2, phone_key = $3, phone_enrich_at = now(), phone_enrich_source = 'company', updated_at = now()
                   WHERE kind = 'job' AND company_lead_id = $1 AND deleted_at IS NULL AND NOT removed AND nullif(btrim(phone), '') IS NULL`,
       [lead.id, phone, hit.key]);
-  const WORDS = { company: "from its company", donor: "from a matching company already in Karma Connect", website: "from the company's website", web: "from a web search" };
+  const what = lead.kind === "person" ? " (their company's line)" : "";
   await activity.log({ actor: "phone-finder", action: "enrich", lead_id: lead.id, lead_code: r.rows[0].lead_code, lead_name: r.rows[0].name,
-    to_value: `Phone found ${WORDS[hit.how] || ""}: ${phone}`.trim(), meta: { auto_phone: hit.how, source: hit.source || null } }).catch(() => {});
+    to_value: `Phone found ${WORDS[hit.how] || ""}: ${phone}${what}`.replace(/\s+/g, " ").trim(), meta: { auto_phone: hit.how, source: hit.source || null } }).catch(() => {});
   return true;
 }
 
-/* ---------------- the sweep ---------------- */
-// Job board leads with no phone: job postings, and the companies the job search added
-const QUEUE = `
+/* ---------------- the sweep ----------------
+   Every lead without a phone in Companies, People and the Job board — not in
+   Zoho or already contacted through it (those are under Contacted), not
+   removed or binned. Companies first, so a posting gets its company's phone. */
+const where = `
+   WHERE l.deleted_at IS NULL AND NOT l.removed AND nullif(btrim(l.phone), '') IS NULL
+     AND l.kind IN ('company', 'person', 'job')
+     AND (nullif(btrim(l.company), '') IS NOT NULL OR nullif(btrim(l.name), '') IS NOT NULL)
+     AND NOT ${listedContactedSql("l")}`;
+const queueSql = (n) => `
   SELECT l.id, l.kind, l.name, l.company, l.website, l.city, l.state, l.industry, l.company_lead_id,
          c.phone_key AS company_phone_key, c.website AS company_website
     FROM leads l LEFT JOIN leads c ON c.id = l.company_lead_id AND c.deleted_at IS NULL AND NOT c.removed
-   WHERE l.deleted_at IS NULL AND NOT l.removed AND nullif(btrim(l.phone), '') IS NULL
-     AND (l.kind = 'job' OR (l.kind = 'company' AND l.source = 'Job board'))
-     AND (nullif(btrim(l.company), '') IS NOT NULL OR nullif(btrim(l.name), '') IS NOT NULL)
+  ${where}
      AND (l.phone_enrich_at IS NULL OR l.phone_enrich_at < now() - make_interval(days => ${RETRY_DAYS}))
-     AND NOT ${inZohoSql("l")}
-   -- companies first: a posting then gets its company's phone without a second look
-   ORDER BY l.phone_enrich_at NULLS FIRST, (l.kind = 'company') DESC, l.date_added DESC NULLS LAST, l.id DESC
-   LIMIT ${PER_ROUND}`;
+   ORDER BY l.phone_enrich_at NULLS FIRST,
+            CASE l.kind WHEN 'company' THEN 0 WHEN 'job' THEN 1 ELSE 2 END, l.date_added DESC NULLS LAST, l.id DESC
+   LIMIT ${Math.max(1, Math.min(100, n))}`;
 
 let running = null;
-async function round() {
+async function round(size = PER_ROUND) {
   if (running) return running;
   running = (async () => {
-    const leads = (await query(QUEUE)).rows;
-    const by = { company: 0, donor: 0, website: 0, web: 0, none: 0 };
+    const leads = (await query(queueSql(size))).rows;
+    const by = { company: 0, donor: 0, website: 0, maps: 0, web: 0, none: 0 };
+    const left = [];
+    // 1. the free steps, lead by lead
     for (const lead of leads) {
       // tried now, whatever happens: the next round moves on to others. A posting
       // whose company was filled a moment ago in this round already has its phone.
       const cur = (await query(
-        "UPDATE leads SET phone_enrich_at = coalesce(phone_enrich_at, now()) WHERE id = $1 RETURNING nullif(btrim(phone), '') IS NULL AS blank",
-        [lead.id])).rows[0];
+        "UPDATE leads SET phone_enrich_at = now() WHERE id = $1 RETURNING nullif(btrim(phone), '') IS NULL AS blank", [lead.id])).rows[0];
       if (!cur || !cur.blank) continue;
-      await query("UPDATE leads SET phone_enrich_at = now() WHERE id = $1", [lead.id]);
-      const { left } = await webBudget();
-      const hit = await findFor(lead, { allowWeb: left > 0 });
+      const hit = await findFree(lead);
       if (hit && (await save(lead, hit))) by[hit.how]++;
+      else left.push(lead);
+    }
+    // 2. Google Maps, one run for the rest (within today's cap)
+    let rest = left;
+    const b = await budget();
+    if (rest.length && b.mapsLeft > 0) {
+      const ask = rest.filter((l) => mapsName(l) && (str(l.city) || str(l.state))).slice(0, b.mapsLeft);
+      if (ask.length) {
+        await spend("mapsUsed", ask.length);
+        const found = await fromMaps(ask).catch((e) => { console.warn("[karma] phone finder: Google Maps:", e.message); return new Map(); });
+        rest = [];
+        for (const lead of left) {
+          const m = found.get(lead.id);
+          if (m && (await save(lead, { ...m, how: "maps" }))) by.maps++;
+          else rest.push(lead);
+        }
+      }
+    }
+    // 3. a web search for what's still missing (within today's cap)
+    for (const lead of rest) {
+      const { left: webLeft } = await webBudget();
+      if (webLeft <= 0) { by.none++; continue; }
+      await spendWeb();
+      const s = await fromWebSearch(lead).catch(() => null);
+      if (s && (await save(lead, { key: s.key, how: "web", source: s.source }))) by.web++;
       else by.none++;
     }
-    const found = by.company + by.donor + by.website + by.web;
+    const found = by.company + by.donor + by.website + by.maps + by.web;
     if (found) console.log(`[karma] phone finder: ${found} of ${leads.length} found`, by);
     return { tried: leads.length, found, ...by };
   })().finally(() => { running = null; });
@@ -307,26 +415,29 @@ async function round() {
 
 async function status() {
   const r = (await query(`
-    SELECT count(*) FILTER (WHERE nullif(btrim(phone), '') IS NULL)::int AS missing,
-           count(*) FILTER (WHERE phone_enrich_source IS NOT NULL AND phone_enrich_at > now() - interval '24 hours')::int AS found_today,
-           count(*) FILTER (WHERE phone_enrich_source IS NOT NULL)::int AS found_total
-      FROM leads l
-     WHERE l.deleted_at IS NULL AND NOT l.removed
-       AND (l.kind = 'job' OR (l.kind = 'company' AND l.source = 'Job board'))
-       AND NOT ${inZohoSql("l")}`)).rows[0];
-  const b = await webBudget();
-  return { on: ON, missing: r.missing, foundToday: r.found_today, foundTotal: r.found_total,
-    webUsedToday: b.used, webPerDay: WEB_PER_DAY, everyMin: EVERY_MIN, busy: !!running };
+    SELECT count(*)::int AS missing,
+           count(*) FILTER (WHERE l.kind = 'company')::int AS missing_companies,
+           count(*) FILTER (WHERE l.kind = 'person')::int AS missing_people,
+           count(*) FILTER (WHERE l.kind = 'job')::int AS missing_jobs
+      FROM leads l ${where}`)).rows[0];
+  const f = (await query(`
+    SELECT count(*) FILTER (WHERE phone_enrich_at > now() - interval '24 hours')::int AS today, count(*)::int AS total
+      FROM leads WHERE phone_enrich_source IS NOT NULL AND deleted_at IS NULL`)).rows[0];
+  const b = await budget();
+  return { on: ON, missing: r.missing, missingCompanies: r.missing_companies, missingPeople: r.missing_people, missingJobs: r.missing_jobs,
+    foundToday: f.today, foundTotal: f.total, webUsedToday: b.webUsed, webPerDay: WEB_PER_DAY,
+    mapsUsedToday: b.mapsUsed, mapsPerDay: MAPS_PER_DAY, everyMin: EVERY_MIN, busy: !!running };
 }
 
 router.get("/api/phone-finder/status", requireUser, async (req, res, next) => {
   try { res.json(await status()); } catch (e) { next(e); }
 });
-// run a round now (admin) — the same round the timer runs
-router.post("/api/phone-finder/run", requireAdmin, async (req, res, next) => {
+// run a round now (admin) — the timer's round, or a bigger one (up to 100 leads) for a backlog
+router.post("/api/phone-finder/run", requireAdmin, express.json({ limit: "1kb" }), async (req, res, next) => {
   try {
     if (!ON) return res.status(400).json({ error: "The phone finder is turned off (ENRICH_PHONES=0)." });
-    const r = await round();
+    const size = Math.max(1, Math.min(100, parseInt(req.body && req.body.size, 10) || PER_ROUND));
+    const r = await round(size);
     res.json({ ...r, status: await status() });
   } catch (e) { next(e); }
 });
@@ -337,8 +448,8 @@ function startSweeper() {
   if (process.env.KARMA_NO_SWEEP === "1") return;
   timer = setInterval(() => { round().catch((e) => console.error("[karma] phone finder:", e.message)); }, EVERY_MIN * 60000);
   timer.unref();
-  console.log(`Phone finder on: Job board leads without a phone, ${PER_ROUND} every ${EVERY_MIN} min (web searches: ${WEB_PER_DAY}/day).`);
+  console.log(`Phone finder on: leads without a phone, ${PER_ROUND} every ${EVERY_MIN} min (Google Maps ${MAPS_PER_DAY}/day, web searches ${WEB_PER_DAY}/day).`);
 }
 
 module.exports = { router, startSweeper, round, status,
-  _test: { phonesFromHtml, bestPhone, isPrivateIp, publicUrl, verifiedByCitations, fmt, findFor } };
+  _test: { phonesFromHtml, bestPhone, isPrivateIp, publicUrl, verifiedByCitations, fmt, findFor, sameBusiness, sameTown, mapsQuery } };

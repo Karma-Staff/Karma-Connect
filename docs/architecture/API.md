@@ -148,7 +148,7 @@ declared once for the group.
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| GET | `/api/counts` | signed in | [leads/server/counts.js:19](../../leads/server/counts.js#L19) |  |
+| GET | `/api/counts` | signed in | [leads/server/counts.js:21](../../leads/server/counts.js#L21) |  |
 | GET | `/api/counts` | signed in | [leads/server/demo.js:342](../../leads/server/demo.js#L342) | Counted from the same rows the list serves. |
 
 ### `/api/crm`
@@ -172,10 +172,10 @@ declared once for the group.
 | POST | `/api/crm/sync/recordings/retry` | admin | [leads/server/crm-sync.js:555](../../leads/server/crm-sync.js#L555) | POST /api/crm/sync/recordings/retry — look again for the recordings of calls already in Zoho… |
 | POST | `/api/crm/zoho/backfill` | admin | [leads/server/zoho-inbound.js:101](../../leads/server/zoho-inbound.js#L101) | The webhook only catches NEW Zoho records. |
 | POST | `/api/crm/zoho/lead-created` | — | [leads/server/zoho-inbound.js:42](../../leads/server/zoho-inbound.js#L42) |  |
-| POST | `/api/crm/zoho/match` | admin | [leads/server/zoho-scan.js:453](../../leads/server/zoho-scan.js#L453) | POST /api/crm/zoho/match {phones?: |
-| GET | `/api/crm/zoho/scan` | admin | [leads/server/zoho-scan.js:437](../../leads/server/zoho-scan.js#L437) | GET /api/crm/zoho/scan — when it last ran and what it found. |
-| POST | `/api/crm/zoho/scan` | admin | [leads/server/zoho-scan.js:428](../../leads/server/zoho-scan.js#L428) | POST /api/crm/zoho/scan — run one now (the "Scan Zoho" button). |
-| PUT | `/api/crm/zoho/scan/config` | admin | [leads/server/zoho-scan.js:411](../../leads/server/zoho-scan.js#L411) | PUT /api/crm/zoho/scan/config — {auto?: |
+| POST | `/api/crm/zoho/match` | admin | [leads/server/zoho-scan.js:469](../../leads/server/zoho-scan.js#L469) | POST /api/crm/zoho/match {phones?: |
+| GET | `/api/crm/zoho/scan` | admin | [leads/server/zoho-scan.js:453](../../leads/server/zoho-scan.js#L453) | GET /api/crm/zoho/scan — when it last ran and what it found. |
+| POST | `/api/crm/zoho/scan` | admin | [leads/server/zoho-scan.js:444](../../leads/server/zoho-scan.js#L444) | POST /api/crm/zoho/scan — run one now (the "Scan Zoho" button). |
+| PUT | `/api/crm/zoho/scan/config` | admin | [leads/server/zoho-scan.js:427](../../leads/server/zoho-scan.js#L427) | PUT /api/crm/zoho/scan/config — {auto?: |
 
 ### `/api/cron`
 
@@ -285,8 +285,8 @@ declared once for the group.
 
 | Method | Path | Guard | Source | |
 |---|---|---|---|---|
-| POST | `/api/phone-finder/run` | admin | [leads/server/phone-finder.js:326](../../leads/server/phone-finder.js#L326) | run a round now (admin) — the same round the timer runs |
-| GET | `/api/phone-finder/status` | signed in | [leads/server/phone-finder.js:322](../../leads/server/phone-finder.js#L322) |  |
+| POST | `/api/phone-finder/run` | admin | [leads/server/phone-finder.js:436](../../leads/server/phone-finder.js#L436) | run a round now (admin) — the timer's round, or a bigger one (up to 100 leads) for a backlog |
+| GET | `/api/phone-finder/status` | signed in | [leads/server/phone-finder.js:432](../../leads/server/phone-finder.js#L432) |  |
 
 ### `/api/phone-refresh`
 
