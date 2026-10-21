@@ -33,13 +33,14 @@ router.get("/api/counts", requireUser, async (req, res, next) => {
       SELECT
         /* in Zoho or worked through it (zoho-scan.js listedContactedSql — the
            lists' rule): counted under Contacted, not in the four tabs below */
-        count(*) FILTER (WHERE kind = 'company' AND NOT removed AND recent_at IS NULL AND NOT in_z)::int AS companies,
-        count(*) FILTER (WHERE kind = 'person'  AND NOT removed AND recent_at IS NULL AND NOT in_z)::int AS people,
+        count(*) FILTER (WHERE kind = 'company' AND NOT removed AND recent_at IS NULL AND NOT in_z AND NOT is_client)::int AS companies,
+        count(*) FILTER (WHERE kind = 'person'  AND NOT removed AND recent_at IS NULL AND NOT in_z AND NOT is_client)::int AS people,
         count(*) FILTER (WHERE NOT removed AND in_z)::int AS contacted,
         count(*) FILTER (WHERE NOT removed)::int AS all_leads,
-        count(*) FILTER (WHERE kind = 'job'     AND NOT removed AND recent_at IS NULL AND NOT in_z)::int AS jobs,
+        (SELECT count(*)::int FROM clients) AS clients,            -- the Clients list (clients.js)
+        count(*) FILTER (WHERE kind = 'job'     AND NOT removed AND recent_at IS NULL AND NOT in_z AND NOT is_client)::int AS jobs,
         /* what an import just brought in, held under Recently added (025) */
-        count(*) FILTER (WHERE NOT removed AND recent_at IS NOT NULL AND NOT in_z)::int AS recent,
+        count(*) FILTER (WHERE NOT removed AND recent_at IS NOT NULL AND NOT in_z AND NOT is_client)::int AS recent,
         count(*) FILTER (WHERE favorite AND NOT removed)::int          AS favorites,
         count(*) FILTER (WHERE removed)::int                           AS removed,
         count(*) FILTER (WHERE status = 'New' AND NOT removed)::int    AS status_new,
@@ -62,7 +63,7 @@ router.get("/api/counts", requireUser, async (req, res, next) => {
         count(*) FILTER (WHERE date_added >= current_date - 13
                          AND date_added < current_date - 6
                          AND NOT removed)::int                         AS prev_week
-      FROM (SELECT leads.*, ${listedContactedSql("leads")} AS in_z FROM leads
+      FROM (SELECT leads.*, ${listedContactedSql("leads")} AS in_z, ${require("./clients").isClientSql("leads")} AS is_client FROM leads
              WHERE deleted_at IS NULL${scope}) leads`, args)).rows[0];   // the trash bin counts as gone
     if (!isAdmin) delete r.contacted;                   // the Contacted tab is admins' only
     const { all_leads, ...rest } = r;

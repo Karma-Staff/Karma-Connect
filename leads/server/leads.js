@@ -141,6 +141,10 @@ function buildFilters(p, user) {
      Favorites, the DNC tab and Contacted itself still show it. */
   if (["company", "person", "job"].includes(p.kind) && p.inzoho !== "true" && p.favorite !== "true" && p.removed !== "true")
     add("NOT " + listedContactedSql("leads"));
+  /* Clients (clients.js) are never called: out of Companies, People, Job
+     board and Recently added. Lazily required — clients.js reads leads.js. */
+  if ((["company", "person", "job"].includes(p.kind) || p.recent === "true") && p.favorite !== "true" && p.removed !== "true")
+    add("NOT " + require("./clients").isClientSql("leads"));
   // removed=true is the DNC tab; everything else excludes banned leads
   add(p.removed === "true" ? "removed" : "NOT removed");
   // a deleted lead is in the admin's trash bin: no tab, DNC included, shows it

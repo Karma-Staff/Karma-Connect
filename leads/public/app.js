@@ -46,6 +46,8 @@ const TABS = {
   contacted: { title: "Contacted — registered in Zoho", contacted: true, admin: true },
   // admin-only under Manage: members remove with a 5s undo instead of a tab
   removed:   { title: "DNC — do not call", removedTab: true, admin: true },
+  // admin-only under Manage: companies we work for — uploaded here, never called
+  clients:   { title: "Clients", clients: true, admin: true },
   // admin-only, and not a list of leads at all: the team's action log
   stats:     { title: "Team activity", stats: true, admin: true },
   // admin-only, also not a list: who is carrying what, and the unclaimed pool
@@ -367,6 +369,7 @@ const PANES = {
   team:   "team-pane",
   power:  "power-pane",
   reputation: "rep-pane",
+  clients: "clients-pane",
   tasks:  "tasks-pane",
   research: "research-pane",
   storm: "storm-pane",
@@ -407,6 +410,7 @@ async function runCounts() {
   $("count-jobs").textContent = c.jobs.toLocaleString();
   $("count-favorites").textContent = c.favorites.toLocaleString();
   $("count-removed").textContent = c.removed.toLocaleString();
+  if ($("count-clients")) $("count-clients").textContent = c.clients != null ? c.clients.toLocaleString() : "";
   // companies and people already in Zoho are counted here instead (admins)
   if ($("count-contacted")) $("count-contacted").textContent = c.contacted != null ? c.contacted.toLocaleString() : "";
   /* compact (1.3k) so the long "Recently added" label keeps its room */
@@ -603,6 +607,7 @@ async function loadList(resetPage = false) {
   if (cfg.calllog) return loadCallLog();
   if (cfg.team) return loadTeam();
   if (cfg.reputation) return loadRep();
+  if (cfg.clients) return loadClients();
   if (cfg.power) return loadPower();
   if (cfg.tasks) return loadTasks();
   if (cfg.research) return loadResearchCenter();
@@ -6190,6 +6195,11 @@ async function callHoursOk(number, leadId) {
     return false;
   }
   if (ct.open) return true;
+  // a client (Clients, clients.js): never rung from Karma Connect
+  if (ct.client) {
+    say("Not dialled — " + (ct.clientName ? ct.clientName + " is" : "this number is") + " a client. Calls to clients are blocked.");
+    return false;
+  }
   // on Do Not Contact (campaign.js /api/calltime): never rung, whatever the hour
   if (ct.dnc) {
     say("Not dialled — this number is on Do Not Contact" + (ct.reason ? ` (${ct.reason})` : "") + ". Calls to it are blocked.");
@@ -12119,6 +12129,113 @@ const repRisk = (r) => r ? `<span class="rep-risk"><b>${r.score}</b><span>/100</
     <span class="rep-band ${REP_BAND[r.band] || "none"}">${esc(r.label)}</span></span>` : `<span class="dash-mute">Not checked</span>`;
 const repSpam = (rep) => !rep.verified ? `<span class="dash-mute">Unknown</span>`
   : rep.spamFlag === true ? `<b class="rep-yes">Yes</b>` : rep.spamFlag === false ? "No" : `<span class="dash-mute">Unknown</span>`;
+
+/* ---------------- Clients ----------------
+   Companies Karma Staff already works for (server/clients.js): uploaded or
+   added here, and from then on never called, listed or put in a campaign. */
+const CLI = { q: "", list: [], total: 0, matched: 0, confirm: null, timer: null };
+async function loadClients() {
+  wireClients();
+  const body = $("cli-body");
+  if (!body) return;
+  if (!CLI.list.length) body.innerHTML = `<p class="act-empty">Loading…</p>`;
+  let d;
+  try { d = await api("/api/clients" + (CLI.q ? "?q=" + encodeURIComponent(CLI.q) : "")); }
+  catch (e) { body.innerHTML = `<p class="act-empty">Couldn't load the clients (${esc(e.message)})</p>`; return; }
+  CLI.list = d.clients || []; CLI.total = d.total || 0; CLI.matched = d.matchedLeads || 0;
+  renderClients();
+}
+function renderClients() {
+  $("cli-sub").textContent = `${dashN(CLI.total)} client${CLI.total === 1 ? "" : "s"} · ${dashN(CLI.matched)} lead${CLI.matched === 1 ? "" : "s"} kept out of the lists and the dialler because they're clients`;
+  if ($("count-clients")) $("count-clients").textContent = CLI.total ? CLI.total.toLocaleString() : "";
+  const body = $("cli-body");
+  if (!CLI.list.length) {
+    body.innerHTML = `<p class="act-empty">${CLI.q ? "No client matches that search." : "No clients yet. Upload a spreadsheet of your clients, or add one by hand — nobody will call them."}</p>`;
+    return;
+  }
+  body.innerHTML = `<div class="cli-wrap"><table class="cli-table">
+    <thead><tr><th>Company</th><th>Contact</th><th>Phone</th><th>Email</th><th>Where</th><th>Added</th><th></th></tr></thead>
+    <tbody>${CLI.list.map((c) => `<tr>
+      <td><b>${esc(c.company || "—")}</b>${c.note ? `<div class="cli-note">${esc(c.note)}</div>` : ""}</td>
+      <td>${esc(c.contact || "")}</td>
+      <td class="n">${esc(c.phone ? (dashPhone(c.phone) || c.phone) : "")}</td>
+      <td>${esc(c.email || "")}</td>
+      <td>${esc([c.city, c.state].filter(Boolean).join(", "))}</td>
+      <td title="${esc(c.batch || "")}">${esc(relTime(c.added_at))}${c.added_by ? ` · ${esc(String(c.added_by).split("@")[0])}` : ""}</td>
+      <td class="cli-act">${CLI.confirm === +c.id
+        ? `<button class="btn-ghost cli-del-yes" data-cli-del="${c.id}">Remove from clients</button> <button class="btn-ghost" data-cli-cancel="1">Keep</button>`
+        : `<button class="btn-ghost" data-cli-ask="${c.id}" title="Not a client any more: they can be called again">Remove</button>`}</td>
+    </tr>`).join("")}</tbody></table></div>`;
+}
+function cliAddForm() {
+  $("modal-title").textContent = "Add a client";
+  $("modal-body").innerHTML = `
+    <form id="cli-form" class="modal-form">
+      <p class="modal-sub">A company name, a phone number or an email is enough. Once added, nobody calls them.</p>
+      <label class="modal-field">Company<input id="cli-f-company" maxlength="160" placeholder="Acme Restoration"></label>
+      <label class="modal-field">Contact (optional)<input id="cli-f-contact" maxlength="120" placeholder="Jane Doe"></label>
+      <label class="modal-field">Phone<input id="cli-f-phone" maxlength="40" placeholder="(512) 555-0100"></label>
+      <label class="modal-field">Email (optional)<input id="cli-f-email" type="email" maxlength="160"></label>
+      <label class="modal-field">City and state (optional)<span class="cli-two"><input id="cli-f-city" maxlength="80" placeholder="Austin"><input id="cli-f-state" maxlength="40" placeholder="TX"></span></label>
+      <div id="cli-f-err" class="login-error hidden"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="modal-cancel">Cancel</button>
+        <button type="submit" class="btn-primary" id="cli-f-save">Add client</button>
+      </div>
+    </form>`;
+  $("modal-backdrop").classList.remove("hidden");
+  $("modal-cancel").addEventListener("click", closeModal);
+  $("cli-f-company").focus();
+  $("cli-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const err = $("cli-f-err"), btn = $("cli-f-save");
+    err.classList.add("hidden"); btn.disabled = true;
+    const v = (id) => $(id).value.trim();
+    try {
+      const r = await api("/api/clients", { method: "POST", body: JSON.stringify({ company: v("cli-f-company"), contact: v("cli-f-contact"),
+        phone: v("cli-f-phone"), email: v("cli-f-email"), city: v("cli-f-city"), state: v("cli-f-state") }) });
+      closeModal();
+      toast(r.added ? "Client added — they won't be called" : "That client is already on the list", 5000);
+      loadClients(); runCounts().catch(() => {});
+    } catch (ex) { err.textContent = ex.message; err.classList.remove("hidden"); btn.disabled = false; }
+  });
+}
+async function cliUpload(file) {
+  const btn = $("cli-upload");
+  btn.disabled = true; const label = btn.textContent; btn.textContent = "Uploading…";
+  try {
+    const res = await fetch("/api/clients/upload", { method: "POST",
+      headers: { "Content-Type": "application/octet-stream", "x-filename": encodeURIComponent(file.name) }, body: await file.arrayBuffer() });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(out.error || "Upload failed (" + res.status + ")");
+    toast(`${dashN(out.added)} client${out.added === 1 ? "" : "s"} added${out.already ? ` · ${dashN(out.already)} already listed` : ""}${
+      out.skipped ? ` · ${dashN(out.skipped)} row${out.skipped === 1 ? "" : "s"} skipped (no company, phone or email)` : ""} — none of them will be called`, 9000);
+    loadClients(); runCounts().catch(() => {});
+  } catch (e) { toast("Couldn't upload the clients: " + e.message, 9000); }
+  finally { btn.disabled = false; btn.textContent = label; }
+}
+function wireClients() {
+  if (!$("clients-pane") || wireClients.done) return;
+  wireClients.done = true;
+  on("cli-add", "click", cliAddForm);
+  on("cli-upload", "click", () => $("cli-file").click());
+  $("cli-file").addEventListener("change", (e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) cliUpload(f); });
+  $("cli-q").addEventListener("input", (e) => {
+    clearTimeout(CLI.timer);
+    CLI.timer = setTimeout(() => { CLI.q = e.target.value.trim(); loadClients(); }, 250);
+  });
+  $("cli-body").addEventListener("click", async (e) => {
+    const t = (sel) => e.target.closest(sel);
+    let b;
+    if ((b = t("[data-cli-ask]"))) { CLI.confirm = +b.dataset.cliAsk; return renderClients(); }
+    if (t("[data-cli-cancel]")) { CLI.confirm = null; return renderClients(); }
+    if ((b = t("[data-cli-del]"))) {
+      try { await api("/api/clients/" + b.dataset.cliDel, { method: "DELETE" }); toast("Removed from clients — they can be called again", 5000); }
+      catch (ex) { toast("Couldn't remove: " + ex.message, 7000); }
+      CLI.confirm = null; loadClients(); runCounts().catch(() => {});
+    }
+  });
+}
 
 async function loadRep() {
   repWire();

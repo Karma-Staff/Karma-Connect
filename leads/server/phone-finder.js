@@ -352,7 +352,8 @@ const where = `
    WHERE l.deleted_at IS NULL AND NOT l.removed AND nullif(btrim(l.phone), '') IS NULL
      AND l.kind IN ('company', 'person', 'job')
      AND (nullif(btrim(l.company), '') IS NOT NULL OR nullif(btrim(l.name), '') IS NOT NULL)
-     AND NOT ${listedContactedSql("l")}`;
+     AND NOT ${listedContactedSql("l")}
+     AND NOT ${require("./clients").isClientSql("l")}`;
 const queueSql = (n) => `
   SELECT l.id, l.kind, l.name, l.company, l.website, l.city, l.state, l.industry, l.company_lead_id,
          c.phone_key AS company_phone_key, c.website AS company_website

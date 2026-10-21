@@ -107,7 +107,8 @@ const LOOK = 200;
 /* A lead that went on Do Not Contact (or into the bin) after the session was
    built is never served: the session steps past it, counted as skipped. */
 const GONE = (l, b) => `(${l}.id IS NULL OR ${l}.deleted_at IS NOT NULL OR ${l}.removed
-   OR EXISTS (SELECT 1 FROM blocklist ${b} WHERE ${b}.phone_key = ${l}.phone_key))`;
+   OR EXISTS (SELECT 1 FROM blocklist ${b} WHERE ${b}.phone_key = ${l}.phone_key)
+   OR ${require("./clients").isClientSql(l)})`;   // a client (clients.js) is never called either
 async function servable(s, depth = 0) {
   if (!s || s.cur_id == null) return { s, callTime: null };
   const rows = (await query(
@@ -221,7 +222,8 @@ router.get("/api/campaign/preview", requireUser, async (req, res, next) => {
       `SELECT count(*)::int n FROM leads
         WHERE btrim(owner) = $1 AND deleted_at IS NULL AND NOT removed
           AND nullif(btrim(phone), '') IS NOT NULL
-          AND status = ANY($2) AND ${NOT_WORKED("leads")}`, [owner, OPEN_STATUSES])).rows[0].n;
+          AND status = ANY($2) AND ${NOT_WORKED("leads")}
+          AND NOT ${require("./clients").isClientSql("leads")}`, [owner, OPEN_STATUSES])).rows[0].n;
     res.json({ owner, callable: n, max: MAX_SESSION });
   } catch (e) { next(e); }
 });
@@ -244,6 +246,7 @@ router.post("/api/campaign/start", requireUser, express.json({ limit: "4kb" }),
           WHERE btrim(l.owner) = $1 AND l.deleted_at IS NULL AND NOT l.removed
             AND nullif(btrim(l.phone), '') IS NOT NULL
             AND l.status = ANY($2) AND ${NOT_WORKED("l")}
+            AND NOT ${require("./clients").isClientSql("l")}
           ORDER BY r.touched_at ASC NULLS FIRST, l.date_added DESC NULLS LAST, l.id
           LIMIT ${MAX_SESSION}`,
         [owner, OPEN_STATUSES, req.user.id])).rows;
@@ -296,6 +299,11 @@ router.get("/api/calltime", requireUser, async (req, res, next) => {
       ? (await query("SELECT 1 FROM leads WHERE id = $1 AND removed", [id])).rowCount > 0 : false;
     if (ban || removed)
       return res.json({ open: false, dnc: true, reason: (ban && ban.reason) || "", hours: calltime.HOURS, lunchHours: calltime.LUNCH });
+    // a client (clients.js): never called from here
+    const clients = require("./clients");
+    const client = (await clients.clientForPhone(key)) || (await clients.clientForLead(id));
+    if (client)
+      return res.json({ open: false, client: true, clientName: client.company || client.contact || "", hours: calltime.HOURS, lunchHours: calltime.LUNCH });
     res.json({ ...calltime.check({ state, phone }), hours: calltime.HOURS, lunchHours: calltime.LUNCH });
   } catch (e) { next(e); }
 });
@@ -701,6 +709,7 @@ function specWhere(spec, args, { owners = null, skipped = false } = {}) {
   const w = [
     "l.deleted_at IS NULL", "NOT l.removed", "nullif(btrim(l.phone), '') IS NOT NULL",
     `l.kind = ANY(${p(spec.kinds)})`,
+    "NOT " + require("./clients").isClientSql("l"),     // clients are never put in a campaign
   ];
   if (spec.source === "unassigned") w.push("nullif(btrim(l.owner), '') IS NULL");
   if (owners) w.push(`lower(btrim(l.owner)) = ANY(${p(owners)})`);

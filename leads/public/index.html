@@ -268,6 +268,10 @@
           <button class="nav-item admin-only hidden" data-tab="removed" title="DNC (do not call)">
             <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.2"/><path d="m6.2 6.2 11.6 11.6"/></svg>
             <span class="nav-label">DNC</span><span class="nav-count" id="count-removed"></span></button>
+          <!-- clients: uploaded here, never called (server/clients.js) -->
+          <button class="nav-item admin-only hidden" data-tab="clients" title="Clients — companies we already work for. Never called.">
+            <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20v-1.5A4.5 4.5 0 0 1 8.5 14h3A4.5 4.5 0 0 1 16 18.5V20"/><circle cx="10" cy="8" r="3.4"/><path d="m15.5 9.5 2 2 3.8-4"/></svg>
+            <span class="nav-label">Clients</span><span class="nav-count" id="count-clients"></span></button>
         </div>
       </div>
 
@@ -661,6 +665,30 @@
       </div>
       <div class="rep-body" id="rep-body"></div>
       <div class="dash-tip hidden" id="rep-tip" role="tooltip"></div>
+    </section>
+
+    <!-- Clients: companies Karma Staff already works for. Uploaded or added here,
+         and from then on never called, listed or put in a campaign. -->
+    <section class="stats-pane hidden" id="clients-pane">
+      <div class="stats-head dash-head">
+        <div class="list-title-wrap">
+          <div class="seg-eyebrow">Manage · Clients</div>
+          <h2>Clients</h2>
+          <div class="dash-sub" id="cli-sub"></div>
+        </div>
+        <div class="cl-actions">
+          <button id="cli-add" class="btn-ghost" title="Add one client by hand">Add a client</button>
+          <button id="cli-upload" class="btn-primary" title="Upload a spreadsheet of clients (.xlsx, .xls or .csv)">Upload spreadsheet</button>
+          <input type="file" id="cli-file" accept=".xlsx,.xls,.csv" hidden>
+        </div>
+      </div>
+      <div class="cl-filters">
+        <input id="cli-q" class="cli-q" type="search" placeholder="Search clients — company, contact, email or phone" aria-label="Search clients">
+      </div>
+      <p class="cli-how">Nobody calls a client: their number is refused on every phone, and a lead with the same phone, the same email,
+        or the same company name in the same state is kept out of Companies, People, Job board, Recently added and every campaign.
+        The LinkedIn agent doesn't invite people at a client company either.</p>
+      <div id="cli-body"></div>
     </section>
 
     <section class="stats-pane hidden" id="team-pane">

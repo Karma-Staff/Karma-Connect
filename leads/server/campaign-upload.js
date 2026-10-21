@@ -218,6 +218,22 @@ router.post("/api/dialer/campaigns/upload", requireAdmin,
       if (!leads.length) return res.status(400).json({
         error: `Every number in that sheet is already in Zoho CRM (${inZoho}) — nothing left to call.`, skippedInZoho: inZoho });
 
+      /* Clients (clients.js) are never called: their numbers, emails or company
+         names (in the same state) are left out of the sheet's call list. */
+      const { rows: cl } = await query(
+        `SELECT phone_key, email, name_key, state_ab FROM clients
+          WHERE phone_key = ANY($1) OR email = ANY($2) OR name_key = ANY($3)`,
+        [leads.map((l) => l.phone_key).filter(Boolean), leads.map((l) => (l.email || "").toLowerCase()).filter(Boolean),
+         leads.map((l) => require("./clients").nameKey(l.company)).filter(Boolean)]).catch(() => ({ rows: [] }));
+      const cPhones = new Set(cl.map((c) => c.phone_key).filter(Boolean)), cEmails = new Set(cl.map((c) => c.email).filter(Boolean));
+      const isClient = (l) => (l.phone_key && cPhones.has(l.phone_key)) || (l.email && cEmails.has(l.email.toLowerCase()))
+        || cl.some((c) => c.name_key && c.name_key === require("./clients").nameKey(l.company)
+          && (!c.state_ab || !l.state || require("./clients")._test.stateOf(l.state).ab === c.state_ab));
+      const clientsLeft = leads.filter(isClient).length;
+      if (clientsLeft) leads.splice(0, leads.length, ...leads.filter((l) => !isClient(l)));
+      if (!leads.length) return res.status(400).json({
+        error: `Every contact in that sheet is a client (${clientsLeft}) — nothing left to call.`, skippedClients: clientsLeft });
+
       const filters = { kind: "campaign", source: "upload", name, created_by: req.user.email,
         status: "ongoing", gap, callback, uploaded: new Date().toISOString() };
       const session = await query(
@@ -246,7 +262,7 @@ router.post("/api/dialer/campaigns/upload", requireAdmin,
 
       summariseSession(session.id);              // background; do not await
       res.json({ ok: true, id: session.id, owner, total: leads.length,
-        skipped: rows.length - leads.length - inZoho, skippedInZoho: inZoho, columns: map });
+        skipped: rows.length - leads.length - inZoho - clientsLeft, skippedInZoho: inZoho, skippedClients: clientsLeft, columns: map });
     } catch (e) { next(e); }
   });
 
@@ -426,4 +442,4 @@ async function outcomeUpload(s, b) {
   return serveUpload(s2);
 }
 
-module.exports = { router, isUpload, serveUpload, outcomeUpload, summariseSession, servableRow };
+module.exports = { router, isUpload, serveUpload, outcomeUpload, summariseSession, servableRow, parseSheet };

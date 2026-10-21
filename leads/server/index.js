@@ -85,6 +85,8 @@ function mount(app, opts = {}) {
 
   /* ---------------- feature routers */
   app.use(require("./leads").router);
+  /* Clients: uploaded by an admin, never called, out of every list and campaign */
+  app.use(require("./clients").router);
   app.use(require("./counts").router);
   app.use(require("./recents").router);
   app.use(require("./users").router);
