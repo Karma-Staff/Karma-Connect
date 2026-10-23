@@ -25,7 +25,7 @@
  *     follows a karmaconnect:// link, which Windows hands to this app.
  */
 
-const { app, BrowserWindow, Menu, protocol, session, shell, ipcMain, screen } = require("electron");
+const { app, BrowserWindow, Menu, dialog, protocol, session, shell, ipcMain, screen } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
 
@@ -160,6 +160,13 @@ function allowedInWindow(url) {
     return u.origin === DIALER_ORIGIN && (u.pathname === "/" || onDialerPath(u.pathname));
   } catch (e) { return false; }
 }
+// RingCentral's and Zoho CRM's connect flows (leads/server ringcentral.js, crm-identity.js)
+function isConnectLink(url) {
+  try {
+    const u = new URL(url);
+    return u.origin === DIALER_ORIGIN && ["/api/voice/rc/connect", "/api/crm/me/connect"].includes(u.pathname);
+  } catch (e) { return false; }
+}
 function onDialerPage(url) {
   try { const u = new URL(url); return u.origin === DIALER_ORIGIN && onDialerPath(u.pathname); }
   catch (e) { return false; }
@@ -169,8 +176,23 @@ function onDialerPage(url) {
    in the browser, so when the rep comes back to this window it reloads and
    picks the new connection up, instead of staying unregistered. */
 let reloadOnFocus = false;
+/* One click, one tab. This window sits on top of everything, so the tab a
+   click opened appeared BEHIND it; a rep who saw nothing happen clicked again
+   (seven tabs, 2026-10-22). Now a web link also sends the dialer to its bubble
+   so the tab is in view, and the same link clicked again within 15 s opens
+   nothing more — the tab it opened is already there. */
+const OUTSIDE_REPEAT_MS = 15 * 1000;
+let lastOutside = { url: "", at: 0 };
 function openOutside(url) {
-  if (/^https?:|^tel:|^mailto:/i.test(url)) shell.openExternal(url);
+  if (!/^https?:|^tel:|^mailto:/i.test(url)) return;
+  const web = /^https?:/i.test(url);
+  const now = Date.now();
+  const repeat = url === lastOutside.url && now - lastOutside.at < OUTSIDE_REPEAT_MS;
+  if (!repeat) {
+    lastOutside = { url, at: now };
+    shell.openExternal(url);
+  }
+  if (web) toBubble();
 }
 
 function createWindow() {
@@ -208,6 +230,10 @@ function createWindow() {
       e.preventDefault(); openOutside(url);
       // only a SERVER redirect (a sign-in flow), never a link the rep clicked
       if (isRedirect && e.isMainFrame !== false && /^https:/i.test(url)) reloadOnFocus = true;
+      // ...or the dialer's own Connect / Reconnect links: the click is sent to
+      // the browser before any redirect happens here, so the check above
+      // never saw it and the dialer stayed unregistered after a reconnect
+      if (isConnectLink(url)) reloadOnFocus = true;
       return;
     }
     const f = forceEmbed(url);
@@ -326,7 +352,10 @@ function showBubbleMenu() {
       : { label: "Start with Windows", type: "checkbox", enabled: packaged,
         checked: packaged && autoStartOn(),
         click: (item) => setAutoStart(item.checked) },
-    { label: "Check for updates", enabled: packaged, click: () => checkForUpdates(true) },
+    updateReady
+      ? { label: bubbleState.call ? `Restart to update to ${updateReady} (after this call)` : `Restart to update to ${updateReady}`,
+        enabled: !bubbleState.call, click: restartToUpdate }
+      : { label: "Check for updates", enabled: packaged, click: () => checkForUpdates(true) },
     { label: `Version ${app.getVersion()}`, enabled: false },
     { type: "separator" },
     { label: "Quit Karma Connect Dialer", click: () => app.quit() },
@@ -397,7 +426,13 @@ ipcMain.on("kc-restore", openDialer);
 // the dialer header's own window buttons (dialer-preload.js): minimise goes to
 // the bubble exactly like the old title-bar button did; close closes the window
 ipcMain.on("kc-minimize", toBubble);
-ipcMain.on("kc-close", () => { if (win && !win.isDestroyed()) win.close(); });
+// — except under a ringing or live call: closing quits the app and drops it, so
+// that goes to the bubble instead (the page refuses too; this is the backstop)
+ipcMain.on("kc-close", () => {
+  if (!win || win.isDestroyed()) return;
+  if (bubbleState.call) return toBubble();
+  win.close();
+});
 // presence / reminders / call state from the dialer page, for the bubble
 ipcMain.on("kc-state", (e, s) => {
   if (!win || win.isDestroyed() || e.sender !== win.webContents || !s) return;
@@ -481,11 +516,34 @@ function checkForUpdates(byHand) {
          rejections below are only swallowed so none of them can surface as
          Electron's "JavaScript error in the main process" dialog over the dialer */
       updater.on("error", (e) => console.warn("[updater]", e && e.message));
+      // downloaded: offered on the bubble's menu (showBubbleMenu)
+      updater.on("update-downloaded", (info) => { updateReady = (info && info.version) || "the new version"; });
     }
-    (byHand ? updater.checkForUpdatesAndNotify() : updater.checkForUpdates())
-      .then((r) => r && r.downloadPromise && r.downloadPromise.catch(() => {}))
-      .catch(() => {});
+    updater.checkForUpdates()
+      .then((r) => {
+        if (r && r.downloadPromise) r.downloadPromise.catch(() => {});
+        if (!byHand) return;
+        if (updateReady) return tellRep(`Version ${updateReady} is ready. Right-click the bubble → "Restart to update".`);
+        if (r && r.isUpdateAvailable) return tellRep(`Version ${r.updateInfo.version} is downloading. When it's ready, right-click the bubble → "Restart to update".`);
+        tellRep(`You're on the latest version (${app.getVersion()}).`);
+      })
+      .catch((e) => { if (byHand) tellRep("Couldn't check for updates — " + ((e && e.message) || "no connection") + ". Try again later."); });
   } catch (e) { console.warn("[updater]", e && e.message); }
+}
+/* "Check for updates" used to say nothing at all — up to date, downloading or
+   failed looked the same, so reps clicked it again and again. Updates also
+   only installed on quit, which reps with start-with-Windows almost never do,
+   so a downloaded one is offered on the bubble's menu as well. */
+let updateReady = null;
+function tellRep(message) {
+  const parent = [bubble, win].find((w) => w && !w.isDestroyed() && w.isVisible());
+  const opts = { type: "info", title: "Karma Connect Dialer", message, buttons: ["OK"] };
+  (parent ? dialog.showMessageBox(parent, opts) : dialog.showMessageBox(opts)).catch(() => {});
+}
+function restartToUpdate() {
+  // never under a ringing or live call — quitting drops it
+  if (!updater || !updateReady || bubbleState.call) return;
+  updater.quitAndInstall();
 }
 
 app.whenReady().then(() => {

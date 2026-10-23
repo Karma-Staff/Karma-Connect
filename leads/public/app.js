@@ -1157,7 +1157,7 @@ function renderDetail(r) {
     el.addEventListener("click", (e) => {
       const value = el.dataset.copy;
       if (e.shiftKey) { location.href = `mailto:${value}`; return; }
-      copyText(value, el);
+      copyField(value, el);
     }));
   $("d-fav").addEventListener("click", () => toggleFavorite(r));
   $("d-remove").addEventListener("click", () =>
@@ -1177,9 +1177,13 @@ function renderDetail(r) {
   });
 }
 
-/* navigator.clipboard needs a secure context — that's fine on localhost but not
+/* A lead card's click-to-copy field: copies, ticks the field and says so.
+   It was also called copyText, and the dialler's copyText further down (same
+   name, declared later) replaced it — so the card copied silently, with no
+   tick and no toast. Its own name now; the dialler's keeps its quiet copy.
+   navigator.clipboard needs a secure context — that's fine on localhost but not
    over http://<lan-ip>, so keep the old execCommand path as a fallback */
-async function copyText(value, el) {
+async function copyField(value, el) {
   let ok = false;
   try {
     await navigator.clipboard.writeText(value);
@@ -4898,7 +4902,11 @@ function rcWireBar() {
   on("kd-close", "click", () => rcPanelToggle(false));
   // the desktop app's window controls (desktop/dialer-preload.js); no-ops elsewhere
   on("kd-win-min", "click", () => { if (!kdWrapBlocked()) window.kcDesktop?.minimize?.(); });
-  on("kd-win-close", "click", () => { if (!kdWrapBlocked()) window.kcDesktop?.close?.(); });
+  // closing quits the app, which drops a ringing or live call — one misclick away
+  on("kd-win-close", "click", () => {
+    if (kdActive() || KD.phase === "incoming") return kdToast("Hang up first — closing the dialer ends the call");
+    if (!kdWrapBlocked()) window.kcDesktop?.close?.();
+  });
   on("kd-retry", "click", () => rcRetry());
   kdWireDrag(root);
 
@@ -5354,7 +5362,21 @@ function kdRenderDispos() {
    duplicated: the outcome chips describe the call, which reportCall has
    already logged, so they only write when the rep CONTRADICTS what the line
    reported — that correction is the new information. */
+/* One save at a time. The save waits on the call's log row first, so a
+   double-click (or a second click on a sheet that looks stuck) used to run it
+   twice: two dispositions to Zoho, two notes, two follow-ups. The button stays
+   locked until this one has finished, saved or not. */
+let kdSaving = false;
 async function kdSaveDispo() {
+  if (kdSaving) return;
+  kdSaving = true;
+  const btn = kdEl("kd-save");
+  if (btn) btn.disabled = true;
+  try { await kdSaveDispoRun(); }
+  finally { kdSaving = false; if (btn) btn.disabled = false; }
+}
+
+async function kdSaveDispoRun() {
   const L = KD.lead;
   if (!L) return kdSaveNumberDispo();
   if (L.id < 0) return kdSaveUploadDispo();   // uploaded campaign lead — no leads row to write to
@@ -6957,13 +6979,19 @@ function campPausedText(c) {
     : `paused by ${c.pausedBy || "your manager"} — finish this call; nothing else will ring`;
 }
 
+/* One Pause/Resume at a time — a double-click sent two and restarted the
+   countdown. PDR.gen tells pdRepCheck that a status it asked for before this
+   change is out of date (see there). */
+let campPausing = false;
 async function campPause(resume) {
   const c = campOf();
-  if (!c) return;
+  if (!c || campPausing) return;
+  campPausing = true;
   if (!resume) { cancelWrap(); cancelAutoDial("pausing…"); }
   try {
     await api("/api/campaign/pause", { method: "POST", body: JSON.stringify({ resume }) });
   } catch (e) { return toast("Couldn't " + (resume ? "resume" : "pause") + " — " + e.message, 6000); }
+  finally { campPausing = false; PDR.gen++; }
   c.status = resume ? "ongoing" : "paused";
   c.pausedBy = resume ? null : S.me?.email || null;
   campPaintLive();
@@ -7434,9 +7462,16 @@ async function submitOutcome(extra) {
   if (kdWrapBlocked()) return;                 // the last call's disposition comes first
   /* the dialer app's sheet is open for this call: that disposition moves the
      session on, not a button here */
+  /* ...unless the rep presses again: the app's "saved" can still be lost (the
+     app restarted, the network was down for good), and the session must never
+     wait on it forever. A second press within 20 s moves on from here. */
   if (CAMP.awaitDispo && VOICE.provider === "desktop") {
-    deskOpenApp();
-    return toast("Save the disposition in the Karma Connect Dialer app first — then the next lead rings", 6000);
+    const again = CAMP.awaitDispo.pressedAt && Date.now() - CAMP.awaitDispo.pressedAt < 20000;
+    if (!again) {
+      CAMP.awaitDispo.pressedAt = Date.now();
+      deskOpenApp();
+      return toast("Save the disposition in the Karma Connect Dialer app first — then the next lead rings. Already saved it? Press again to move on.", 8000);
+    }
   }
   CAMP.busy = true;
   // pressed on the card instead of saving the sheet: the sheet's question is answered
@@ -12002,7 +12037,7 @@ async function openRepGroups(reps, back) {
    the current call; resumed, it carries on by itself — the first Join click
    already bought the browser permission every later call reuses. */
 
-const PDR = { last: null, poll: null, dismissed: "" };
+const PDR = { last: null, poll: null, dismissed: "", gen: 0 };
 
 function pdRepStart() {
   if (PDR.poll) return;
@@ -12015,7 +12050,12 @@ async function pdRepCheck() {
      dialer that is running in the background */
   if (document.hidden && !CAMP.joined) return;
   let c;
+  /* asked before the rep's own Pause/Resume landed? Then it can still say the
+     old status, and acting on it undid the Resume for up to 15 s ("paused by
+     your manager"). The next check is only 15 s away. */
+  const gen = PDR.gen;
   try { c = (await api("/api/campaign/state")).campaign; } catch (e) { return; }
+  if (gen !== PDR.gen || campPausing) return;
   PDR.last = c;
 
   /* Keep an open Call session in step with what the manager just did. */
@@ -13001,7 +13041,10 @@ function deskCall(number, name, leadId) {
   const body = { number: digits, name: name || "", leadId: leadId || null, session: inSession,
     campaign: c ? { name: c.name || "", callback: c.callback || null } : null };
   api("/api/voice/desktop/call", { method: "POST", body: JSON.stringify(body) })
-    .then(() => toast("Calling " + (name || number) + " on the Karma Connect Dialer app…"))
+    .then((r) => {
+      toast("Calling " + (name || number) + " on the Karma Connect Dialer app…");
+      deskAwaitPickup(r?.id, leadId);
+    })
     .catch((e) => {
       deskOpenApp();
       deskDialFailed(leadId, /isn't open/i.test(e.message)
@@ -13010,6 +13053,27 @@ function deskCall(number, name, leadId) {
     });
   return true;
 }
+/* The server takes a call while it thinks the app is online — up to 40 s after
+   the app was last seen, so also just after it quit. Such a call was never
+   rung, yet the session said "calling…" for good. The app answers every call
+   it gets with "accepted" or "refused"; no answer by the time the server drops
+   an untaken call (20 s, desktop-relay.js CALL_TTL_MS) means it never rang, so
+   say so and let the rep call again. Waiting that long means a late pickup can
+   never ring after we have said it didn't. */
+const DESK_PICKUP_MS = 22 * 1000;
+const deskPending = new Map();             // call ref -> timer
+function deskAwaitPickup(ref, leadId) {
+  if (!ref) return;
+  deskPending.set(String(ref), setTimeout(() => {
+    deskPending.delete(String(ref));
+    deskDialFailed(leadId, "Not dialled — the Karma Connect Dialer app didn't pick the call up. Check the app is open, then press Call again.");
+  }, DESK_PICKUP_MS));
+}
+function deskPickedUp(ref) {
+  const t = deskPending.get(String(ref));
+  if (t) { clearTimeout(t); deskPending.delete(String(ref)); }
+}
+
 function deskDialFailed(leadId, msg) {
   toast(msg, 9000);
   if (leadId && String(CAMP.s?.current?.lead?.id) === String(leadId)) {
@@ -13032,6 +13096,7 @@ async function deskListen() {
   }
 }
 function deskOnEvent(e) {
+  if (e.ref && (e.kind === "accepted" || e.kind === "refused")) deskPickedUp(e.ref);
   if (e.kind === "refused") return deskDialFailed(e.leadId, e.reason || "The dialer app could not place the call");
   if (!e.leadId) return;
   if (e.kind === "ended") return campaignCallEnded(e.leadId, e.outcome);
@@ -13050,10 +13115,18 @@ function deskOnEvent(e) {
 // ---- in the app's window ----
 async function deskServe() {
   if (DESK.serving) return;
-  let st = null;
-  try { st = await api("/api/voice/desktop/status"); } catch (e) { /* treat as off */ }
-  if (!st?.required) return;
   DESK.serving = true;
+  /* Only a clear "not required" switches this off. A failed check (a blip, a
+     deploy as the app starts) used to count as off for good: the app never
+     took a call, and every Call in the browser opened it again for nothing.
+     Ask again — 5 s, 10 s, … up to a minute apart — until there is an answer. */
+  for (let wait = 5000; ; wait = Math.min(wait * 2, 60000)) {
+    try {
+      const st = await api("/api/voice/desktop/status");
+      if (!st?.required) { DESK.serving = false; return; }
+      break;
+    } catch (e) { await deskSleep(wait); }
+  }
   for (;;) {
     DESK.poll = new AbortController();
     try {
@@ -13067,9 +13140,24 @@ async function deskServe() {
 }
 // the phone just came up (or went): start a fresh poll so the server hears it now
 function deskPing() { DESK.poll?.abort(); }
-function deskSay(kind, extra) {
-  return api("/api/voice/desktop/event", { method: "POST", body: JSON.stringify({ kind, ...extra }) })
-    .catch(() => { /* the browser's session can be moved on by hand */ });
+/* "ended" and "wrapped" are what move the browser's power-dialer session on;
+   one lost to a network blip or a deploy left it waiting forever. "accepted"
+   and "refused" are what the browser waits for after handing a call over
+   (deskAwaitPickup) — one lost there says "not dialled" over a ringing call.
+   So all four are tried again (2, 4, 8, 16 s) while the server is unreachable
+   or down — a 4xx is an answer, not a blip, and a resend would only repeat it. */
+const DESK_RETRY = new Set(["accepted", "refused", "ended", "wrapped"]);
+async function deskSay(kind, extra) {
+  const body = JSON.stringify({ kind, ...extra });
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await api("/api/voice/desktop/event", { method: "POST", body });
+    } catch (e) {
+      const blip = !e.status || e.status >= 500;
+      if (!DESK_RETRY.has(kind) || !blip || attempt >= 4) return;   // the browser's session can be moved on by hand
+      await deskSleep(2000 * 2 ** attempt);
+    }
+  }
 }
 async function deskTake(c) {
   const ref = { ref: c.id, leadId: c.leadId || null };

@@ -1,6 +1,6 @@
 {
   "name": "karma-connect-dialer-desktop",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "description": "Karma Connect softphone as an always-on-top desktop app — floats over every application.",
   "author": "Karma Staff",
